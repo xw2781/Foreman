@@ -1,0 +1,36 @@
+appId: com.agenttaskcenter.app
+productName: Agent Task Center
+copyright: Copyright © 2026 xwei
+directories:
+  output: dist
+  buildResources: resources
+files:
+  - out/**
+  - resources/icon.png
+  - package.json
+# node-pty loads native binaries (pty.node, conpty.dll, OpenConsole.exe) from disk.
+asarUnpack:
+  - node_modules/node-pty/**
+# node-pty ships N-API prebuilds that work in Electron as-is.
+npmRebuild: false
+# Copy the Electron already installed in node_modules instead of extracting the
+# zip to a temp folder and renaming it (antivirus scanning makes that rename fail).
+electronDist: node_modules/electron/dist
+extraResources:
+  - from: resources/skills
+    to: skills
+    filter:
+      - '**/*'
+      - '!**/tests/**'
+win:
+  target:
+    - nsis
+  icon: resources/icon.png
+  artifactName: Agent-Task-Center-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Agent Task Center

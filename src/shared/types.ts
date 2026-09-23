@@ -1,0 +1,327 @@
+// Types shared by the main process, the preload bridge, and the renderer.
+
+export type Provider = 'claude' | 'codex';
+export const PROVIDERS: readonly Provider[] = ['claude', 'codex'];
+export const PROVIDER_LABEL: Record<Provider, string> = { claude: 'Claude Code', codex: 'Codex' };
+
+// ---------------------------------------------------------------------------
+// Accounts
+// ---------------------------------------------------------------------------
+
+/**
+ * One signed-in account. Each account owns a config directory; agents run with
+ * CLAUDE_CONFIG_DIR / CODEX_HOME pointing at it, so two accounts of the same
+ * provider can run side by side without ever copying credentials around.
+ */
+export interface Profile {
+  id: string;
+  provider: Provider;
+  label: string;
+  color: string;
+  configDir: string;
+  /** The tool's own default location (~/.claude or ~/.codex): launched with the env override removed. */
+  builtin: boolean;
+  createdAt: string;
+  emailHint?: string;
+}
+
+export interface ProfileIdentity {
+  loggedIn: boolean;
+  email: string | null;
+  name: string | null;
+  plan: string | null;
+  org: string | null;
+  authMethod: string | null;
+  checkedAt: string;
+  error: string | null;
+}
+
+export interface LimitWindow {
+  id: string;
+  label: string;
+  usedPercent: number;
+  resetsAt: string | null;
+}
+
+export interface ProfileLimits {
+  windows: LimitWindow[];
+  /** When the CLI last observed these numbers (not when we read them). */
+  observedAt: string | null;
+  planType: string | null;
+}
+
+export interface ProfileView extends Profile {
+  identity: ProfileIdentity | null;
+  limits: ProfileLimits | null;
+  /** Default account for new agents started in this app. */
+  isActive: boolean;
+  /** The account other apps (VS Code, desktop apps, new terminals) pick up from the user environment. */
+  isGlobalDefault: boolean;
+  skillInstalled: boolean;
+  runningAgents: number;
+}
+
+export interface NewProfileInput {
+  provider: Provider;
+  label: string;
+  color?: string;
+  emailHint?: string;
+  shareConfig: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Agents
+// ---------------------------------------------------------------------------
+
+/** interactive: the CLI's own terminal UI. task: headless run to completion. login/shell: account utilities. */
+export type AgentMode = 'interactive' | 'task' | 'login' | 'shell';
+
+export type AgentStatus =
+  | 'starting'
+  | 'working'
+  | 'needs-input'
+  | 'idle'
+  | 'done'
+  | 'failed'
+  | 'stopped';
+
+export const LIVE_STATUSES: readonly AgentStatus[] = ['starting', 'working', 'needs-input', 'idle'];
+
+export type ClaudePermission = 'default' | 'acceptEdits' | 'auto' | 'plan' | 'bypassPermissions';
+export type CodexPermission = 'default' | 'read-only' | 'auto' | 'full-access';
+
+export interface LaunchOptions {
+  provider: Provider;
+  profileId: string;
+  cwd: string;
+  mode: AgentMode;
+  prompt?: string;
+  title?: string;
+  model?: string;
+  effort?: string;
+  permission?: string;
+  /** Resume an earlier session by id (interactive mode only). */
+  resumeSessionId?: string;
+  extraArgs?: string;
+}
+
+export interface TokenUsage {
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteInputTokens: number;
+  cacheWriteLongInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+  totalTokens: number;
+}
+
+export interface CostEstimate {
+  /** null when no request in the session could be priced. */
+  totalUsd: number | null;
+  /** Claude Code's own client-side estimate, when a status-line capture reported one. */
+  reportedUsd: number | null;
+  unpricedModels: string[];
+  byModel: Array<{ model: string; usd: number | null; usage: TokenUsage }>;
+}
+
+export interface SessionTelemetry {
+  provider: Provider;
+  sessionId: string;
+  filePath: string;
+  title: string | null;
+  cwd: string | null;
+  model: string | null;
+  effort: string | null;
+  startedAt: string | null;
+  updatedAt: string | null;
+  contextWindow: number;
+  contextUsedTokens: number;
+  contextPercent: number | null;
+  /** True when the window size came from an assumption rather than the CLI. */
+  contextWindowAssumed: boolean;
+  lastUsage: TokenUsage | null;
+  totalUsage: TokenUsage | null;
+  requests: number;
+  compactions: number;
+  lastCompactionAt: string | null;
+  taskActive: boolean | null;
+  cost: CostEstimate;
+  limits: ProfileLimits | null;
+  source: 'transcript' | 'status-line' | 'rollout';
+}
+
+export interface AgentResources {
+  cpuPercent: number;
+  memoryMB: number;
+  processCount: number;
+}
+
+export interface AgentInfo {
+  id: string;
+  provider: Provider;
+  profileId: string;
+  profileLabel: string;
+  profileColor: string;
+  cwd: string;
+  mode: AgentMode;
+  title: string;
+  model: string | null;
+  permission: string | null;
+  status: AgentStatus;
+  statusDetail: string | null;
+  pid: number | null;
+  startedAt: string;
+  endedAt: string | null;
+  exitCode: number | null;
+  sessionId: string | null;
+  transcriptPath: string | null;
+  lastActivityAt: string;
+  lastOutputAt: string | null;
+  commandLine: string;
+  telemetry: SessionTelemetry | null;
+  resources: AgentResources | null;
+  usesScreen: boolean;
+  prompt: string | null;
+  /** False for agents restored from an earlier app run: they have no terminal buffer. */
+  attached?: boolean;
+}
+
+export interface ExternalAgentProcess {
+  pid: number;
+  provider: Provider | 'other';
+  name: string;
+  host: string;
+  commandLine: string;
+  startedAt: string | null;
+  cpuPercent: number;
+  memoryMB: number;
+  processCount: number;
+}
+
+// ---------------------------------------------------------------------------
+// Usage analytics
+// ---------------------------------------------------------------------------
+
+export interface UsageDay {
+  date: string; // YYYY-MM-DD, local time
+  byProvider: Record<Provider, number>;
+  byProfile: Record<string, number>;
+  tokens: number;
+  requests: number;
+}
+
+export interface UsageSessionRow {
+  provider: Provider;
+  profileId: string;
+  sessionId: string;
+  filePath: string;
+  title: string | null;
+  cwd: string | null;
+  model: string | null;
+  startedAt: string | null;
+  updatedAt: string | null;
+  costUsd: number | null;
+  tokens: number;
+  requests: number;
+  contextPercent: number | null;
+  compactions: number;
+  active: boolean;
+}
+
+export interface UsageModelRow {
+  provider: Provider;
+  model: string;
+  usd: number | null;
+  tokens: number;
+  requests: number;
+}
+
+export interface UsageReport {
+  generatedAt: string;
+  days: UsageDay[];
+  sessions: UsageSessionRow[];
+  models: UsageModelRow[];
+  totals: { today: number; week: number; month: number; range: number };
+  scanning: boolean;
+  scannedFiles: number;
+  pricingDate: string;
+}
+
+// ---------------------------------------------------------------------------
+// Computer use
+// ---------------------------------------------------------------------------
+
+export interface ComputerUseAction {
+  timestamp: string;
+  agent: string | null;
+  command: string;
+  target: string | null;
+  code: number | null;
+  message: string | null;
+}
+
+export interface ComputerUseStatus {
+  skillSource: string | null;
+  stateDir: string;
+  active: boolean;
+  overlayRunning: boolean;
+  agent: string | null;
+  action: string | null;
+  startedAt: string | null;
+  heartbeat: string | null;
+  releaseRequested: boolean;
+  releasedAt: string | null;
+  /** panel | escape | command | reasserted */
+  releaseSource: string | null;
+  recent: ComputerUseAction[];
+  lastScreenshot: string | null;
+  policy: { allowedProcesses: string[]; deniedProcesses: string[] };
+  builtinDenied: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Settings & environment
+// ---------------------------------------------------------------------------
+
+export interface AppSettings {
+  activeProfile: Record<Provider, string>;
+  cliPath: Record<Provider, string>;
+  defaultCwd: string;
+  recentCwds: string[];
+  theme: 'dark' | 'light' | 'system';
+  terminalFontSize: number;
+  terminalFontFamily: string;
+  notifyOnNeedsInput: boolean;
+  notifyOnTurnComplete: boolean;
+  confirmBeforeStop: boolean;
+  /** Assumed context window for Claude models the pricing table doesn't know. */
+  claudeContextWindow: number;
+  contextWindowOverrides: Record<string, number>;
+  usageDays: number;
+  codexNoDaemonForIsolated: boolean;
+  shellForTerminals: string;
+  /** Route Claude Code's status line through the app (keeps the user's own) for exact context, cost and plan limits. */
+  claudeStatusLine: boolean;
+}
+
+export interface CliInfo {
+  provider: Provider;
+  path: string | null;
+  version: string | null;
+  source: string;
+  error: string | null;
+}
+
+export interface EnvironmentInfo {
+  platform: string;
+  appVersion: string;
+  userDataDir: string;
+  profilesDir: string;
+  clis: CliInfo[];
+  hookServer: string | null;
+}
+
+export interface Toast {
+  kind: 'info' | 'success' | 'error';
+  message: string;
+}
