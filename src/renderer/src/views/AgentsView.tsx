@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   FolderOpen,
   History,
+  MessagesSquare,
   MousePointer2,
   PanelRightClose,
   PanelRightOpen,
@@ -14,7 +15,9 @@ import {
   Trash2,
   X
 } from 'lucide-react';
-import { LIVE_STATUSES, PROVIDER_LABEL, type AgentInfo } from '@shared/types';
+import { create } from 'zustand';
+import { AGENT_MODES, CONVERSATION_MODES, LIVE_STATUSES, PROVIDER_LABEL, type AgentInfo, type AgentMode } from '@shared/types';
+import { ChatView } from './ChatView';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
 import { ago, compact, duration, folderName, percent, shortPath, usd } from '../format';
@@ -23,10 +26,14 @@ import { mountTerminal, terminalBackground } from '../terminals';
 
 export async function stopAgent(agent: AgentInfo) {
   const settings = useApp.getState().settings;
-  if (settings?.confirmBeforeStop && (agent.mode === 'interactive' || agent.mode === 'task')) {
+  if (settings?.confirmBeforeStop && AGENT_MODES.includes(agent.mode)) {
     const { ok } = await confirmDialog({
       title: `Stop "${agent.title}"?`,
-      message: agent.mode === 'interactive' ? 'The process is ended. The conversation is kept and can be resumed later.' : 'The background task is ended before it finishes.',
+      message: agent.mode === 'chat'
+        ? 'The process is ended. The conversation is kept; send a message to continue it.'
+        : agent.mode === 'interactive'
+          ? 'The process is ended. The conversation is kept and can be resumed later.'
+          : 'The background task is ended before it finishes.',
       confirmLabel: 'Stop agent',
       danger: true
     });
@@ -41,16 +48,58 @@ export async function stopAgent(agent: AgentInfo) {
 
 /** A conversation exists once the CLI wrote a session file for it. */
 export function canResume(agent: AgentInfo) {
-  return agent.mode === 'interactive' && Boolean(agent.transcriptPath || agent.telemetry?.sessionId);
+  return CONVERSATION_MODES.includes(agent.mode) && Boolean(agent.transcriptPath || agent.telemetry?.sessionId);
 }
 
-export async function resumeAgent(agent: AgentInfo) {
+export async function resumeAgent(agent: AgentInfo, mode?: AgentMode) {
   try {
-    const next = await call('agents.resume', agent.id);
+    const next = await call('agents.resume', agent.id, mode);
     useApp.setState({ selectedAgentId: next.id, view: 'agents' });
   } catch (error) {
     useApp.getState().toast('error', errorMessage(error));
   }
+}
+
+type Display = 'chat' | 'terminal';
+
+/** How a finished conversation is shown; a running one always shows the kind of process it is. */
+const useDisplay = create<Record<string, Display>>(() => ({}));
+
+function displayOf(agent: AgentInfo, preferred: Display | undefined): Display {
+  if (!CONVERSATION_MODES.includes(agent.mode)) return 'terminal';
+  if (!agent.endedAt) return agent.mode === 'chat' ? 'chat' : 'terminal';
+  // Without a terminal buffer (earlier app run) the chat rebuilds the conversation from its session file.
+  return preferred ?? (agent.mode === 'chat' || !agent.attached ? 'chat' : 'terminal');
+}
+
+function DisplayToggle({ agent, display }: { agent: AgentInfo; display: Display }) {
+  const choose = async (next: Display) => {
+    if (next === display) return;
+    if (agent.endedAt) {
+      useDisplay.setState({ [agent.id]: next });
+      return;
+    }
+    if (agent.status === 'working') {
+      const { ok } = await confirmDialog({
+        title: next === 'chat' ? 'Continue as a chat?' : 'Open in the terminal?',
+        message: 'The conversation moves to a new process; the turn in progress is interrupted.',
+        confirmLabel: 'Switch'
+      });
+      if (!ok) return;
+    }
+    useDisplay.setState({ [agent.id]: next });
+    await resumeAgent(agent, next === 'chat' ? 'chat' : 'interactive');
+  };
+  return (
+    <div className="segmented display-toggle" title="Show this conversation as a chat or in the CLI's terminal UI">
+      <button type="button" className={display === 'chat' ? 'on' : ''} onClick={() => choose('chat')}>
+        <MessagesSquare size={13} /> Chat
+      </button>
+      <button type="button" className={display === 'terminal' ? 'on' : ''} onClick={() => choose('terminal')}>
+        <SquareTerminal size={13} /> Terminal
+      </button>
+    </div>
+  );
 }
 
 function AgentListItem({ agent, selected, onSelect }: { agent: AgentInfo; selected: boolean; onSelect: () => void }) {
@@ -72,7 +121,7 @@ function AgentListItem({ agent, selected, onSelect }: { agent: AgentInfo; select
       <div className="ai-meta">
         <StatusPill status={agent.status} />
         {agent.usesScreen ? <MousePointer2 size={12} color="var(--warning)" /> : null}
-        <span className="ellipsis">{agent.mode === 'task' ? 'task' : agent.mode === 'interactive' ? agent.profileLabel : agent.mode}</span>
+        <span className="ellipsis">{agent.mode === 'task' ? 'task' : CONVERSATION_MODES.includes(agent.mode) ? agent.profileLabel : agent.mode}</span>
         {t?.cost.totalUsd != null ? <span style={{ marginLeft: 'auto' }} className="num">{usd(t.cost.reportedUsd ?? t.cost.totalUsd)}</span> : null}
       </div>
       <div className="ai-detail" title={detail}>
@@ -96,7 +145,7 @@ function TerminalHost({ agent }: { agent: AgentInfo }) {
   return <div className="term-host" ref={hostRef} style={{ ['--term-bg' as any]: terminalBackground() }} />;
 }
 
-function AgentHeader({ agent }: { agent: AgentInfo }) {
+function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display }) {
   const toggleDetails = useApp((s) => s.toggleDetails);
   const showDetails = useApp((s) => s.showDetails);
   const [editing, setEditing] = useState(false);
@@ -140,12 +189,13 @@ function AgentHeader({ agent }: { agent: AgentInfo }) {
         </div>
       </div>
       <div className="th-actions">
-        {t && t.contextPercent !== null ? (
+        {CONVERSATION_MODES.includes(agent.mode) ? <DisplayToggle agent={agent} display={display} /> : null}
+        {t && t.contextPercent !== null && display === 'terminal' ? (
           <div className="th-context">
             <Meter label="Context" value={t.contextPercent} valueText={`${percent(t.contextPercent)} of ${compact(t.contextWindow)}`} title={`${compact(t.contextUsedTokens)} tokens in context${t.contextWindowAssumed ? ' (window size assumed)' : ''}`} />
           </div>
         ) : null}
-        {t ? (
+        {t && !showDetails ? (
           <div style={{ textAlign: 'right', minWidth: 70 }} title={t.cost.reportedUsd != null ? "Claude Code's own estimate" : 'Estimated at API list prices'}>
             <div className="num" style={{ fontWeight: 600 }}>
               {usd(t.cost.reportedUsd ?? t.cost.totalUsd)}
@@ -165,8 +215,8 @@ function AgentHeader({ agent }: { agent: AgentInfo }) {
           <button className="btn danger sm" onClick={() => stopAgent(agent)}>
             <Square size={12} /> Stop
           </button>
-        ) : canResume(agent) ? (
-          <button className="btn sm" onClick={() => resumeAgent(agent)}>
+        ) : canResume(agent) && display === 'terminal' ? (
+          <button className="btn sm" onClick={() => resumeAgent(agent, 'interactive')}>
             <History size={13} /> Resume
           </button>
         ) : null}
@@ -342,6 +392,8 @@ export function AgentsView() {
   const live = filtered.filter((a) => !a.endedAt);
   const ended = filtered.filter((a) => a.endedAt);
   const selected = agents.find((a) => a.id === selectedId) ?? live[0] ?? null;
+  const preferred = useDisplay((s) => (selected ? s[selected.id] : undefined));
+  const display = selected ? displayOf(selected, preferred) : 'terminal';
 
   useEffect(() => {
     if (!selectedId && selected) useApp.setState({ selectedAgentId: selected.id });
@@ -395,8 +447,8 @@ export function AgentsView() {
 
       {selected ? (
         <section className="term-panel">
-          <AgentHeader agent={selected} />
-          {selected.status === 'needs-input' ? (
+          <AgentHeader agent={selected} display={display} />
+          {selected.status === 'needs-input' && display === 'terminal' ? (
             <div className="attention-banner">
               <AlertTriangle size={15} color="var(--warning)" />
               <span>
@@ -413,22 +465,24 @@ export function AgentsView() {
               </button>
             </div>
           ) : null}
-          {selected.attached ? (
-            <TerminalHost key={selected.id} agent={selected} />
+          {display === 'chat' ? (
+            <ChatView key={selected.id} agent={selected} />
+          ) : selected.attached && selected.mode !== 'chat' ? (
+            <TerminalHost key={`${selected.id}:${selected.runId}`} agent={selected} />
           ) : (
             <div className="term-host" style={{ display: 'grid', placeItems: 'center', background: 'var(--surface-1)' }}>
               <Empty
                 icon={<History size={22} />}
-                title="This agent ran in an earlier session of the app"
+                title={selected.mode === 'chat' ? 'This conversation ran as a chat' : 'This agent ran in an earlier session of the app'}
                 action={
                   canResume(selected) ? (
-                    <button className="btn primary" onClick={() => resumeAgent(selected)}>
-                      <History size={14} /> Resume conversation
+                    <button className="btn primary" onClick={() => resumeAgent(selected, 'interactive')}>
+                      <History size={14} /> Resume in terminal
                     </button>
                   ) : undefined
                 }
               >
-                Its terminal output isn't kept between runs, but the conversation is. Resume it to continue where it left off.
+                There's no terminal output to show, but the conversation is kept. Resume it in the terminal, or switch to Chat to read and continue it.
               </Empty>
             </div>
           )}
@@ -444,7 +498,7 @@ export function AgentsView() {
               </button>
             }
           >
-            Each agent runs in its own terminal with the account you choose. Status, context usage and cost update live, and the task manager shows everything that's running.
+            Chat with an agent, or use the CLI's own terminal UI, with the account you choose. Status, context usage and cost update live, and the task manager shows everything that's running.
           </Empty>
         </section>
       )}

@@ -73,8 +73,17 @@ export interface NewProfileInput {
 // Agents
 // ---------------------------------------------------------------------------
 
-/** interactive: the CLI's own terminal UI. task: headless run to completion. login/shell: account utilities. */
-export type AgentMode = 'interactive' | 'task' | 'login' | 'shell';
+/**
+ * chat: the app's own conversation UI over the CLI's structured protocol.
+ * interactive: the CLI's own terminal UI. task: headless run to completion.
+ * login/shell: account utilities.
+ */
+export type AgentMode = 'chat' | 'interactive' | 'task' | 'login' | 'shell';
+
+/** Modes that run a model session (as opposed to the account utilities). */
+export const AGENT_MODES: readonly AgentMode[] = ['chat', 'interactive', 'task'];
+/** Modes whose conversation can be continued and handed between chat and terminal. */
+export const CONVERSATION_MODES: readonly AgentMode[] = ['chat', 'interactive'];
 
 export type AgentStatus =
   | 'starting'
@@ -182,8 +191,98 @@ export interface AgentInfo {
   resources: AgentResources | null;
   usesScreen: boolean;
   prompt: string | null;
+  /** Changes whenever a new process takes over the agent (resume, chat/terminal hand-off). */
+  runId: string;
   /** False for agents restored from an earlier app run: they have no terminal buffer. */
   attached?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Chat
+// ---------------------------------------------------------------------------
+
+export interface ChatFileChange {
+  path: string;
+  kind: 'add' | 'update' | 'delete';
+  /** Unified-diff-style lines: ' ' context, '+' added, '-' removed, '@@' hunk headers. */
+  diff: string;
+}
+
+export interface ChatQuestion {
+  id: string;
+  header: string;
+  question: string;
+  multiSelect: boolean;
+  options: Array<{ label: string; description?: string }>;
+  /** Accepts a free-text answer besides the options. */
+  allowOther: boolean;
+}
+
+export interface ChatOption {
+  id: string;
+  label: string;
+  tone: 'primary' | 'normal' | 'danger';
+}
+
+export type ChatToolStatus = 'running' | 'done' | 'error' | 'declined';
+
+/** One entry of a conversation, as the chat view renders it. Both CLIs' protocols are normalized to this. */
+export type ChatEntry =
+  | { kind: 'user'; id: string; text: string }
+  | { kind: 'assistant'; id: string; text: string; streaming: boolean }
+  | { kind: 'reasoning'; id: string; text: string; streaming: boolean }
+  | {
+      kind: 'tool';
+      id: string;
+      tool: string;
+      title: string;
+      detail: string | null;
+      /** Full input (command, JSON arguments) shown when expanded. */
+      input: string | null;
+      output: string | null;
+      status: ChatToolStatus;
+      files: ChatFileChange[] | null;
+      durationMs: number | null;
+    }
+  | {
+      kind: 'approval';
+      id: string;
+      tool: string;
+      title: string;
+      detail: string | null;
+      body: string | null;
+      bodyKind: 'command' | 'markdown' | 'text' | null;
+      files: ChatFileChange[] | null;
+      options: ChatOption[];
+      questions: ChatQuestion[] | null;
+      /** Deny can carry a note back to the agent ("do it this way instead"). */
+      acceptsFeedback: boolean;
+      state: 'pending' | 'resolved' | 'cancelled';
+      resolution: string | null;
+    }
+  | { kind: 'notice'; id: string; tone: 'info' | 'warning' | 'error'; text: string }
+  | { kind: 'turn'; id: string; ok: boolean; durationMs: number | null; costUsd: number | null; text: string | null };
+
+export type ChatItem = ChatEntry & {
+  /** Position in the conversation. */
+  seq: number;
+  /** Bumped on every change; the higher one wins when updates cross. */
+  rev: number;
+  at: string;
+};
+
+export interface ChatAnswer {
+  optionId: string;
+  /** Note to the agent with a denial, or free text for a question. */
+  message?: string;
+  /** Question id → chosen label(s), comma-joined for multi-select. */
+  answers?: Record<string, string>;
+}
+
+export interface ChatSettingsPatch {
+  permission?: string;
+  model?: string;
+  effort?: string;
 }
 
 export interface ExternalAgentProcess {
@@ -283,12 +382,16 @@ export interface ComputerUseStatus {
 // Settings & environment
 // ---------------------------------------------------------------------------
 
+export type LightPalette = 'cream' | 'grey';
+
 export interface AppSettings {
   activeProfile: Record<Provider, string>;
   cliPath: Record<Provider, string>;
   defaultCwd: string;
   recentCwds: string[];
   theme: 'dark' | 'light' | 'system';
+  /** Which palette "light" means (also used by "system" when the OS is light). */
+  lightPalette: LightPalette;
   terminalFontSize: number;
   terminalFontFamily: string;
   notifyOnNeedsInput: boolean;

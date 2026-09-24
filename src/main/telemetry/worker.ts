@@ -2,8 +2,16 @@
 // (and with it every terminal) never stalls on a large transcript.
 import { parentPort, workerData } from 'node:worker_threads';
 import { TelemetryEngine } from './engine';
+import { IncrementalLineReader } from './jsonl';
+import { claudeHistory, codexHistory } from '../chat/history';
 
 type Request = { id: number; method: string; args: any[] };
+
+async function chatHistory(provider: 'claude' | 'codex', filePath: string) {
+  const lines: string[] = [];
+  await new IncrementalLineReader(filePath).read((line) => lines.push(line));
+  return provider === 'claude' ? claudeHistory(lines) : codexHistory(lines);
+}
 
 const engine = new TelemetryEngine(workerData?.cachePath ?? null, (scanned) => {
   parentPort?.postMessage({ event: 'progress', scanned });
@@ -19,6 +27,7 @@ const methods: Record<string, (...args: any[]) => unknown> = {
   usageReport: (force) => engine.usageReport(force),
   quickReport: () => engine.quickReport(),
   codexLimits: (profile) => engine.codexLimits(profile),
+  chatHistory: (provider, filePath) => chatHistory(provider, filePath),
   saveCache: () => engine.saveCache()
 };
 

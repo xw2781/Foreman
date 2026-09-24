@@ -24,8 +24,10 @@ interface Entry {
   lastSize: string;
 }
 
+type TerminalTheme = 'dark' | 'cream' | 'grey';
+
 const entries = new Map<string, Entry>();
-let options = { fontSize: 13, fontFamily: "'Cascadia Mono', Consolas, monospace", theme: 'dark' as 'dark' | 'light' };
+let options = { fontSize: 13, fontFamily: "'Cascadia Mono', Consolas, monospace", theme: 'dark' as TerminalTheme };
 
 const DARK: ITheme = {
   background: '#0b0d12',
@@ -51,11 +53,11 @@ const DARK: ITheme = {
   brightWhite: '#ffffff'
 };
 
-const LIGHT: ITheme = {
-  background: '#fbfbfd',
-  foreground: '#1d2130',
-  cursor: '#3a4050',
-  cursorAccent: '#fbfbfd',
+const CREAM: ITheme = {
+  background: '#f1ede4',
+  foreground: '#241f18',
+  cursor: '#3d3629',
+  cursorAccent: '#f1ede4',
   selectionBackground: 'rgba(90,95,240,0.22)',
   black: '#1d2130',
   red: '#c7303b',
@@ -75,8 +77,12 @@ const LIGHT: ITheme = {
   brightWhite: '#ffffff'
 };
 
+const GREY: ITheme = { ...CREAM, background: '#e2e4e7', foreground: '#1a1d24', cursor: '#343a46', cursorAccent: '#e2e4e7' };
+
+const THEMES: Record<TerminalTheme, ITheme> = { dark: DARK, cream: CREAM, grey: GREY };
+
 export function terminalBackground() {
-  return options.theme === 'dark' ? DARK.background! : LIGHT.background!;
+  return THEMES[options.theme].background!;
 }
 
 listen('agent-data', ({ id, data, end }) => {
@@ -101,7 +107,7 @@ function create(id: string, provider: Provider | null): Entry {
   const term = new Terminal({
     fontSize: options.fontSize,
     fontFamily: options.fontFamily,
-    theme: options.theme === 'dark' ? DARK : LIGHT,
+    theme: THEMES[options.theme],
     cursorBlink: true,
     scrollback: 10_000,
     allowProposedApi: true,
@@ -214,12 +220,12 @@ export function disposeTerminal(id: string) {
   entries.delete(id);
 }
 
-export function configureTerminals(next: { fontSize: number; fontFamily: string; theme: 'dark' | 'light' }) {
+export function configureTerminals(next: { fontSize: number; fontFamily: string; theme: TerminalTheme }) {
   options = next;
   for (const entry of entries.values()) {
     entry.term.options.fontSize = next.fontSize;
     entry.term.options.fontFamily = next.fontFamily;
-    entry.term.options.theme = next.theme === 'dark' ? DARK : LIGHT;
+    entry.term.options.theme = THEMES[next.theme];
     try {
       entry.fit.fit();
     } catch {

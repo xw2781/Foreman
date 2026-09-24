@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, Cpu, History, LayoutGrid, MonitorDot, Plus, Search, Square, SquareTerminal, Trash2, XCircle } from 'lucide-react';
-import { LIVE_STATUSES, PROVIDER_LABEL, type AgentInfo, type ExternalAgentProcess, type Provider } from '@shared/types';
+import { AGENT_MODES, LIVE_STATUSES, PROVIDER_LABEL, type AgentInfo, type ExternalAgentProcess, type Provider } from '@shared/types';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
 import { STATUS_LABEL, ago, compact, duration, folderName, usd } from '../format';
@@ -46,7 +46,7 @@ function SummaryTiles({ agents }: { agents: AgentInfo[] }) {
     <div className="tiles">
       <div className="tile">
         <span className="tile-label">Running agents</span>
-        <span className="tile-value">{live.filter((a) => a.mode === 'interactive' || a.mode === 'task').length}</span>
+        <span className="tile-value">{live.filter((a) => AGENT_MODES.includes(a.mode)).length}</span>
         <span className="tile-foot">
           {count('working')} working · {count('idle')} idle
         </span>
@@ -177,7 +177,7 @@ function ExternalSection() {
 
 export function TaskManagerView() {
   useTicker(5000);
-  const agents = useApp((s) => s.agents).filter((a) => a.mode === 'interactive' || a.mode === 'task');
+  const agents = useApp((s) => s.agents).filter((a) => AGENT_MODES.includes(a.mode));
   const openLauncher = useApp((s) => s.openLauncher);
   const [filter, setFilter] = useState<Filter>('all');
   const [provider, setProvider] = useState<'all' | Provider>('all');

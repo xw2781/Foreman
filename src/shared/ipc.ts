@@ -1,6 +1,10 @@
 import type {
   AgentInfo,
+  AgentMode,
   AppSettings,
+  ChatAnswer,
+  ChatItem,
+  ChatSettingsPatch,
   ComputerUseStatus,
   EnvironmentInfo,
   ExternalAgentProcess,
@@ -44,8 +48,16 @@ export interface InvokeMap {
   'agents.remove': (id: string) => void;
   'agents.clearFinished': () => void;
   'agents.rename': (id: string, title: string) => void;
-  'agents.resume': (id: string) => AgentInfo;
+  /** Continues the agent's conversation in place, as a chat or in the terminal (default: its current kind). */
+  'agents.resume': (id: string, mode?: AgentMode) => AgentInfo;
   'agents.buffer': (id: string) => { data: string; end: number };
+
+  'chat.items': (id: string) => ChatItem[];
+  /** Sends a message; a finished chat is resumed with it. */
+  'chat.send': (id: string, text: string) => AgentInfo;
+  'chat.interrupt': (id: string) => void;
+  'chat.respond': (id: string, itemId: string, answer: ChatAnswer) => void;
+  'chat.configure': (id: string, patch: ChatSettingsPatch) => void;
 
   /** null until the first process snapshot has been taken. */
   'processes.external': () => ExternalAgentProcess[] | null;
@@ -67,6 +79,8 @@ export interface EventMap {
   agents: AgentInfo[];
   /** `end` is the running character offset after this chunk, so replay and live data can be stitched exactly. */
   'agent-data': { id: string; data: string; end: number };
+  /** Changed chat items; `reset` replaces the whole conversation (history loaded, new process). */
+  chat: { id: string; items: ChatItem[]; reset: boolean };
   profiles: ProfileView[];
   usage: UsageReport;
   'usage-progress': number;
@@ -86,13 +100,14 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'profiles.login', 'profiles.logout', 'profiles.setGlobalDefault', 'profiles.shareConfig', 'profiles.openShell',
   'agents.list', 'agents.launch', 'agents.write', 'agents.resize', 'agents.stop', 'agents.remove', 'agents.clearFinished',
   'agents.rename', 'agents.resume', 'agents.buffer',
+  'chat.items', 'chat.send', 'chat.interrupt', 'chat.respond', 'chat.configure',
   'processes.external', 'processes.kill',
   'usage.report',
   'computerUse.status', 'computerUse.command', 'computerUse.setPolicy', 'computerUse.install', 'computerUse.image'
 ];
 
 export const EVENT_NAMES: EventName[] = [
-  'agents', 'agent-data', 'profiles', 'usage', 'usage-progress', 'computer-use', 'externals', 'navigate', 'toast', 'settings'
+  'agents', 'agent-data', 'chat', 'profiles', 'usage', 'usage-progress', 'computer-use', 'externals', 'navigate', 'toast', 'settings'
 ];
 
 /** Fire-and-forget channels (no reply), for the hot path of terminal I/O. */

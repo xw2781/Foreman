@@ -46,22 +46,33 @@ if (!dev) {
 
   let electron = null;
   let restartTimer = null;
+  let restarting = Promise.resolve();
+  const relaunch = async () => {
+    if (electron) {
+      // The app holds a single-instance lock: a new process started before the
+      // old one exits would quit at once and end the dev session.
+      const old = electron;
+      electron = null;
+      old.removeAllListeners('exit');
+      const exited = new Promise((resolve) => old.once('exit', resolve));
+      old.kill();
+      await exited;
+    }
+    electron = spawn(electronBinary(root), ['.'], {
+      cwd: root,
+      stdio: 'inherit',
+      env: { ...electronEnv(), ELECTRON_RENDERER_URL: rendererUrl }
+    });
+    // Closing the app window ends the dev session.
+    electron.on('exit', (code) => {
+      server.close();
+      process.exit(code ?? 0);
+    });
+  };
   const restart = () => {
     clearTimeout(restartTimer);
     restartTimer = setTimeout(() => {
-      if (electron) {
-        electron.removeAllListeners('exit');
-        electron.kill();
-      }
-      electron = spawn(electronBinary(root), ['.'], {
-        cwd: root,
-        stdio: 'inherit',
-        env: { ...electronEnv(), ELECTRON_RENDERER_URL: rendererUrl }
-      });
-      electron.on('exit', (code) => {
-        server.close();
-        process.exit(code ?? 0);
-      });
+      restarting = restarting.then(relaunch);
     }, 150);
   };
 

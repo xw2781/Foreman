@@ -52,35 +52,63 @@
   --nav-w: 208px;
 }
 
-:root[data-theme='light'] {
+/* Light palettes. Neither uses a white panel: surfaces sit a step below paper so the
+   window never glares. Shared roles first, then each palette's ground and ink.
+   Series 2–5 reuse the dark slots: the lighter tints were too faint on these grounds. */
+:root[data-theme='cream'],
+:root[data-theme='grey'] {
   color-scheme: light;
-  --page: #f3f4f7;
-  --surface-1: #ffffff;
-  --surface-2: #f5f6f9;
-  --surface-3: #eceef3;
-  --overlay: rgba(20, 24, 34, 0.35);
-  --border: rgba(16, 22, 34, 0.09);
-  --border-strong: rgba(16, 22, 34, 0.16);
-  --text-primary: #151821;
-  --text-secondary: #4b5263;
-  --text-muted: #858c9c;
-  --grid: #e7e8ec;
-  --baseline: #c9ccd4;
-  --accent: #5a5ff0;
-  --accent-strong: #4a4fe0;
-  --accent-soft: rgba(90, 95, 240, 0.1);
-  --good-soft: rgba(12, 163, 12, 0.1);
-  --warning-soft: rgba(250, 178, 25, 0.16);
-  --critical-soft: rgba(208, 59, 59, 0.1);
+  --good-soft: rgba(12, 163, 12, 0.12);
+  --warning-soft: rgba(250, 178, 25, 0.2);
+  --critical-soft: rgba(208, 59, 59, 0.12);
   --series-1: #2a78d6;
-  --series-2: #eb6834;
-  --series-3: #1baf7a;
-  --series-4: #eda100;
-  --series-5: #e87ba4;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
   --series-6: #008300;
   --series-7: #4a3aa7;
   --series-8: #e34948;
-  --shadow: 0 12px 36px rgba(20, 24, 34, 0.14);
+}
+
+/* Cream: warm off-white paper. */
+:root[data-theme='cream'] {
+  --page: #ebe6dc;
+  --surface-1: #f4f0e7;
+  --surface-2: #eee9df;
+  --surface-3: #e3ddd1;
+  --overlay: rgba(40, 32, 20, 0.32);
+  --border: rgba(60, 45, 20, 0.1);
+  --border-strong: rgba(60, 45, 20, 0.19);
+  --text-primary: #221e17;
+  --text-secondary: #554d40;
+  --text-muted: #7d7465;
+  --grid: #e0d9cc;
+  --baseline: #c4bba9;
+  --accent: #5257dc;
+  --accent-strong: #4449c9;
+  --accent-soft: rgba(82, 87, 220, 0.12);
+  --shadow: 0 12px 36px rgba(60, 45, 20, 0.16);
+}
+
+/* Pro grey: neutral mid-light grey, like a pro tool's light UI. */
+:root[data-theme='grey'] {
+  --page: #d7d9dd;
+  --surface-1: #e5e7ea;
+  --surface-2: #dee0e4;
+  --surface-3: #d2d5da;
+  --overlay: rgba(16, 20, 28, 0.34);
+  --border: rgba(16, 22, 34, 0.12);
+  --border-strong: rgba(16, 22, 34, 0.22);
+  --text-primary: #15181e;
+  --text-secondary: #3e4450;
+  --text-muted: #646b78;
+  --grid: #d0d3d8;
+  --baseline: #afb4bd;
+  --accent: #4850cc;
+  --accent-strong: #3b42b8;
+  --accent-soft: rgba(72, 80, 204, 0.14);
+  --shadow: 0 12px 36px rgba(16, 20, 28, 0.2);
 }
 
 * {
@@ -1281,7 +1309,7 @@ table.table {
 }
 .term-header .th-title {
   display: grid;
-  min-width: 0;
+  min-width: 160px;
   flex: 1;
   gap: 2px;
   overflow: hidden;

@@ -11,12 +11,13 @@ import {
   SquareTerminal,
   Users
 } from 'lucide-react';
-import { LIVE_STATUSES, PROVIDERS, PROVIDER_LABEL, type Provider } from '@shared/types';
+import { AGENT_MODES, LIVE_STATUSES, PROVIDERS, PROVIDER_LABEL, type Provider } from '@shared/types';
 import { call, errorMessage, listen } from './api';
 import { useApp, type View } from './store';
 import { colorVar, limitSummary, usd } from './format';
 import { ConfirmHost, LimitMeters, ProviderIcon, Toasts } from './ui';
 import { configureTerminals, disposeTerminal } from './terminals';
+import { forgetChat } from './chats';
 import { AgentsView } from './views/AgentsView';
 import { TaskManagerView } from './views/TaskManagerView';
 import { UsageView } from './views/UsageView';
@@ -59,8 +60,13 @@ function useBootstrap() {
     load();
     const offs = [
       listen('agents', (agents) => {
-        const present = new Set(agents.map((a) => a.id));
-        for (const old of store().agents) if (!present.has(old.id)) disposeTerminal(old.id);
+        const runs = new Map(agents.map((a) => [a.id, a.runId]));
+        for (const old of store().agents) {
+          const run = runs.get(old.id);
+          // A new process for the same agent (resume, hand-off) starts a fresh terminal.
+          if (run !== old.runId) disposeTerminal(old.id);
+          if (run === undefined) forgetChat(old.id);
+        }
         set({ agents });
         const selected = store().selectedAgentId;
         if (selected && !agents.some((a) => a.id === selected)) set({ selectedAgentId: agents[0]?.id ?? null });
@@ -90,7 +96,8 @@ function useTheme() {
     query.addEventListener('change', onChange);
     return () => query.removeEventListener('change', onChange);
   }, []);
-  const theme = settings?.theme === 'system' ? (systemDark ? 'dark' : 'light') : settings?.theme ?? 'dark';
+  const mode = settings?.theme === 'system' ? (systemDark ? 'dark' : 'light') : settings?.theme ?? 'dark';
+  const theme = mode === 'dark' ? 'dark' : settings?.lightPalette ?? 'cream';
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
@@ -239,7 +246,7 @@ function Nav() {
   const computerUse = useApp((s) => s.computerUse);
   const env = useApp((s) => s.env);
   const needsInput = agents.filter((a) => a.status === 'needs-input').length;
-  const live = agents.filter((a) => LIVE_STATUSES.includes(a.status) && (a.mode === 'interactive' || a.mode === 'task')).length;
+  const live = agents.filter((a) => LIVE_STATUSES.includes(a.status) && AGENT_MODES.includes(a.mode)).length;
   const badges: Partial<Record<View, React.ReactNode>> = {
     agents: needsInput ? <span className="badge count">{needsInput}</span> : live ? <span className="badge">{live}</span> : null,
     computer: computerUse?.active && computerUse.overlayRunning ? <span className="badge warning">Live</span> : null

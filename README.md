@@ -2,7 +2,7 @@
 
 A Windows desktop app for running **Claude Code** and **Codex** side by side:
 
-- **Agents** — each agent runs in a real terminal (the CLI's own UI) with live status: working, needs input, idle, done. Start interactive sessions or headless background tasks, rename them, stop them, and resume finished conversations.
+- **Agents** — chat with an agent (the default) or run it in a real terminal (the CLI's own UI), with live status: working, needs input, idle, done. The chat streams replies, shows each tool step with its output and diffs, and asks for approvals inline; typing into a finished chat continues it, and a Chat ⇄ Terminal switch hands the same conversation between the two. Headless background tasks, renaming, stopping and resuming work as before.
 - **Task Manager** — every agent the app started, with status, account, model, context usage, cost, CPU and memory; plus the Claude Code / Codex processes running elsewhere (VS Code, the desktop apps, terminals), which you can end.
 - **Usage & Cost** — API-equivalent cost of every session on the machine, per day, per tool, per account and per model, with context usage per session. Any session (including ones from VS Code) can be resumed in the app.
 - **Accounts** — two (or more) accounts per tool, switchable per agent, with each account's 5-hour and weekly plan usage. Accounts can run at the same time.
@@ -49,6 +49,9 @@ Plan usage comes from what each CLI last reported: Codex writes it into its sess
 
 Node isn't required on PATH: `.tools/node` holds a portable Node (not committed).
 
+Double-click `dev.cmd` (or run it from any terminal) to start the app in development mode:
+UI edits hot-reload in place, main/preload edits restart the app, and closing the window ends the session.
+
 ```powershell
 $env:PATH = "$PWD\.tools\node;$env:PATH"
 npm install
@@ -62,8 +65,9 @@ npm run dist:dir   # unpacked app in dist\win-unpacked
 Layout:
 
 - `src/main` — Electron main process: `agents.ts` (terminals, headless tasks, status), `profiles.ts` (accounts), `hookServer.ts` + `statusLine.ts` (Claude hooks/status line), `processMonitor.ts`, `computerUse.ts`, `cliLocator.ts`, `commands.ts`.
+- `src/main/chat` — chat mode: `claudeChat.ts` drives `claude --input-format stream-json --permission-prompt-tool stdio` (the Agent SDK protocol), `codexChat.ts` drives `codex app-server` (JSON-RPC, as Codex's own IDE extension and desktop app do); both normalize to the chat items in `src/shared/types.ts`. `history.ts` rebuilds past conversations from transcripts and rollouts (in the telemetry worker).
 - `src/main/telemetry` — session parsing and pricing, run in a worker thread (`engine.ts`, `claudeTranscript.ts`, `codexRollout.ts`, `pricing.ts`).
-- `src/renderer` — React UI; `terminals.ts` keeps one xterm per agent alive across views.
+- `src/renderer` — React UI; `terminals.ts` keeps one xterm per agent alive across views, `chats.ts` holds conversations, `views/ChatView.tsx` renders them.
 - `src/shared` — types and the IPC contract.
 - `resources/skills/computer-use` — the computer-use skill.
 

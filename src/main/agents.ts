@@ -4,15 +4,25 @@ import { spawn as spawnChild, type ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import * as pty from 'node-pty';
 import {
+  AGENT_MODES,
+  CONVERSATION_MODES,
   LIVE_STATUSES,
   PROVIDER_LABEL,
   type AgentInfo,
+  type AgentMode,
   type AgentStatus,
   type AppSettings,
+  type ChatAnswer,
+  type ChatItem,
+  type ChatSettingsPatch,
   type LaunchOptions,
   type Profile
 } from '../shared/types';
-import { claudeCommand, codexCommand, loginCommand } from './commands';
+import { claudeCommand, codexCommand, loginCommand, splitArgs } from './commands';
+import { ChatLog, clipText } from './chat/log';
+import { ClaudeChat, claudeChatArgs } from './chat/claudeChat';
+import { CodexChat } from './chat/codexChat';
+import { LineSplitter, type ChatDriver, type ChatHost } from './chat/driver';
 import { locateCli, spawnSpec } from './cliLocator';
 import { ClaudeStreamFormatter, describeToolInput } from './streamFormat';
 import type { HookEvent, HookServer } from './hookServer';
@@ -33,7 +43,7 @@ const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z
 const APPROVAL_PATTERNS = [
   /Wouldyouliketo(run|make|grant|send)/i, // Codex
   /Doyouwantto(proceed|make|create|allow|run|overwrite)/i, // Claude Code
-  /Doyoutrust(the|this)/i, // either tool's folder-trust prompt
+  /Doyoutrust(the|this)|Itrustthisfolder/i, // either tool's folder-trust prompt
   /Choosethetextstyle|Selectloginmethod|Pressentertocontinue/i // Claude Code's first-run screens
 ];
 
@@ -59,6 +69,13 @@ interface Session {
   lastTelemetryKey: string;
   discoveryAttempts: number;
   statusLine: StatusSnapshot | null;
+  /** Chat mode: the conversation and the protocol driver behind it. */
+  chat: ChatLog | null;
+  driver: (ChatDriver & { dispose?: (reason: string) => void }) | null;
+  stderrTail: string;
+  /** Set when the chat protocol failed to start; the exit then counts as a failure. */
+  failure: string | null;
+  exitWaiters: Array<() => void>;
 }
 
 export interface AgentManagerDeps {
@@ -68,6 +85,11 @@ export interface AgentManagerDeps {
   processes: ProcessMonitor;
   settings: () => AppSettings;
   userDataDir: string;
+  appVersion: string;
+}
+
+function newRunId() {
+  return crypto.randomBytes(4).toString('hex');
 }
 
 export class AgentManager {
@@ -77,19 +99,22 @@ export class AgentManager {
   private changed = new Set<string>();
   private changeTimer: NodeJS.Timeout | null = null;
   private ticking = false;
+  private chatTimer: NodeJS.Timeout | null = null;
 
   onData: (id: string, data: string, end: number) => void = () => {};
+  onChat: (id: string, items: ChatItem[], reset: boolean) => void = () => {};
   onChanged: (agents: AgentInfo[]) => void = () => {};
   onAttention: (info: AgentInfo, reason: 'needs-input' | 'turn-complete' | 'task-complete' | 'failed') => void = () => {};
 
   constructor(private deps: AgentManagerDeps) {
     this.history = new JsonStore(path.join(deps.userDataDir, 'agents.json'), { agents: [] });
     // Agents from a previous run died with the app; keep them as resumable history.
-    const restored = this.history.data.agents.map((agent) =>
-      LIVE_STATUSES.includes(agent.status)
-        ? { ...agent, status: 'stopped' as AgentStatus, statusDetail: 'App was closed', endedAt: agent.endedAt ?? agent.lastActivityAt, pid: null, resources: null }
-        : agent
-    );
+    const restored = this.history.data.agents.map((agent) => {
+      const withRun = { ...agent, runId: agent.runId ?? agent.id };
+      return LIVE_STATUSES.includes(agent.status)
+        ? { ...withRun, status: 'stopped' as AgentStatus, statusDetail: 'App was closed', endedAt: agent.endedAt ?? agent.lastActivityAt, pid: null, resources: null }
+        : withRun;
+    });
     this.history.replace({ agents: restored });
     deps.hooks.onEvent = (event) => this.handleHook(event);
   }
@@ -126,7 +151,11 @@ export class AgentManager {
   // Launching
   // -------------------------------------------------------------------------
 
-  async launch(options: LaunchOptions): Promise<AgentInfo> {
+  /**
+   * Starts an agent. With `reuseId`, a finished agent is continued in place:
+   * same id and list entry, a new process (resume, chat/terminal hand-off).
+   */
+  async launch(options: LaunchOptions, reuseId?: string): Promise<AgentInfo> {
     const profile = this.deps.profiles.require(options.profileId);
     if (profile.provider !== options.provider) throw new Error('That account belongs to a different tool.');
     if (!exists(options.cwd)) throw new Error(`Folder not found: ${options.cwd}`);
@@ -135,12 +164,36 @@ export class AgentManager {
     const cli = await locateCli(profile.provider, settings.cliPath[profile.provider]);
     if (!cli.path) throw new Error(cli.error ?? 'CLI not found');
 
-    const id = crypto.randomBytes(6).toString('hex');
+    const previousSession = reuseId ? this.sessions.get(reuseId) : undefined;
+    if (previousSession && !previousSession.info.endedAt) throw new Error('This agent is still running.');
+    const previous = reuseId ? this.get(reuseId) : undefined;
+    const id = reuseId ?? crypto.randomBytes(6).toString('hex');
     let claudeSessionId: string | null = null;
     let settingsFile: string | null = null;
     let args: string[];
     let headless = false;
-    if (options.mode === 'login') {
+    let chat: ChatLog | null = null;
+    if (options.mode === 'chat') {
+      // A chat continued in this run keeps its items; otherwise the session file has them.
+      if (previousSession?.chat?.size && previousSession.info.mode === 'chat') chat = previousSession.chat;
+      else {
+        chat = options.resumeSessionId ? await this.historyLog(profile, options.resumeSessionId, previous?.transcriptPath ?? null) : new ChatLog();
+        chat.reset = true;
+      }
+      if (profile.provider === 'claude') {
+        claudeSessionId = options.resumeSessionId ?? crypto.randomUUID();
+        args = claudeChatArgs({
+          sessionId: options.resumeSessionId ? null : claudeSessionId,
+          resumeSessionId: options.resumeSessionId,
+          model: options.model,
+          effort: options.effort,
+          permission: options.permission,
+          extraArgs: splitArgs(options.extraArgs)
+        });
+      } else {
+        args = ['app-server', ...splitArgs(options.extraArgs)];
+      }
+    } else if (options.mode === 'login') {
       args = loginCommand(profile);
     } else if (profile.provider === 'claude') {
       claudeSessionId = options.resumeSessionId ?? crypto.randomUUID();
@@ -154,6 +207,7 @@ export class AgentManager {
     }
 
     const title = options.title?.trim()
+      || previous?.title
       || (options.mode === 'login' ? `Sign in · ${profile.label}` : null)
       || promptTitle(options.prompt ?? null)
       || `${path.basename(options.cwd) || options.cwd}`;
@@ -172,20 +226,52 @@ export class AgentManager {
       status: 'starting',
       statusDetail: null,
       pid: null,
-      startedAt: now,
+      startedAt: previous?.startedAt ?? now,
       endedAt: null,
       exitCode: null,
       sessionId: options.resumeSessionId ?? claudeSessionId,
-      transcriptPath: null,
+      transcriptPath: options.resumeSessionId ? previous?.transcriptPath ?? null : null,
       lastActivityAt: now,
       lastOutputAt: null,
       commandLine: [cli.path, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' '),
       telemetry: null,
       resources: null,
       usesScreen: false,
-      prompt: options.prompt ?? null
+      prompt: options.prompt ?? previous?.prompt ?? null,
+      runId: newRunId()
     };
-    const session: Session = {
+    const session = this.createSession(info, options, profile, {
+      formatter: headless && profile.provider === 'claude' ? new ClaudeStreamFormatter() : null,
+      claudeSessionId,
+      settingsFile,
+      chat,
+      titleLocked: Boolean(options.title?.trim()) || options.mode === 'login' || Boolean(previous)
+    });
+
+    const env = this.deps.profiles.envFor(profile, cleanEnv());
+    env.ATC_AGENT_ID = id;
+    env.ATC_AGENT_NAME = `${PROVIDER_LABEL[profile.provider]} · ${profile.label}`;
+    env.COLORTERM = 'truecolor';
+    this.sessions.set(id, session);
+
+    try {
+      if (options.mode === 'chat') this.startChat(session, cli.path, args, env);
+      else if (headless) this.startHeadless(session, cli.path, args, env);
+      else this.startTerminal(session, cli.path, args, env);
+    } catch (error) {
+      this.sessions.delete(id);
+      if (previousSession) this.sessions.set(id, previousSession);
+      if (settingsFile) this.deps.hooks.removeSettingsFile(id);
+      throw error;
+    }
+    this.onRememberCwd(options.cwd);
+    this.markChanged(id);
+    if (chat) this.scheduleChatFlush();
+    return info;
+  }
+
+  private createSession(info: AgentInfo, options: LaunchOptions, profile: Profile, extra: Partial<Session> = {}): Session {
+    return {
       info,
       options,
       profile,
@@ -196,36 +282,24 @@ export class AgentManager {
       total: 0,
       outbox: '',
       tail: '',
-      formatter: headless && profile.provider === 'claude' ? new ClaudeStreamFormatter() : null,
-      claudeSessionId,
-      settingsFile,
+      formatter: null,
+      claudeSessionId: null,
+      settingsFile: null,
       hookStatus: null,
       needsInput: false,
       needsInputSince: 0,
-      titleLocked: Boolean(options.title?.trim()) || options.mode === 'login',
+      titleLocked: false,
       stopping: false,
       lastTelemetryKey: '',
       discoveryAttempts: 0,
-      statusLine: null
+      statusLine: null,
+      chat: null,
+      driver: null,
+      stderrTail: '',
+      failure: null,
+      exitWaiters: [],
+      ...extra
     };
-
-    const env = this.deps.profiles.envFor(profile, cleanEnv());
-    env.ATC_AGENT_ID = id;
-    env.ATC_AGENT_NAME = `${PROVIDER_LABEL[profile.provider]} · ${profile.label}`;
-    env.COLORTERM = 'truecolor';
-    this.sessions.set(id, session);
-
-    try {
-      if (headless) this.startHeadless(session, cli.path, args, env);
-      else this.startTerminal(session, cli.path, args, env);
-    } catch (error) {
-      this.sessions.delete(id);
-      if (settingsFile) this.deps.hooks.removeSettingsFile(id);
-      throw error;
-    }
-    this.onRememberCwd(options.cwd);
-    this.markChanged(id);
-    return info;
   }
 
   /** A plain shell whose environment points at one account: run anything as that account. */
@@ -259,31 +333,10 @@ export class AgentManager {
       telemetry: null,
       resources: null,
       usesScreen: false,
-      prompt: null
+      prompt: null,
+      runId: newRunId()
     };
-    const session: Session = {
-      info,
-      options: { provider: profile.provider, profileId, cwd, mode: 'shell' },
-      profile,
-      pty: null,
-      child: null,
-      chunks: [],
-      size: 0,
-      total: 0,
-      outbox: '',
-      tail: '',
-      formatter: null,
-      claudeSessionId: null,
-      settingsFile: null,
-      hookStatus: null,
-      needsInput: false,
-      needsInputSince: 0,
-      titleLocked: true,
-      stopping: false,
-      lastTelemetryKey: '',
-      discoveryAttempts: 0,
-      statusLine: null
-    };
+    const session = this.createSession(info, { provider: profile.provider, profileId, cwd, mode: 'shell' }, profile, { titleLocked: true });
     const env = this.deps.profiles.envFor(profile, cleanEnv());
     env.ATC_AGENT_ID = id;
     env.ATC_AGENT_NAME = `Shell · ${profile.label}`;
@@ -345,6 +398,222 @@ export class AgentManager {
       }
       this.handleExit(session, code ?? 1);
     });
+  }
+
+  /** Chat mode: the CLI's structured protocol over pipes, rendered by the app's chat view. */
+  private startChat(session: Session, file: string, args: string[], env: Record<string, string>) {
+    const spec = spawnSpec(file, args);
+    const child = typeof spec.args === 'string'
+      ? spawnChild(spec.file, [spec.args], { cwd: session.info.cwd, env, windowsHide: true, windowsVerbatimArguments: true })
+      : spawnChild(spec.file, spec.args, { cwd: session.info.cwd, env, windowsHide: true });
+    session.child = child;
+    session.info.pid = child.pid ?? null;
+    const write = (message: object) => {
+      if (child.stdin?.writable) child.stdin.write(`${JSON.stringify(message)}\n`);
+    };
+    const host = this.chatHost(session);
+    const options = session.options;
+    const driver: NonNullable<Session['driver']> = session.profile.provider === 'claude'
+      ? new ClaudeChat(host, write)
+      : new CodexChat(host, write, {
+          cwd: session.info.cwd,
+          resumeThreadId: options.resumeSessionId,
+          model: options.model,
+          effort: options.effort,
+          permission: options.permission,
+          appVersion: this.deps.appVersion
+        });
+    session.driver = driver;
+    const decodeOut = new StringDecoder('utf8');
+    const decodeErr = new StringDecoder('utf8');
+    const lines = new LineSplitter((line) => {
+      try {
+        driver.receive(line);
+      } catch (error) {
+        console.error('chat protocol error', error);
+      }
+    });
+    child.stdout?.on('data', (data: Buffer) => lines.push(decodeOut.write(data)));
+    child.stderr?.on('data', (data: Buffer) => {
+      session.stderrTail = (session.stderrTail + decodeErr.write(data)).slice(-6000);
+    });
+    // Writing to a process that just exited raises EPIPE; the exit handler reports it.
+    child.stdin?.on('error', () => {});
+    child.on('error', (error) => {
+      session.failure = error.message;
+      this.handleExit(session, 1);
+    });
+    child.on('close', (code) => {
+      lines.push(decodeOut.end());
+      lines.end();
+      driver.dispose?.('The process exited');
+      this.handleExit(session, code ?? 1);
+    });
+    driver.start(options.prompt).catch((error: Error) => {
+      if (session.info.endedAt) return;
+      session.failure = `Couldn't start ${PROVIDER_LABEL[session.profile.provider]}: ${error.message}`;
+      try {
+        child.kill();
+      } catch {
+        // already gone
+      }
+    });
+  }
+
+  private chatHost(session: Session): ChatHost {
+    const info = session.info;
+    return {
+      log: session.chat!,
+      changed: () => this.scheduleChatFlush(),
+      status: (status, detail) => {
+        if (info.endedAt) return;
+        session.needsInput = status === 'needs-input';
+        if (session.needsInput) session.needsInputSince = Date.now();
+        info.lastOutputAt = new Date().toISOString();
+        this.updateStatus(session, status, detail);
+      },
+      session: (update) => {
+        if (update.sessionId && update.sessionId !== info.sessionId) {
+          info.sessionId = update.sessionId;
+          session.claudeSessionId = session.profile.provider === 'claude' ? update.sessionId : session.claudeSessionId;
+        }
+        if (update.transcriptPath) info.transcriptPath = update.transcriptPath;
+        if (update.model !== undefined) info.model = update.model || null;
+        if (update.permission) info.permission = update.permission;
+        if (update.title && !session.titleLocked) info.title = update.title;
+        this.markChanged(info.id);
+      },
+      turnComplete: () => {
+        this.refreshTelemetry(session).catch(() => {});
+      },
+      limits: (limits) => this.deps.profiles.applyReportedLimits(session.profile.id, limits)
+    };
+  }
+
+  /** A past conversation as a chat log, from the CLI's session file. */
+  private async historyLog(profile: Profile, sessionId: string | null, knownPath: string | null): Promise<ChatLog> {
+    const log = new ChatLog();
+    let file = knownPath;
+    try {
+      if (!file && sessionId) {
+        file = profile.provider === 'claude'
+          ? await this.deps.telemetry.findClaudeTranscript(profile.configDir, sessionId)
+          : await this.deps.telemetry.findCodexRolloutById(profile.configDir, sessionId);
+      }
+      if (!file || !exists(file)) return log;
+      for (const { entry, at } of await this.deps.telemetry.chatHistory(profile.provider, file)) log.upsert(entry, at ?? undefined);
+    } catch (error) {
+      log.upsert({ kind: 'notice', id: 'history-error', tone: 'warning', text: `Couldn't load earlier messages: ${error instanceof Error ? error.message : String(error)}` });
+    }
+    log.takeDirty();
+    return log;
+  }
+
+  private scheduleChatFlush() {
+    if (this.chatTimer) return;
+    this.chatTimer = setTimeout(() => {
+      this.chatTimer = null;
+      for (const session of this.sessions.values()) {
+        const chat = session.chat;
+        if (!chat?.hasChanges) continue;
+        const reset = chat.reset;
+        chat.reset = false;
+        const dirty = chat.takeDirty();
+        this.onChat(session.info.id, reset ? chat.list() : dirty, reset);
+      }
+    }, 40);
+  }
+
+  // -------------------------------------------------------------------------
+  // Chat
+  // -------------------------------------------------------------------------
+
+  async chatItems(id: string): Promise<ChatItem[]> {
+    const session = this.sessions.get(id);
+    if (session?.chat) return session.chat.list();
+    const info = this.get(id);
+    if (!info || !CONVERSATION_MODES.includes(info.mode)) return [];
+    const profile = this.deps.profiles.list().find((p) => p.id === info.profileId);
+    if (!profile) return [];
+    const log = await this.historyLog(profile, info.telemetry?.sessionId ?? info.sessionId, info.transcriptPath);
+    return log.list();
+  }
+
+  /** Sends a chat message; a chat that has ended is resumed in place with it. */
+  async chatSend(id: string, text: string): Promise<AgentInfo> {
+    if (!text.trim()) throw new Error('Type a message first.');
+    const session = this.sessions.get(id);
+    if (session && !session.info.endedAt) {
+      if (!session.driver) throw new Error('This agent runs in the terminal; type your message there.');
+      session.driver.send(text);
+      session.info.lastActivityAt = new Date().toISOString();
+      return session.info;
+    }
+    const info = this.get(id);
+    if (!info) throw new Error('Unknown agent');
+    return this.continueAgent(info, 'chat', text);
+  }
+
+  chatInterrupt(id: string) {
+    this.sessions.get(id)?.driver?.interrupt();
+  }
+
+  chatRespond(id: string, itemId: string, answer: ChatAnswer) {
+    const session = this.sessions.get(id);
+    if (!session?.driver || session.info.endedAt) throw new Error('This conversation is no longer running.');
+    session.driver.respond(itemId, answer);
+  }
+
+  chatConfigure(id: string, patch: ChatSettingsPatch) {
+    const session = this.sessions.get(id);
+    if (session?.driver && !session.info.endedAt) {
+      session.driver.configure(patch);
+      if (patch.effort) session.options = { ...session.options, effort: patch.effort };
+      return;
+    }
+    // Not running: remembered for when the conversation continues.
+    const apply = (info: AgentInfo) => ({
+      ...info,
+      permission: patch.permission ?? info.permission,
+      model: patch.model !== undefined ? patch.model || null : info.model
+    });
+    if (session) {
+      Object.assign(session.info, apply(session.info));
+      if (patch.effort) session.options = { ...session.options, effort: patch.effort };
+      this.markChanged(id);
+    } else {
+      this.history.replace({ agents: this.history.data.agents.map((a) => (a.id === id ? apply(a) : a)) });
+      this.emitChanged();
+    }
+  }
+
+  /** Relaunches a finished agent's conversation in place, as a chat or in the terminal. */
+  private continueAgent(info: AgentInfo, mode: AgentMode, prompt?: string): Promise<AgentInfo> {
+    const sessionId = info.telemetry?.sessionId ?? info.sessionId;
+    // Only a conversation the CLI actually saved can be resumed; an empty one starts over.
+    const resumable = Boolean(sessionId && (info.transcriptPath || info.telemetry));
+    if (!resumable && mode !== 'chat') throw new Error('This agent never started a session that can be resumed.');
+    const effort = this.sessions.get(info.id)?.options.effort;
+    return this.launch(
+      {
+        provider: info.provider,
+        profileId: info.profileId,
+        cwd: info.cwd,
+        mode,
+        title: info.title,
+        model: info.model ?? undefined,
+        effort,
+        permission: info.permission ?? undefined,
+        resumeSessionId: resumable ? sessionId! : undefined,
+        prompt
+      },
+      info.id
+    );
+  }
+
+  private waitForExit(session: Session): Promise<void> {
+    if (session.info.endedAt) return Promise.resolve();
+    return new Promise((resolve) => session.exitWaiters.push(resolve));
   }
 
   onRememberCwd: (cwd: string) => void = () => {};
@@ -437,15 +706,27 @@ export class AgentManager {
     info.resources = null;
     session.needsInput = false;
     let status: AgentStatus;
-    if (session.stopping) status = 'stopped';
+    if (session.failure) status = 'failed';
+    else if (session.stopping) status = 'stopped';
     else if (info.mode === 'task') {
       const failed = exitCode !== 0 || session.formatter?.result?.isError;
       status = failed ? 'failed' : 'done';
     } else status = exitCode === 0 ? 'done' : 'failed';
     info.status = status;
-    info.statusDetail = session.stopping ? 'Stopped' : `Exited with code ${exitCode}`;
-    this.handleOutput(session, `\r\n\x1b[2m[process exited with code ${exitCode}]\x1b[0m\r\n`);
+    info.statusDetail = session.failure ? 'Failed to start' : session.stopping ? 'Stopped' : `Exited with code ${exitCode}`;
+    if (session.chat) {
+      session.chat.settle(session.stopping ? 'Stopped' : 'The process exited');
+      if (status === 'failed') {
+        const log = session.stderrTail.replace(/\x1b\[[0-9;]*m/g, '').trim().split(/\r?\n/).slice(-12).join('\n');
+        const text = session.failure ?? `${PROVIDER_LABEL[session.profile.provider]} exited unexpectedly (code ${exitCode}).`;
+        session.chat.upsert({ kind: 'notice', id: `exit-${info.runId}`, tone: 'error', text: log ? `${text}\n\n${clipText(log, 2000)}` : text });
+      }
+      this.scheduleChatFlush();
+    } else {
+      this.handleOutput(session, `\r\n\x1b[2m[process exited with code ${exitCode}]\x1b[0m\r\n`);
+    }
     info.status = status; // handleOutput may not revert this, but be explicit
+    for (const resolve of session.exitWaiters.splice(0)) resolve();
     if (session.settingsFile) this.deps.hooks.removeSettingsFile(info.id);
     if (info.mode === 'task' && !session.stopping) this.onAttention(info, status === 'failed' ? 'failed' : 'task-complete');
     if (info.mode === 'login') this.deps.profiles.refresh([session.profile.id]).catch(() => {});
@@ -516,23 +797,31 @@ export class AgentManager {
     }
   }
 
-  /** Relaunches a finished interactive agent, continuing its conversation. */
-  async resume(id: string): Promise<AgentInfo> {
-    const info = this.get(id);
+  /**
+   * Continues an agent's conversation in place, as a chat or in the terminal
+   * (default: the way it ran). A running agent in the other mode is stopped
+   * first and handed over.
+   */
+  async resume(id: string, mode?: AgentMode): Promise<AgentInfo> {
+    let info = this.get(id);
     if (!info) throw new Error('Unknown agent');
-    const sessionId = info.telemetry?.sessionId ?? info.sessionId;
-    if (!sessionId) throw new Error('This agent never started a session that can be resumed.');
-    const options: LaunchOptions = {
-      provider: info.provider,
-      profileId: info.profileId,
-      cwd: info.cwd,
-      mode: 'interactive',
-      title: info.title,
-      model: info.model ?? undefined,
-      permission: info.permission ?? undefined,
-      resumeSessionId: sessionId
-    };
-    return this.launch(options);
+    if (!CONVERSATION_MODES.includes(info.mode)) throw new Error('Only conversations can be resumed.');
+    const target = mode ?? (info.mode === 'chat' ? 'chat' : 'interactive');
+    const live = this.sessions.get(id);
+    if (live && !live.info.endedAt) {
+      if (live.info.mode === target) return live.info;
+      if (target !== 'chat' && !(info.sessionId && (info.transcriptPath || info.telemetry))) {
+        throw new Error('Send a message first: there is no conversation to open in the terminal yet.');
+      }
+      live.stopping = true;
+      const exited = this.waitForExit(live);
+      await this.stop(id);
+      await exited;
+      // The process is gone; pick up where its session file ended.
+      await this.refreshTelemetry(live).catch(() => {});
+      info = live.info;
+    }
+    return this.continueAgent(info, target);
   }
 
   async stopAll() {
@@ -554,7 +843,7 @@ export class AgentManager {
     info.lastActivityAt = new Date().toISOString();
     this.markChanged(info.id);
     if (status === 'needs-input' && previous !== 'needs-input') this.onAttention(info, 'needs-input');
-    if (status === 'idle' && previous === 'working' && info.mode === 'interactive') this.onAttention(info, 'turn-complete');
+    if (status === 'idle' && previous === 'working' && CONVERSATION_MODES.includes(info.mode)) this.onAttention(info, 'turn-complete');
   }
 
   private handleHook(event: HookEvent) {
@@ -675,7 +964,7 @@ export class AgentManager {
     if (this.ticking) return;
     this.ticking = true;
     try {
-      const live = [...this.sessions.values()].filter((s) => !s.info.endedAt && (s.info.mode === 'interactive' || s.info.mode === 'task'));
+      const live = [...this.sessions.values()].filter((s) => !s.info.endedAt && AGENT_MODES.includes(s.info.mode));
       await Promise.all(live.map((session) => this.refreshTelemetry(session).catch(() => {})));
       for (const session of this.sessions.values()) {
         if (!session.info.pid) continue;
@@ -701,8 +990,10 @@ export class AgentManager {
     if (session.profile.provider === 'claude') {
       const id = info.sessionId ?? session.claudeSessionId;
       if (id) found = await telemetry.findClaudeTranscript(configDir, id);
-    } else if (session.options.resumeSessionId) {
-      found = await telemetry.findCodexRolloutById(configDir, session.options.resumeSessionId);
+    } else if (session.options.resumeSessionId || info.mode === 'chat') {
+      // A chat knows its thread id from the app-server; no guessing by folder and time.
+      const id = info.mode === 'chat' ? info.sessionId : session.options.resumeSessionId;
+      if (id) found = await telemetry.findCodexRolloutById(configDir, id);
     } else {
       const claimed = [...this.sessions.values()].map((s) => s.info.transcriptPath).filter((p): p is string => Boolean(p));
       found = await telemetry.findCodexRollout(configDir, info.cwd, Date.parse(info.startedAt), claimed);

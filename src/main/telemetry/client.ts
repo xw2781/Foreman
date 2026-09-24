@@ -2,6 +2,7 @@ import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import type { ProfileLimits, Provider, SessionTelemetry, UsageReport } from '../../shared/types';
 import type { EngineProfile, EngineSettings } from './engine';
+import type { HistoryEntry } from '../chat/history';
 
 /** Promise-based handle on the telemetry worker thread. */
 export class TelemetryClient {
@@ -71,6 +72,11 @@ export class TelemetryClient {
 
   codexLimits(profile: EngineProfile) {
     return this.call<ProfileLimits | null>('codexLimits', profile);
+  }
+
+  /** A past conversation rebuilt from its session file. */
+  chatHistory(provider: Provider, filePath: string) {
+    return this.call<HistoryEntry[]>('chatHistory', provider, filePath);
   }
 
   async dispose() {

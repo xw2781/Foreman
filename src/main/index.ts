@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, shell, 
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  AGENT_MODES,
   LIVE_STATUSES,
   PROVIDERS,
   PROVIDER_LABEL,
@@ -27,6 +28,9 @@ if (process.env.ATC_CAPTURE_DIR) {
   app.commandLine.appendSwitch('disable-renderer-backgrounding');
   app.commandLine.appendSwitch('disable-background-timer-throttling');
 }
+// Development aid: a separate data folder (settings, agent history) and single-instance lock,
+// so a test instance can run next to the one in use.
+if (process.env.ATC_USER_DATA) app.setPath('userData', path.resolve(process.env.ATC_USER_DATA));
 if (!app.requestSingleInstanceLock()) {
   app.quit();
   process.exit(0);
@@ -39,6 +43,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultCwd: HOME,
   recentCwds: [],
   theme: 'dark',
+  lightPalette: 'cream',
   terminalFontSize: 13,
   terminalFontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
   notifyOnNeedsInput: true,
@@ -68,7 +73,7 @@ const telemetry = new TelemetryClient(__dirname, path.join(userData, 'usage-cach
 const hooks = new HookServer(path.join(userData, 'agent-settings'));
 const processes = new ProcessMonitor();
 const computerUse = new ComputerUseService(exists(skillSource) ? skillSource : null);
-const agents = new AgentManager({ profiles, telemetry, hooks, processes, settings, userDataDir: userData });
+const agents = new AgentManager({ profiles, telemetry, hooks, processes, settings, userDataDir: userData, appVersion: app.getVersion() });
 
 let mainWindow: BrowserWindow | null = null;
 let quitting = false;
@@ -103,6 +108,7 @@ function configureTelemetry() {
 
 telemetry.onProgress = (scanned) => emit('usage-progress', scanned);
 agents.onData = (id, data, end) => emit('agent-data', { id, data, end });
+agents.onChat = (id, items, reset) => emit('chat', { id, items, reset });
 hooks.onStatusLine = (id, payload) => agents.handleStatusLine(id, payload);
 agents.onChanged = (list) => {
   emit('agents', list);
@@ -202,7 +208,7 @@ function registerIpc() {
     if (patch.cliPath) forgetCli();
     if ('claudeContextWindow' in patch || 'contextWindowOverrides' in patch || 'usageDays' in patch) await configureTelemetry();
     if (patch.activeProfile) emit('profiles', views());
-    if (patch.theme) applyTheme();
+    if (patch.theme || patch.lightPalette) applyTheme();
     emit('settings', next);
     return next;
   });
@@ -299,8 +305,13 @@ function registerIpc() {
   handle('agents.remove', (id) => agents.remove(id));
   handle('agents.clearFinished', () => agents.clearFinished());
   handle('agents.rename', (id, title) => agents.rename(id, title));
-  handle('agents.resume', (id) => agents.resume(id));
+  handle('agents.resume', (id, mode) => agents.resume(id, mode));
   handle('agents.buffer', (id) => agents.buffer(id));
+  handle('chat.items', (id) => agents.chatItems(id));
+  handle('chat.send', (id, text) => agents.chatSend(id, text));
+  handle('chat.interrupt', (id) => agents.chatInterrupt(id));
+  handle('chat.respond', (id, itemId, answer) => agents.chatRespond(id, itemId, answer));
+  handle('chat.configure', (id, patch) => agents.chatConfigure(id, patch));
   ipcMain.on('agents.write', (_event, id: string, data: string) => agents.write(id, data));
   ipcMain.on('agents.resize', (_event, id: string, cols: number, rows: number) => agents.resize(id, cols, rows));
 
@@ -386,17 +397,23 @@ function startLoops() {
 // Window
 // ---------------------------------------------------------------------------
 
+/** Native title-bar and window colors; they match --page in styles.css. */
+function windowChrome() {
+  if (nativeTheme.shouldUseDarkColors) return { page: '#0e1016', symbols: '#c9cfdb' };
+  return settings().lightPalette === 'grey' ? { page: '#d7d9dd', symbols: '#343a46' } : { page: '#ebe6dc', symbols: '#3d3629' };
+}
+
 function applyTheme() {
   const theme = settings().theme;
   nativeTheme.themeSource = theme;
   if (mainWindow && !mainWindow.isDestroyed()) {
-    const dark = nativeTheme.shouldUseDarkColors;
+    const chrome = windowChrome();
     try {
-      mainWindow.setTitleBarOverlay({ color: dark ? '#0e1016' : '#f4f5f8', symbolColor: dark ? '#c9cfdb' : '#3a4050', height: 40 });
+      mainWindow.setTitleBarOverlay({ color: chrome.page, symbolColor: chrome.symbols, height: 40 });
     } catch {
       // only on Windows with titleBarOverlay
     }
-    mainWindow.setBackgroundColor(dark ? '#0e1016' : '#f4f5f8');
+    mainWindow.setBackgroundColor(chrome.page);
   }
 }
 
@@ -417,7 +434,7 @@ function boundsVisible(bounds: Electron.Rectangle) {
 function createWindow() {
   nativeTheme.themeSource = settings().theme;
   const saved = windowStore.data.bounds;
-  const dark = nativeTheme.shouldUseDarkColors;
+  const chrome = windowChrome();
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -426,9 +443,9 @@ function createWindow() {
     minHeight: 620,
     show: false,
     title: 'Agent Task Center',
-    backgroundColor: dark ? '#0e1016' : '#f4f5f8',
+    backgroundColor: chrome.page,
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: dark ? '#0e1016' : '#f4f5f8', symbolColor: dark ? '#c9cfdb' : '#3a4050', height: 40 },
+    titleBarOverlay: { color: chrome.page, symbolColor: chrome.symbols, height: 40 },
     icon: path.join(app.getAppPath(), 'resources', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
@@ -465,7 +482,7 @@ function createWindow() {
 
   mainWindow.on('close', async (event) => {
     if (quitting) return;
-    const running = agents.list().filter((a) => LIVE_STATUSES.includes(a.status) && (a.mode === 'interactive' || a.mode === 'task'));
+    const running = agents.list().filter((a) => LIVE_STATUSES.includes(a.status) && AGENT_MODES.includes(a.mode));
     if (running.length > 0 && settings().confirmBeforeStop) {
       event.preventDefault();
       const choice = await dialog.showMessageBox(mainWindow!, {
@@ -497,8 +514,9 @@ function createWindow() {
  */
 function captureViews(dir: string) {
   const views = (process.env.ATC_CAPTURE_VIEWS ?? 'agents,tasks,usage,accounts,computer,settings,launcher').split(',');
-  // ATC_CAPTURE_SCRIPT: a JSON list of { js?, wait?, shot? } steps run in the page, for end-to-end checks.
-  const script: Array<{ js?: string; wait?: number; shot?: string }> = process.env.ATC_CAPTURE_SCRIPT
+  // ATC_CAPTURE_SCRIPT: a JSON list of { js?, wait?, shot?, save? } steps run in the page, for
+  // end-to-end checks; `save` writes the step's result (JSON) to that file in the capture folder.
+  const script: Array<{ js?: string; wait?: number; shot?: string; save?: string }> = process.env.ATC_CAPTURE_SCRIPT
     ? JSON.parse(fs.readFileSync(process.env.ATC_CAPTURE_SCRIPT, 'utf8'))
     : views.map((view) => ({ js: `window.__atcDev && window.__atcDev(${JSON.stringify(view)})`, wait: 1800, shot: view }));
   mainWindow?.webContents.once('did-finish-load', async () => {
@@ -507,7 +525,8 @@ function captureViews(dir: string) {
     await wait(Number(process.env.ATC_CAPTURE_DELAY ?? 6000));
     for (const step of script) {
       try {
-        if (step.js) await mainWindow?.webContents.executeJavaScript(step.js);
+        const result = step.js ? await mainWindow?.webContents.executeJavaScript(step.js) : undefined;
+        if (step.save) fs.writeFileSync(path.join(dir, step.save), JSON.stringify(result ?? null, null, 2));
       } catch (error) {
         fs.appendFileSync(path.join(dir, 'errors.log'), `${step.js}: ${String(error)}\n`);
       }

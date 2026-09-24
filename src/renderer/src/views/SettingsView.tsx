@@ -122,6 +122,16 @@ export function SettingsView() {
             ]}
           />
         </Setting>
+        <Setting title="Light palette" description="Used by Light, and by System when Windows is in light mode.">
+          <Segmented
+            value={settings.lightPalette}
+            onChange={(lightPalette) => update({ lightPalette })}
+            options={[
+              { value: 'cream', label: 'Cream' },
+              { value: 'grey', label: 'Pro grey' }
+            ]}
+          />
+        </Setting>
         <Setting title="Terminal font size">
           <input className="input" type="number" min={9} max={24} style={{ width: 90 }} value={settings.terminalFontSize} onChange={(e) => update({ terminalFontSize: Math.max(9, Math.min(24, Number(e.target.value) || 13)) })} />
         </Setting>

@@ -1,22 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronRight, FolderOpen, History, Play, Rocket, SquareTerminal, Zap } from 'lucide-react';
+import { ChevronRight, FolderOpen, History, MessagesSquare, Play, Rocket, SquareTerminal, Zap } from 'lucide-react';
 import { PROVIDER_LABEL, type AgentMode, type LaunchOptions, type Provider } from '@shared/types';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
 import { colorVar, limitSummary } from '../format';
 import { Modal, ProviderIcon } from '../ui';
 
-const MODELS: Record<Provider, string[]> = {
+export const MODELS: Record<Provider, string[]> = {
   claude: ['opus', 'sonnet', 'fable', 'haiku', 'opus[1m]', 'claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5', 'claude-haiku-4-5'],
   codex: ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']
 };
 
-const EFFORTS: Record<Provider, string[]> = {
+export const EFFORTS: Record<Provider, string[]> = {
   claude: ['low', 'medium', 'high', 'xhigh', 'max'],
   codex: ['low', 'medium', 'high', 'xhigh']
 };
 
-const PERMISSIONS: Record<Provider, Array<{ value: string; label: string; hint: string }>> = {
+export const PERMISSIONS: Record<Provider, Array<{ value: string; label: string; hint: string }>> = {
   claude: [
     { value: 'default', label: 'Ask before acting', hint: 'Claude Code asks before edits and commands (your settings apply).' },
     { value: 'acceptEdits', label: 'Accept edits', hint: 'File edits are applied automatically; commands still ask.' },
@@ -43,7 +43,7 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
   const providerProfiles = profiles.filter((p) => p.provider === provider);
   const activeId = providerProfiles.find((p) => p.isActive)?.id ?? providerProfiles[0]?.id ?? '';
   const [profileId, setProfileId] = useState(preset.profileId ?? activeId);
-  const [mode, setMode] = useState<AgentMode>(preset.mode ?? 'interactive');
+  const [mode, setMode] = useState<AgentMode>(preset.mode ?? 'chat');
   const [cwd, setCwd] = useState(preset.cwd ?? settings?.defaultCwd ?? '');
   const [prompt, setPrompt] = useState(preset.prompt ?? '');
   const [title, setTitle] = useState(preset.title ?? '');
@@ -168,15 +168,22 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
           <div className="field">
             <label>Mode</label>
             <div className="segmented" style={{ width: '100%' }}>
+              <button type="button" className={mode === 'chat' ? 'on' : ''} style={{ flex: 1 }} onClick={() => setMode('chat')}>
+                <MessagesSquare size={13} /> Chat
+              </button>
               <button type="button" className={mode === 'interactive' ? 'on' : ''} style={{ flex: 1 }} onClick={() => setMode('interactive')}>
-                <SquareTerminal size={13} /> Interactive
+                <SquareTerminal size={13} /> Terminal
               </button>
               <button type="button" className={mode === 'task' ? 'on' : ''} style={{ flex: 1 }} onClick={() => setMode('task')} disabled={resuming}>
-                <Zap size={13} /> Background task
+                <Zap size={13} /> Task
               </button>
             </div>
             <div className="hint">
-              {mode === 'interactive' ? 'The full terminal UI; you can chat, approve, and use slash commands.' : 'Runs the prompt headless to completion and reports the result.'}
+              {mode === 'chat'
+                ? 'A conversation with streaming replies, tool steps, diffs and approvals.'
+                : mode === 'interactive'
+                  ? "The CLI's own terminal UI, with its slash commands and shortcuts."
+                  : 'Runs the prompt headless to completion and reports the result.'}
             </div>
           </div>
         </div>
@@ -202,7 +209,7 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
 
         {!resuming ? (
           <div className="field">
-            <label>{mode === 'task' ? 'Task' : 'First message (optional)'}</label>
+            <label>{mode === 'task' ? 'Task' : mode === 'chat' ? 'Message (optional)' : 'First message (optional)'}</label>
             <textarea
               className="textarea"
               value={prompt}
