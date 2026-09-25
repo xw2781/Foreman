@@ -225,7 +225,7 @@ function TitleBar() {
         <span className="brand-mark">
           <MonitorSmartphone size={13} />
         </span>
-        Agent Task Center
+        Foreman
       </div>
       {PROVIDERS.map((p) => (
         <AccountSwitcher key={p} provider={p} />

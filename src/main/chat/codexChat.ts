@@ -46,7 +46,7 @@ export class CodexChat implements ChatDriver {
   constructor(private host: ChatHost, private write: (message: object) => void, private options: CodexChatOptions) {}
 
   async start(prompt?: string) {
-    await this.call('initialize', { clientInfo: { name: 'agent_task_center', title: 'Agent Task Center', version: this.options.appVersion }, capabilities: null });
+    await this.call('initialize', { clientInfo: { name: 'foreman', title: 'Foreman', version: this.options.appVersion }, capabilities: null });
     this.write({ method: 'initialized' });
     const permission = codexPermission(this.options.permission);
     const params = {
@@ -351,7 +351,7 @@ export class CodexChat implements ChatDriver {
         break;
       default:
         // Auth refresh, dynamic tools, attestation: nothing the app provides.
-        this.write({ id: rpcId, error: { code: -32601, message: `${method} is not supported by Agent Task Center` } });
+        this.write({ id: rpcId, error: { code: -32601, message: `${method} is not supported by Foreman` } });
         return;
     }
     this.requests.set(itemId, { rpcId, method, params });

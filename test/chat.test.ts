@@ -185,7 +185,7 @@ describe('Codex chat protocol', () => {
 
   it('initializes, starts a thread and runs a turn', async () => {
     const { chat, log, sent, sessions, statuses, ready } = started();
-    expect(sent[0]).toMatchObject({ id: 1, method: 'initialize', params: { clientInfo: { name: 'agent_task_center' } } });
+    expect(sent[0]).toMatchObject({ id: 1, method: 'initialize', params: { clientInfo: { name: 'foreman' } } });
     chat.receive(JSON.stringify({ id: 1, result: { userAgent: 'x' } }));
     await Promise.resolve();
     await Promise.resolve();

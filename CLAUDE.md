@@ -1,4 +1,4 @@
-# Agent Task Center — notes for agents
+# Foreman — notes for agents
 
 Electron + React + TypeScript desktop app (Windows). See README.md for what it does.
 

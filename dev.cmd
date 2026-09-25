@@ -1,5 +1,5 @@
 @echo off
-rem Runs Agent Task Center in development mode: UI edits hot-reload, main/preload
+rem Runs Foreman in development mode: UI edits hot-reload, main/preload
 rem edits restart the app. Close the app window or press Ctrl+C here to stop.
 setlocal
 cd /d "%~dp0"

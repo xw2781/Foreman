@@ -1,4 +1,4 @@
-# Agent Task Center
+# Foreman
 
 A Windows desktop app for running **Claude Code** and **Codex** side by side:
 
@@ -13,7 +13,7 @@ Nothing is sent anywhere: the app reads local session files and talks to the CLI
 ## Install
 
 ```powershell
-npm run dist          # builds dist\Agent-Task-Center-Setup-<version>.exe
+npm run dist          # builds dist\Foreman-Setup-<version>.exe
 ```
 
 Run the installer (per-user, no admin rights). The app finds the CLIs automatically — on `PATH`, the native Claude installer, the VS Code extensions, the Codex desktop app, or npm — and Settings lets you point at a specific one.

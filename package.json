@@ -1,6 +1,6 @@
 {
   "name": "agent-task-center",
-  "productName": "Agent Task Center",
+  "productName": "Foreman",
   "version": "0.1.0",
   "description": "Run Claude Code and Codex side by side, watch every agent in one task manager, track context and cost, switch accounts, and let agents use the computer.",
   "main": "out/main/index.js",

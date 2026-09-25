@@ -419,7 +419,7 @@ it lists. The built-in deny list always applies, even with no `config.json`:
 `WindowsTerminal`, `cmd`, `powershell`, `pwsh`, `conhost`, `OpenConsole`, `wt`,
 `powershell_ise`, `mintty`, `ConEmu`, `ConEmu64`, `alacritty`, `wezterm-gui`, `LockApp`,
 `consent`, `CredentialUIBroker`, `SecHealthUI`, `SecurityHealthSystray`, `Taskmgr`,
-`regedit`, `mmc`, `1Password`, `KeePass`, `KeePassXC`, `Bitwarden`, `Agent Task Center`,
+`regedit`, `mmc`, `1Password`, `KeePass`, `KeePassXC`, `Bitwarden`, `Foreman`, `Agent Task Center`,
 `Codex`, `ChatGPT`, `claude`. The Windows Run dialog is refused as well. For Store apps
 hosted in `ApplicationFrameHost`, the app's own process is checked too.
 

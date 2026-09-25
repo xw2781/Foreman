@@ -1,5 +1,5 @@
 appId: com.agenttaskcenter.app
-productName: Agent Task Center
+productName: Foreman
 copyright: Copyright © 2026 xwei
 directories:
   output: dist
@@ -26,11 +26,11 @@ win:
   target:
     - nsis
   icon: resources/icon.png
-  artifactName: Agent-Task-Center-Setup-${version}.${ext}
+  artifactName: Foreman-Setup-${version}.${ext}
 nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: Agent Task Center
+  shortcutName: Foreman

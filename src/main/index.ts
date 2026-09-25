@@ -31,9 +31,24 @@ if (process.env.ATC_CAPTURE_DIR) {
 // Development aid: a separate data folder (settings, agent history) and single-instance lock,
 // so a test instance can run next to the one in use.
 if (process.env.ATC_USER_DATA) app.setPath('userData', path.resolve(process.env.ATC_USER_DATA));
+else adoptLegacyUserData();
 if (!app.requestSingleInstanceLock()) {
   app.quit();
   process.exit(0);
+}
+
+// The app was called Agent Task Center, and Electron names the data folder after the product.
+// Move the old folder over once (before the single-instance lock creates the new one); if it
+// is in use — the old version still running — keep using it where it is.
+function adoptLegacyUserData() {
+  const current = app.getPath('userData');
+  const legacy = path.join(app.getPath('appData'), 'Agent Task Center');
+  if (exists(current) || !exists(legacy)) return;
+  try {
+    fs.renameSync(legacy, current);
+  } catch {
+    app.setPath('userData', legacy);
+  }
 }
 
 const userData = app.getPath('userData');
@@ -137,7 +152,7 @@ function updateWindowTitle(list: AgentInfo[]) {
   const waiting = list.filter((a) => a.status === 'needs-input').length;
   const working = list.filter((a) => a.status === 'working').length;
   const parts = [waiting ? `${waiting} need input` : '', working ? `${working} working` : ''].filter(Boolean);
-  mainWindow.setTitle(parts.length ? `Agent Task Center — ${parts.join(', ')}` : 'Agent Task Center');
+  mainWindow.setTitle(parts.length ? `Foreman — ${parts.join(', ')}` : 'Foreman');
 }
 
 function notifyAttention(info: AgentInfo, reason: 'needs-input' | 'turn-complete' | 'task-complete' | 'failed') {
@@ -442,7 +457,7 @@ function createWindow() {
     minWidth: 980,
     minHeight: 620,
     show: false,
-    title: 'Agent Task Center',
+    title: 'Foreman',
     backgroundColor: chrome.page,
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: chrome.page, symbolColor: chrome.symbols, height: 40 },

@@ -12,7 +12,7 @@ export const BUILTIN_DENIED = [
   'powershell_ise', 'mintty', 'ConEmu', 'ConEmu64', 'alacritty', 'wezterm-gui',
   'LockApp', 'consent', 'CredentialUIBroker', 'SecHealthUI', 'SecurityHealthSystray',
   'Taskmgr', 'regedit', 'mmc', '1Password', 'KeePass', 'KeePassXC', 'Bitwarden',
-  'Agent Task Center', 'Codex', 'ChatGPT', 'claude'
+  'Foreman', 'Agent Task Center', 'Codex', 'ChatGPT', 'claude'
 ];
 
 function field<T = unknown>(record: Record<string, any> | null, ...keys: string[]): T | null {

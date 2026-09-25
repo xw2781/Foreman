@@ -1435,7 +1435,7 @@ namespace AgentTaskCenter.ScreenControl
             // Password managers.
             "1Password", "KeePass", "KeePassXC", "Bitwarden",
             // Agent hosts: an agent must not drive itself or another agent.
-            "Agent Task Center", "Codex", "ChatGPT", "claude"
+            "Foreman", "Agent Task Center", "Codex", "ChatGPT", "claude"
         };
 
         private static string _configPath;

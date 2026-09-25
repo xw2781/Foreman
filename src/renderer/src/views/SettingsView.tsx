@@ -209,7 +209,7 @@ export function SettingsView() {
       </div>
 
       <p className="muted" style={{ fontSize: 12, marginTop: 16 }}>
-        Agent Task Center {env?.appVersion} · Accounts live in {env?.profilesDir} · Claude hooks endpoint {env?.hookServer ?? 'unavailable'}
+        Foreman {env?.appVersion} · Accounts live in {env?.profilesDir} · Claude hooks endpoint {env?.hookServer ?? 'unavailable'}
       </p>
     </div>
   );
