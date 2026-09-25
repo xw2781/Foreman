@@ -22,6 +22,13 @@ extraResources:
     filter:
       - '**/*'
       - '!**/tests/**'
+# Installed copies update themselves from this repo's GitHub releases (electron-updater).
+# Each release needs the installer, its .blockmap and latest.yml from dist/.
+publish:
+  provider: github
+  owner: xw2781
+  repo: Foreman
+  releaseType: release
 win:
   target:
     - nsis

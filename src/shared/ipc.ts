@@ -13,6 +13,7 @@ import type {
   ProfileView,
   Provider,
   Toast,
+  UpdateStatus,
   UsageReport
 } from './types';
 
@@ -70,6 +71,11 @@ export interface InvokeMap {
   'computerUse.setPolicy': (policy: { allowedProcesses: string[]; deniedProcesses: string[] }) => ComputerUseStatus;
   'computerUse.install': (profileId: string, install: boolean) => ProfileView[];
   'computerUse.image': (file: string) => string | null;
+
+  'update.status': () => UpdateStatus;
+  'update.check': () => UpdateStatus;
+  /** Quits (asking first if agents are running), installs the downloaded update and restarts. */
+  'update.install': () => void;
 }
 
 export type InvokeChannel = keyof InvokeMap;
@@ -89,6 +95,7 @@ export interface EventMap {
   navigate: { view: string; agentId?: string };
   toast: Toast;
   settings: AppSettings;
+  update: UpdateStatus;
 }
 
 export type EventName = keyof EventMap;
@@ -103,11 +110,12 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'chat.items', 'chat.send', 'chat.interrupt', 'chat.respond', 'chat.configure',
   'processes.external', 'processes.kill',
   'usage.report',
-  'computerUse.status', 'computerUse.command', 'computerUse.setPolicy', 'computerUse.install', 'computerUse.image'
+  'computerUse.status', 'computerUse.command', 'computerUse.setPolicy', 'computerUse.install', 'computerUse.image',
+  'update.status', 'update.check', 'update.install'
 ];
 
 export const EVENT_NAMES: EventName[] = [
-  'agents', 'agent-data', 'chat', 'profiles', 'usage', 'usage-progress', 'computer-use', 'externals', 'navigate', 'toast', 'settings'
+  'agents', 'agent-data', 'chat', 'profiles', 'usage', 'usage-progress', 'computer-use', 'externals', 'navigate', 'toast', 'settings', 'update'
 ];
 
 /** Fire-and-forget channels (no reply), for the hot path of terminal I/O. */

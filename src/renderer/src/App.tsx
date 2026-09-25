@@ -3,6 +3,7 @@ import {
   BarChart3,
   Check,
   ChevronDown,
+  Download,
   LayoutGrid,
   MonitorSmartphone,
   MousePointer2,
@@ -53,6 +54,7 @@ function useBootstrap() {
         if (firstLive) set({ selectedAgentId: firstLive.id });
         call('processes.external').then((externals) => set({ externals })).catch(() => {});
         call('usage.report').then((usage) => set({ usage })).catch(() => {});
+        call('update.status').then((update) => set({ update })).catch(() => {});
       } catch (error) {
         store().toast('error', errorMessage(error));
       }
@@ -77,6 +79,7 @@ function useBootstrap() {
       listen('computer-use', (computerUse) => set({ computerUse })),
       listen('externals', (externals) => set({ externals })),
       listen('settings', (settings) => set({ settings })),
+      listen('update', (update) => set({ update })),
       listen('toast', (t) => store().toast(t.kind, t.message)),
       listen('navigate', ({ view, agentId }) => {
         set({ view: view as View });
@@ -217,6 +220,25 @@ function AccountSwitcher({ provider }: { provider: Provider }) {
   );
 }
 
+/** One click installs a downloaded update and restarts into it. */
+function UpdateButton() {
+  const update = useApp((s) => s.update);
+  const toast = useApp((s) => s.toast);
+  if (update?.state !== 'ready') return null;
+  const install = async () => {
+    try {
+      await call('update.install');
+    } catch (error) {
+      toast('error', errorMessage(error));
+    }
+  };
+  return (
+    <button className="btn sm no-drag" onClick={install} title={`Foreman ${update.version} is downloaded. Restart to install it.`}>
+      <Download size={14} /> Restart to update
+    </button>
+  );
+}
+
 function TitleBar() {
   const openLauncher = useApp((s) => s.openLauncher);
   return (
@@ -231,6 +253,7 @@ function TitleBar() {
         <AccountSwitcher key={p} provider={p} />
       ))}
       <div className="spacer" />
+      <UpdateButton />
       <button className="btn primary sm no-drag" onClick={() => openLauncher()} title="New agent (Ctrl+N)">
         <Plus size={14} /> New agent
       </button>

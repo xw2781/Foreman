@@ -426,6 +426,17 @@ export interface EnvironmentInfo {
   hookServer: string | null;
 }
 
+export interface UpdateStatus {
+  /** `unsupported`: a development build, which has no installer to update. */
+  state: 'unsupported' | 'idle' | 'checking' | 'current' | 'downloading' | 'ready' | 'error';
+  /** The version being downloaded or ready to install. */
+  version: string | null;
+  /** Download progress, 0–100. */
+  percent: number | null;
+  error: string | null;
+  checkedAt: string | null;
+}
+
 export interface Toast {
   kind: 'info' | 'success' | 'error';
   message: string;

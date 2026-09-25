@@ -20,6 +20,7 @@ import { AgentManager } from './agents';
 import { ComputerUseService } from './computerUse';
 import { forgetCli, locateCli } from './cliLocator';
 import { logoutCommand } from './commands';
+import { UpdateService } from './updater';
 import { HOME, JsonStore, cleanEnv, exists, profilesRoot, run } from './util';
 
 app.setAppUserModelId('com.agenttaskcenter.app');
@@ -90,6 +91,7 @@ const hooks = new HookServer(path.join(userData, 'agent-settings'));
 const processes = new ProcessMonitor();
 const computerUse = new ComputerUseService(exists(skillSource) ? skillSource : null);
 const agents = new AgentManager({ profiles, telemetry, hooks, processes, settings, userDataDir: userData, appVersion: app.getVersion() });
+const updates = new UpdateService();
 
 let mainWindow: BrowserWindow | null = null;
 let quitting = false;
@@ -145,6 +147,7 @@ if (process.env.ATC_CAPTURE_DIR) {
     fs.appendFileSync(hookLog, `${new Date().toISOString()} ${event.agentId} ${event.name} ${event.payload.tool_name ?? event.payload.notification_type ?? event.payload.source ?? ''}\n`);
   };
 }
+updates.onChanged = (status) => emit('update', status);
 computerUse.onChanged = (status) => {
   emit('computer-use', status);
   agents.setScreenDriver(computerUse.currentDriver());
@@ -362,6 +365,15 @@ function registerIpc() {
     if (!exists(resolved)) return null;
     return `data:image/png;base64,${fs.readFileSync(resolved).toString('base64')}`;
   });
+
+  handle('update.status', () => updates.status());
+  handle('update.check', () => updates.check());
+  handle('update.install', async () => {
+    if (!(await confirmStopAgents('Stop agents and update'))) return;
+    // Installing closes the window first; don't ask about running agents again.
+    quitting = true;
+    updates.install();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -442,6 +454,27 @@ function showWindow() {
   mainWindow.focus();
 }
 
+/** How many agents quitting would stop, when the user wants to be asked first (else 0). */
+function runningAgentsToConfirm() {
+  if (!settings().confirmBeforeStop) return 0;
+  return agents.list().filter((a) => LIVE_STATUSES.includes(a.status) && AGENT_MODES.includes(a.mode)).length;
+}
+
+async function confirmStopAgents(action: string) {
+  const running = runningAgentsToConfirm();
+  if (!running) return true;
+  const choice = await dialog.showMessageBox(mainWindow!, {
+    type: 'warning',
+    buttons: [action, 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    title: 'Agents are still running',
+    message: `${running} agent${running === 1 ? ' is' : 's are'} still running.`,
+    detail: 'Quitting stops them. Interactive sessions can be resumed later from the Task Manager.'
+  });
+  return choice.response === 0;
+}
+
 function boundsVisible(bounds: Electron.Rectangle) {
   return screen.getAllDisplays().some((d) => {
     const area = d.workArea;
@@ -499,23 +532,11 @@ function createWindow() {
   });
 
   mainWindow.on('close', async (event) => {
-    if (quitting) return;
-    const running = agents.list().filter((a) => LIVE_STATUSES.includes(a.status) && AGENT_MODES.includes(a.mode));
-    if (running.length > 0 && settings().confirmBeforeStop) {
-      event.preventDefault();
-      const choice = await dialog.showMessageBox(mainWindow!, {
-        type: 'warning',
-        buttons: ['Stop agents and quit', 'Cancel'],
-        defaultId: 1,
-        cancelId: 1,
-        title: 'Agents are still running',
-        message: `${running.length} agent${running.length === 1 ? ' is' : 's are'} still running.`,
-        detail: 'Quitting stops them. Interactive sessions can be resumed later from the Task Manager.'
-      });
-      if (choice.response === 0) {
-        quitting = true;
-        app.quit();
-      }
+    if (quitting || !runningAgentsToConfirm()) return;
+    event.preventDefault();
+    if (await confirmStopAgents('Stop agents and quit')) {
+      quitting = true;
+      app.quit();
     }
   });
 
@@ -579,6 +600,7 @@ app.whenReady().then(async () => {
   registerIpc();
   createWindow();
   startLoops();
+  updates.start();
   computerUse.refreshInstalled(profiles.list());
   computerUse.loadPolicyFromSkill().catch(() => {});
   profiles.refresh().catch(() => {});
@@ -598,6 +620,7 @@ app.on('will-quit', (event) => {
       settingsStore.flush();
       windowStore.flush();
       processes.dispose();
+      updates.dispose();
       hooks.stop();
       await telemetry.dispose();
     } finally {

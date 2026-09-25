@@ -15,6 +15,7 @@ $env:PATH = "$PWD\.tools\node;$env:PATH" # PowerShell
 - `npm start` builds and launches. Launch Electron only through `scripts/start.mjs` (or `npm run dev`): a shell inherited from VS Code / Claude Code carries `ELECTRON_RUN_AS_NODE=1`, which makes Electron run as plain Node.
 - The display may be asleep or remote; screen captures then come back black. To see the UI, run with `ATC_CAPTURE_DIR=<dir>` (renders every view off-screen to PNG) or `ATC_CAPTURE_SCRIPT=<steps.json>` (scripted steps: `{ js, wait, shot }`, run in the page; `window.__atcDev('usage' | 'launcher' | 'select:<agentId>')` switches views). Add `ATC_USER_DATA=<dir>` to run beside an instance that's already open (separate data folder and single-instance lock; accounts still resolve to `~/.claude` / `~/.codex`).
 - `npm run dist:dir` packages to `dist/win-unpacked`; `npm run dist` builds the NSIS installer.
+- Releasing: bump `version` in package.json, commit and push, `npm run dist`, then `gh release create v<version>` with `dist/Foreman-Setup-<version>.exe`, its `.blockmap` and `dist/latest.yml`. Installed apps update from the latest GitHub release (`src/main/updater.ts`); without `latest.yml` they can't see it.
 
 ## Invariants
 

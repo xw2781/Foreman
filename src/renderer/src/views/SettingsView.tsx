@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { FolderOpen, RefreshCw } from 'lucide-react';
-import { PROVIDERS, PROVIDER_LABEL, type AppSettings } from '@shared/types';
+import { Download, FolderOpen, RefreshCw } from 'lucide-react';
+import { PROVIDERS, PROVIDER_LABEL, type AppSettings, type UpdateStatus } from '@shared/types';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
 import { Segmented, Switch } from '../ui';
@@ -17,9 +17,29 @@ function Setting({ title, description, children }: { title: string; description?
   );
 }
 
+function updateText(update: UpdateStatus | null): string {
+  switch (update?.state) {
+    case 'unsupported':
+      return 'Development build: updates apply only to the installed app.';
+    case 'checking':
+      return 'Checking for updates…';
+    case 'current':
+      return 'Up to date.';
+    case 'downloading':
+      return `Downloading ${update.version}… ${Math.round(update.percent ?? 0)}%`;
+    case 'ready':
+      return `Version ${update.version} is ready. Restarting installs it; it also installs the next time you quit.`;
+    case 'error':
+      return `Couldn't check for updates: ${update.error}`;
+    default:
+      return 'Checks GitHub for new versions every few hours and downloads them in the background.';
+  }
+}
+
 export function SettingsView() {
   const settings = useApp((s) => s.settings)!;
   const env = useApp((s) => s.env);
+  const appUpdate = useApp((s) => s.update);
   const toast = useApp((s) => s.toast);
   const [overrideModel, setOverrideModel] = useState('');
   const [overrideSize, setOverrideSize] = useState('');
@@ -205,6 +225,27 @@ export function SettingsView() {
               </button>
             </div>
           </div>
+        </Setting>
+      </div>
+
+      <div className="section-title">
+        <h2>Updates</h2>
+      </div>
+      <div className="card settings-list">
+        <Setting title={`Foreman ${env?.appVersion ?? ''}`} description={updateText(appUpdate)}>
+          {appUpdate?.state === 'ready' ? (
+            <button className="btn primary sm" onClick={() => call('update.install').catch((error) => toast('error', errorMessage(error)))}>
+              <Download size={13} /> Restart to update
+            </button>
+          ) : (
+            <button
+              className="btn sm"
+              disabled={!appUpdate || appUpdate.state === 'unsupported' || appUpdate.state === 'checking' || appUpdate.state === 'downloading'}
+              onClick={() => call('update.check').then((update) => useApp.setState({ update })).catch((error) => toast('error', errorMessage(error)))}
+            >
+              <RefreshCw size={13} /> Check for updates
+            </button>
+          )}
         </Setting>
       </div>
 

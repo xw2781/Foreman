@@ -8,6 +8,7 @@ import type {
   LaunchOptions,
   ProfileView,
   Toast,
+  UpdateStatus,
   UsageReport
 } from '@shared/types';
 
@@ -29,6 +30,7 @@ interface AppState {
   usage: UsageReport | null;
   usageProgress: number;
   computerUse: ComputerUseStatus | null;
+  update: UpdateStatus | null;
   toasts: ToastItem[];
   launcher: Partial<LaunchOptions> | null;
   showDetails: boolean;
@@ -54,6 +56,7 @@ export const useApp = create<AppState>((set, get) => ({
   usage: null,
   usageProgress: 0,
   computerUse: null,
+  update: null,
   toasts: [],
   launcher: null,
   showDetails: true,

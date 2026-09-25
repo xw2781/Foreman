@@ -22,7 +22,8 @@ const nodeBundle = {
   format: 'cjs',
   sourcemap: dev ? 'inline' : true,
   // node-pty ships native binaries next to its JS, so it must stay in node_modules.
-  external: ['electron', 'node-pty'],
+  // electron-updater loads parts of itself lazily; it ships as an ordinary dependency.
+  external: ['electron', 'node-pty', 'electron-updater'],
   logLevel: 'warning',
   absWorkingDir: root
 };
