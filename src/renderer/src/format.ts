@@ -118,7 +118,7 @@ export function limitSummary(windows: LimitWindow[] | undefined | null): string 
   if (fresh.length === 0) return '';
   return fresh
     .slice(0, 2)
-    .map((w) => `${w.label} ${Math.round(w.usedPercent)}%`)
+    .map((w) => `${w.label} ${w.detail ?? `${Math.round(w.usedPercent)}%`}`)
     .join(' · ');
 }
 

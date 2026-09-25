@@ -1198,6 +1198,9 @@ table.table {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
+.pop-item .limits > .meter:only-child {
+  grid-column: 1 / -1;
+}
 .pop-sep {
   height: 1px;
   background: var(--border);

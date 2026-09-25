@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, shell, screen } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, Notification, shell, screen } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -12,6 +12,7 @@ import {
 } from '../shared/types';
 import type { EventMap, EventName, InvokeChannel, InvokeMap } from '../shared/ipc';
 import { ProfileService } from './profiles';
+import { PlanUsageClient } from './planUsage';
 import { TelemetryClient } from './telemetry/client';
 import { HookServer } from './hookServer';
 import { ProcessMonitor, killTree } from './processMonitor';
@@ -108,6 +109,8 @@ function toast(kind: 'info' | 'success' | 'error', message: string) {
 profiles.runningCounter = (id) => agents.runningCount(id);
 profiles.skillChecker = (profile) => computerUse.isInstalled(profile);
 profiles.codexLimitsLoader = (profile) => telemetry.codexLimits({ id: profile.id, provider: profile.provider, configDir: profile.configDir });
+const planUsage = new PlanUsageClient((url, init) => net.fetch(url, init));
+profiles.liveLimitsLoader = (profile, force) => planUsage.load(profile, force);
 profiles.onChanged = () => {
   emit('profiles', profiles.views(settings().activeProfile));
   configureTelemetry();

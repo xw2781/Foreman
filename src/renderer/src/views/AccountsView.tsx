@@ -335,7 +335,7 @@ export function AccountsView() {
         </div>
         <div className="secondary" style={{ lineHeight: 1.65, fontSize: 12.5 }}>
           <b>Used for new agents</b> picks the account the next agent in this app starts with (also in the title bar). Running agents keep their account. <b>Make default for other apps</b> points VS Code, the desktop apps and new terminals at an account by setting your user-level
-          <span className="mono"> CLAUDE_CONFIG_DIR</span> / <span className="mono">CODEX_HOME</span>; those apps pick it up when they restart. Credentials are never copied between accounts: each one lives only in its own folder. Plan usage (5-hour and weekly windows) is what the CLI last reported, so it refreshes whenever that account runs a session.
+          <span className="mono"> CLAUDE_CONFIG_DIR</span> / <span className="mono">CODEX_HOME</span>; those apps pick it up when they restart. Credentials are never copied between accounts: each one lives only in its own folder. Plan usage (5-hour and weekly windows, or a work seat's monthly spend cap or credits) is read from Anthropic or OpenAI every few minutes while the account's sign-in is current, and otherwise shows what the CLI last reported.
         </div>
       </div>
       {adding ? <AddAccountDialog provider={adding} onClose={() => setAdding(null)} /> : null}

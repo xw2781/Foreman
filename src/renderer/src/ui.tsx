@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { create } from 'zustand';
-import { AlertTriangle, CheckCircle2, Info, X, XCircle } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle2, Info, X, XCircle } from 'lucide-react';
 import type { AgentStatus, LimitWindow, Provider } from '@shared/types';
 import { PROVIDER_LABEL } from '@shared/types';
 import { STATUS_LABEL, colorVar, isStale, percent, resetIn, severity } from './format';
@@ -64,7 +64,7 @@ export function Meter({
   return (
     <div className={`meter ${sev}`} title={title}>
       <div className="meter-top">
-        {sev === 'crit' ? <XCircle size={12} color="var(--critical)" /> : sev === 'warn' ? <AlertTriangle size={12} color="var(--warning)" /> : null}
+        {sev === 'crit' ? <AlertCircle size={12} color="var(--warning)" /> : sev === 'warn' ? <AlertTriangle size={12} color="var(--warning)" /> : null}
         <span>{label}</span>
         <span className="value">{valueText ?? percent(value)}</span>
       </div>
@@ -97,7 +97,7 @@ export function LimitMeters({ windows, compact = false }: { windows: LimitWindow
         isStale(w) ? (
           <Meter key={w.id} label={w.label} value={null} valueText="—" foot={compact ? undefined : 'Reset since last report'} title="This window has reset since the CLI last reported it" />
         ) : (
-          <Meter key={w.id} label={w.label} value={w.usedPercent} foot={compact ? undefined : resetIn(w.resetsAt)} title={resetIn(w.resetsAt)} />
+          <Meter key={w.id} label={w.label} value={w.usedPercent} valueText={w.detail} foot={compact ? undefined : resetIn(w.resetsAt)} title={w.detail ? `${w.detail} (${Math.round(w.usedPercent)}%)` : resetIn(w.resetsAt)} />
         )
       )}
     </>

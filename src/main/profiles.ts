@@ -54,6 +54,8 @@ export class ProfileService {
   private globalDefaults: Record<Provider, string | null> = { claude: null, codex: null };
   onChanged: () => void = () => {};
   codexLimitsLoader: (profile: Profile) => Promise<ProfileLimits | null> = async () => null;
+  /** Live plan usage from the tool's servers; undefined when it wasn't asked this time (throttled). */
+  liveLimitsLoader: (profile: Profile, force: boolean) => Promise<ProfileLimits | null | undefined> = async () => null;
   runningCounter: (profileId: string) => number = () => 0;
   skillChecker: (profile: Profile) => boolean = () => false;
 
@@ -201,9 +203,7 @@ export class ProfileService {
           this.identities.set(profile.id, blankIdentity(String(error)));
         }
         try {
-          const limits = profile.provider === 'claude' ? this.claudeLimits(profile) : await this.codexLimitsLoader(profile);
-          if (limits) this.limits.set(profile.id, limits);
-          else this.limits.delete(profile.id);
+          await this.refreshLimits(profile, Boolean(ids));
         } catch {
           // Limits are best-effort.
         }
@@ -233,6 +233,26 @@ export class ProfileService {
       checkedAt: new Date().toISOString(),
       error: null
     };
+  }
+
+  /**
+   * Asks the tool's usage endpoint, then takes whatever the CLI itself last
+   * recorded (Claude's cached copy, Codex's rollout files) if that is newer.
+   * With neither, the last numbers seen stay; their observedAt says how old.
+   */
+  private async refreshLimits(profile: Profile, force: boolean) {
+    if (!this.identities.get(profile.id)?.loggedIn) {
+      this.limits.delete(profile.id);
+      return;
+    }
+    try {
+      const live = await this.liveLimitsLoader(profile, force);
+      if (live) this.mergeLimits(profile.id, live);
+    } catch {
+      // Offline or rejected: the CLI's own record below still applies.
+    }
+    const recorded = profile.provider === 'claude' ? this.claudeLimits(profile) : await this.codexLimitsLoader(profile);
+    if (recorded) this.mergeLimits(profile.id, recorded);
   }
 
   private claudeLimits(profile: Profile): ProfileLimits | null {
@@ -280,14 +300,25 @@ export class ProfileService {
     };
   }
 
+  /**
+   * Takes newer numbers, keeping windows the new report doesn't cover: the
+   * status line knows the 5-hour and weekly windows but not the spend cap.
+   */
+  private mergeLimits(id: string, limits: ProfileLimits): boolean {
+    const current = this.limits.get(id);
+    const newer = !current || Date.parse(limits.observedAt ?? '') >= Date.parse(current.observedAt ?? '');
+    if (!newer) return false;
+    const reported = new Set(limits.windows.map((w) => w.id));
+    const kept = (current?.windows ?? []).filter((w) => !reported.has(w.id));
+    this.limits.set(id, { ...limits, windows: [...limits.windows, ...kept], planType: limits.planType ?? current?.planType ?? null });
+    return true;
+  }
+
   private limitsNotifyAt = 0;
 
   /** Plan limits reported live by a running session (Claude's status line). */
   applyReportedLimits(id: string, limits: ProfileLimits) {
-    const current = this.limits.get(id);
-    const newer = !current || Date.parse(limits.observedAt ?? '') >= Date.parse(current.observedAt ?? '');
-    if (!newer) return;
-    this.limits.set(id, { ...limits, planType: limits.planType ?? current?.planType ?? null });
+    if (!this.mergeLimits(id, limits)) return;
     // Status lines refresh often; tell the UI at most every few seconds.
     if (Date.now() - this.limitsNotifyAt > 5000) {
       this.limitsNotifyAt = Date.now();

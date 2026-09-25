@@ -97,7 +97,7 @@ function subtractUsage(current: TokenUsage, previous: TokenUsage | null): TokenU
   return negative ? null : delta;
 }
 
-function windowLabel(minutes: number): string {
+export function windowLabel(minutes: number): string {
   if (minutes === 300) return '5-hour';
   if (minutes === 10080) return 'Weekly';
   if (minutes >= 1440 && minutes % 1440 === 0) return `${minutes / 1440}-day`;

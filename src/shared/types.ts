@@ -41,6 +41,8 @@ export interface LimitWindow {
   label: string;
   usedPercent: number;
   resetsAt: string | null;
+  /** Shown instead of the percentage, e.g. "$128.17 / $130.00" for a spend cap. */
+  detail?: string;
 }
 
 export interface ProfileLimits {
