@@ -64,7 +64,10 @@ interface Session {
   hookStatus: 'working' | 'idle' | null;
   needsInput: boolean;
   needsInputSince: number;
+  /** The title is the person's (typed at launch or renamed): nothing automatic replaces it. */
   titleLocked: boolean;
+  /** The chat has named itself (or saved the person's title) with the CLI this run. */
+  titleSynced: boolean;
   stopping: boolean;
   lastTelemetryKey: string;
   discoveryAttempts: number;
@@ -158,6 +161,10 @@ export class AgentManager {
   async launch(options: LaunchOptions, reuseId?: string): Promise<AgentInfo> {
     const profile = this.deps.profiles.require(options.profileId);
     if (profile.provider !== options.provider) throw new Error('That account belongs to a different tool.');
+    // A new agent takes the account's defaults where the launch doesn't choose; a continued one keeps its own.
+    if (!reuseId && AGENT_MODES.includes(options.mode)) {
+      options = { ...options, model: options.model || profile.defaultModel || undefined, effort: options.effort || profile.defaultEffort || undefined };
+    }
     if (!exists(options.cwd)) throw new Error(`Folder not found: ${options.cwd}`);
     if (options.mode === 'task' && !options.prompt?.trim()) throw new Error('A background task needs a prompt.');
     const settings = this.deps.settings();
@@ -222,6 +229,7 @@ export class AgentManager {
       mode: options.mode,
       title,
       model: options.model || null,
+      effort: options.effort || null,
       permission: options.permission || null,
       status: 'starting',
       statusDetail: null,
@@ -238,14 +246,15 @@ export class AgentManager {
       resources: null,
       usesScreen: false,
       prompt: options.prompt ?? previous?.prompt ?? null,
-      runId: newRunId()
+      runId: newRunId(),
+      titleCustom: Boolean(options.title?.trim()) || previous?.titleCustom === true
     };
     const session = this.createSession(info, options, profile, {
       formatter: headless && profile.provider === 'claude' ? new ClaudeStreamFormatter() : null,
       claudeSessionId,
       settingsFile,
       chat,
-      titleLocked: Boolean(options.title?.trim()) || options.mode === 'login' || Boolean(previous)
+      titleLocked: info.titleCustom === true || options.mode === 'login'
     });
 
     const env = this.deps.profiles.envFor(profile, cleanEnv());
@@ -289,6 +298,7 @@ export class AgentManager {
       needsInput: false,
       needsInputSince: 0,
       titleLocked: false,
+      titleSynced: false,
       stopping: false,
       lastTelemetryKey: '',
       discoveryAttempts: 0,
@@ -414,7 +424,7 @@ export class AgentManager {
     const host = this.chatHost(session);
     const options = session.options;
     const driver: NonNullable<Session['driver']> = session.profile.provider === 'claude'
-      ? new ClaudeChat(host, write)
+      ? new ClaudeChat(host, write, options.permission)
       : new CodexChat(host, write, {
           cwd: session.info.cwd,
           resumeThreadId: options.resumeSessionId,
@@ -485,6 +495,7 @@ export class AgentManager {
       },
       turnComplete: () => {
         this.refreshTelemetry(session).catch(() => {});
+        this.syncTitle(session);
       },
       limits: (limits) => this.deps.profiles.applyReportedLimits(session.profile.id, limits)
     };
@@ -568,14 +579,19 @@ export class AgentManager {
     const session = this.sessions.get(id);
     if (session?.driver && !session.info.endedAt) {
       session.driver.configure(patch);
-      if (patch.effort) session.options = { ...session.options, effort: patch.effort };
+      if (patch.effort) {
+        session.options = { ...session.options, effort: patch.effort };
+        session.info.effort = patch.effort;
+        this.markChanged(id);
+      }
       return;
     }
     // Not running: remembered for when the conversation continues.
     const apply = (info: AgentInfo) => ({
       ...info,
       permission: patch.permission ?? info.permission,
-      model: patch.model !== undefined ? patch.model || null : info.model
+      model: patch.model !== undefined ? patch.model || null : info.model,
+      effort: patch.effort ?? info.effort ?? null
     });
     if (session) {
       Object.assign(session.info, apply(session.info));
@@ -593,14 +609,14 @@ export class AgentManager {
     // Only a conversation the CLI actually saved can be resumed; an empty one starts over.
     const resumable = Boolean(sessionId && (info.transcriptPath || info.telemetry));
     if (!resumable && mode !== 'chat') throw new Error('This agent never started a session that can be resumed.');
-    const effort = this.sessions.get(info.id)?.options.effort;
+    const effort = this.sessions.get(info.id)?.options.effort ?? info.effort ?? undefined;
     return this.launch(
       {
         provider: info.provider,
         profileId: info.profileId,
         cwd: info.cwd,
         mode,
-        title: info.title,
+        title: info.titleCustom ? info.title : undefined,
         model: info.model ?? undefined,
         effort,
         permission: info.permission ?? undefined,
@@ -786,15 +802,46 @@ export class AgentManager {
   }
 
   rename(id: string, title: string) {
+    const name = title.trim();
+    if (!name) return;
     const session = this.sessions.get(id);
     if (session) {
-      session.info.title = title.trim() || session.info.title;
+      session.info.title = name;
+      session.info.titleCustom = true;
       session.titleLocked = true;
+      // A running chat also saves it in the CLI's session, where its own apps and resumes see it.
+      if (session.driver && !session.info.endedAt) session.driver.rename?.(name);
+      session.titleSynced = true;
       this.markChanged(id);
     } else {
-      this.history.replace({ agents: this.history.data.agents.map((a) => (a.id === id ? { ...a, title: title.trim() || a.title } : a)) });
+      this.history.replace({ agents: this.history.data.agents.map((a) => (a.id === id ? { ...a, title: name, titleCustom: true } : a)) });
       this.emitChanged();
     }
+  }
+
+  /**
+   * After a chat's first turn: a title the person chose is saved into the CLI's
+   * session; otherwise the CLI is asked to name the conversation.
+   */
+  private syncTitle(session: Session) {
+    const driver = session.driver;
+    if (session.titleSynced || !driver || session.info.endedAt) return;
+    session.titleSynced = true;
+    if (session.info.titleCustom) {
+      driver.rename?.(session.info.title);
+      return;
+    }
+    const first = session.chat?.list().find((item) => item.kind === 'user');
+    const description = first?.kind === 'user' ? first.text : session.info.prompt;
+    if (!description?.trim() || !driver.generateTitle) return;
+    driver
+      .generateTitle(description.slice(0, 2000))
+      .then((title) => {
+        if (!title || session.titleLocked) return;
+        session.info.title = title;
+        this.markChanged(session.info.id);
+      })
+      .catch(() => {});
   }
 
   /**

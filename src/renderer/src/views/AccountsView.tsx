@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { CheckCircle2, FolderOpen, Globe2, KeyRound, LogIn, LogOut, MoreHorizontal, Pencil, Plus, RefreshCw, Share2, SquareTerminal, Trash2, UserPlus } from 'lucide-react';
+import { CheckCircle2, Cpu, FolderOpen, Globe2, KeyRound, LogIn, LogOut, MoreHorizontal, Pencil, RefreshCw, Share2, Trash2, UserPlus } from 'lucide-react';
 import { PROVIDERS, PROVIDER_LABEL, type ProfileView, type Provider } from '@shared/types';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
 import { ago, colorVar, initials } from '../format';
-import { LimitMeters, Modal, ProviderIcon, Switch, confirmDialog } from '../ui';
+import { LimitMeters, Modal, ProviderIcon, Select, Switch, confirmDialog } from '../ui';
+import { effortOptions, modelOptions } from './LaunchDialog';
 
 const SLOTS = ['slot-3', 'slot-4', 'slot-5', 'slot-6', 'slot-7', 'slot-8'];
 
@@ -135,6 +136,38 @@ function EditAccountDialog({ profile, onClose }: { profile: ProfileView; onClose
   );
 }
 
+/** The model and reasoning effort new agents on this account start with. */
+function AccountDefaults({ profile }: { profile: ProfileView }) {
+  const effort = profile.defaultEffort ?? '';
+  const save = async (patch: { defaultModel?: string; defaultEffort?: string }) => {
+    setProfiles(await run(() => call('profiles.update', profile.id, patch)));
+  };
+  return (
+    <div className="ac-defaults" title="New agents on this account start with these unless you pick others when launching">
+      <span className="ac-defaults-label">
+        <Cpu size={13} /> Defaults
+      </span>
+      <Select
+        size="sm"
+        prefix="Model"
+        aria-label="Default model"
+        value={profile.defaultModel ?? ''}
+        options={modelOptions(profile.provider, profile.cliDefaults, profile.defaultModel ?? '')}
+        custom={{ placeholder: 'Other model id…' }}
+        onChange={(defaultModel) => save({ defaultModel })}
+      />
+      <Select
+        size="sm"
+        prefix="Effort"
+        aria-label="Default reasoning effort"
+        value={effort}
+        options={effortOptions(profile.provider, profile.cliDefaults.effort, effort)}
+        onChange={(defaultEffort) => save({ defaultEffort })}
+      />
+    </div>
+  );
+}
+
 function AccountCard({ profile }: { profile: ProfileView }) {
   const [menu, setMenu] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -177,10 +210,6 @@ function AccountCard({ profile }: { profile: ProfileView }) {
     });
     if (ok) setProfiles(await run(() => call('profiles.remove', profile.id, checked)));
   };
-  const openShell = async () => {
-    const agent = await run(() => call('profiles.openShell', profile.id));
-    if (agent) useApp.setState({ selectedAgentId: agent.id, view: 'agents' });
-  };
 
   return (
     <div className={`account-card ${profile.isActive ? 'active' : ''}`}>
@@ -191,7 +220,7 @@ function AccountCard({ profile }: { profile: ProfileView }) {
         <div style={{ minWidth: 0, flex: 1 }}>
           <div className="ac-name">
             <span className="ellipsis">{profile.label}</span>
-            {identity?.plan ? <span className="badge accent">{identity.plan}</span> : null}
+            {profile.planTier ?? identity?.plan ? <span className="badge accent">{profile.planTier ?? identity?.plan}</span> : null}
           </div>
           <div className="ac-email ellipsis">
             {signedIn ? identity?.email ?? identity?.authMethod ?? 'Signed in' : <span style={{ color: 'var(--serious)' }}>Not signed in</span>}
@@ -254,6 +283,8 @@ function AccountCard({ profile }: { profile: ProfileView }) {
         </div>
       ) : null}
 
+      <AccountDefaults profile={profile} />
+
       <div className="ac-actions">
         {!profile.isActive ? (
           <button className="btn primary sm" onClick={async () => setProfiles(await run(() => call('profiles.setActive', profile.provider, profile.id), `New ${PROVIDER_LABEL[profile.provider]} agents will use "${profile.label}".`))}>
@@ -270,16 +301,6 @@ function AccountCard({ profile }: { profile: ProfileView }) {
             <Globe2 size={13} /> Make default for other apps
           </button>
         ) : null}
-        <button className="btn sm" onClick={openShell} title="A PowerShell terminal whose environment points at this account">
-          <SquareTerminal size={13} /> Terminal as this account
-        </button>
-        <button
-          className="btn sm"
-          onClick={() => useApp.getState().openLauncher({ provider: profile.provider, profileId: profile.id })}
-          disabled={!signedIn}
-        >
-          <Plus size={13} /> New agent
-        </button>
       </div>
       <div className="ac-path" title={profile.configDir}>
         {profile.configDir}

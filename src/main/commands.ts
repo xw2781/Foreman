@@ -58,6 +58,10 @@ export function codexCommand(options: LaunchOptions, profile: Profile, noDaemonF
       args.push('--sandbox', 'workspace-write');
       if (!headless) args.push('--ask-for-approval', 'on-request');
       break;
+    case 'approve-for-me':
+      args.push('--sandbox', 'workspace-write');
+      if (!headless) args.push('--ask-for-approval', 'on-request', '-c', 'approvals_reviewer="auto_review"');
+      break;
     case 'full-access':
       args.push('--dangerously-bypass-approvals-and-sandbox');
       break;

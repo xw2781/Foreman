@@ -30,6 +30,8 @@ export interface ClaudeTranscriptState {
   customTitle: string | null;
   aiTitle: string | null;
   lastPrompt: string | null;
+  /** The first prompt: a stable name until the session has a real title. */
+  firstPrompt: string | null;
   model: string | null;
   effort: string | null;
   lastUsage: TokenUsage | null;
@@ -59,6 +61,7 @@ function initialState(filePath: string): ClaudeTranscriptState {
     customTitle: null,
     aiTitle: null,
     lastPrompt: null,
+    firstPrompt: null,
     model: null,
     effort: null,
     lastUsage: null,
@@ -169,6 +172,7 @@ export class ClaudeTranscriptParser {
         return;
       case 'last-prompt':
         s.lastPrompt = promptTitle(text(record.lastPrompt)) ?? s.lastPrompt;
+        s.firstPrompt = s.firstPrompt ?? s.lastPrompt;
         return;
       case 'cost-state':
         this.applyCostState(record);
@@ -288,5 +292,5 @@ export function claudeContextWindow(
 }
 
 export function claudeTitle(state: ClaudeTranscriptState): string | null {
-  return state.customTitle ?? state.aiTitle ?? state.lastPrompt ?? null;
+  return state.customTitle ?? state.aiTitle ?? state.firstPrompt ?? null;
 }

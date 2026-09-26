@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Download, FolderOpen, RefreshCw } from 'lucide-react';
-import { PROVIDERS, PROVIDER_LABEL, type AppSettings, type UpdateStatus } from '@shared/types';
-import { call, errorMessage } from '../api';
+import { PROVIDERS, PROVIDER_LABEL, type AppSettings, type PricingStatus, type UpdateStatus } from '@shared/types';
+import { call, errorMessage, listen } from '../api';
 import { useApp } from '../store';
-import { Segmented, Switch } from '../ui';
+import { Segmented, Select, Switch } from '../ui';
 
 function Setting({ title, description, children }: { title: string; description?: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -43,6 +43,20 @@ export function SettingsView() {
   const toast = useApp((s) => s.toast);
   const [overrideModel, setOverrideModel] = useState('');
   const [overrideSize, setOverrideSize] = useState('');
+  const [pricing, setPricing] = useState<PricingStatus | null>(null);
+
+  useEffect(() => {
+    call('pricing.status').then(setPricing, () => {});
+    return listen('pricing', setPricing);
+  }, []);
+
+  const editPricing = async () => {
+    try {
+      setPricing(await call('pricing.edit'));
+    } catch (error) {
+      toast('error', errorMessage(error));
+    }
+  };
 
   const update = async (patch: Partial<AppSettings>) => {
     try {
@@ -119,11 +133,17 @@ export function SettingsView() {
           <Switch on={settings.claudeStatusLine} onChange={(v) => update({ claudeStatusLine: v })} />
         </Setting>
         <Setting title="Shell for account terminals" description="Used by “Terminal as this account”.">
-          <select className="select" style={{ width: 200 }} value={settings.shellForTerminals} onChange={(e) => update({ shellForTerminals: e.target.value })}>
-            <option value="powershell.exe">Windows PowerShell</option>
-            <option value="pwsh.exe">PowerShell 7 (pwsh)</option>
-            <option value="cmd.exe">Command Prompt</option>
-          </select>
+          <Select
+            style={{ width: 220 }}
+            aria-label="Shell for account terminals"
+            value={settings.shellForTerminals}
+            onChange={(shellForTerminals) => update({ shellForTerminals })}
+            options={[
+              { value: 'powershell.exe', label: 'Windows PowerShell' },
+              { value: 'pwsh.exe', label: 'PowerShell 7 (pwsh)' },
+              { value: 'cmd.exe', label: 'Command Prompt' }
+            ]}
+          />
         </Setting>
       </div>
 
@@ -183,11 +203,17 @@ export function SettingsView() {
           title="Assumed Claude context window"
           description="Used when neither Claude Code nor the model table reports a window size for a session."
         >
-          <select className="select" style={{ width: 200 }} value={String(settings.claudeContextWindow)} onChange={(e) => update({ claudeContextWindow: Number(e.target.value) })}>
-            <option value="200000">200K tokens</option>
-            <option value="1000000">1M tokens</option>
-            <option value="0">Don't assume (no %)</option>
-          </select>
+          <Select
+            style={{ width: 220 }}
+            aria-label="Assumed Claude context window"
+            value={String(settings.claudeContextWindow)}
+            onChange={(value) => update({ claudeContextWindow: Number(value) })}
+            options={[
+              { value: '200000', label: '200K tokens' },
+              { value: '1000000', label: '1M tokens' },
+              { value: '0', label: "Don't assume", hint: 'No context % for unknown windows' }
+            ]}
+          />
         </Setting>
         <Setting title="Per-model context window" description="Overrides the window size for one model id, e.g. claude-sonnet-5 → 200000.">
           <div style={{ display: 'grid', gap: 6, width: '100%' }}>
@@ -224,6 +250,28 @@ export function SettingsView() {
                 Add
               </button>
             </div>
+          </div>
+        </Setting>
+        <Setting
+          title="Model prices"
+          description={
+            <>
+              API-equivalent cost estimates use prices checked {pricing?.pricingDate || '…'} ({pricing?.models ?? '…'} models).{' '}
+              {pricing?.exists ? 'Your pricing.json is applied over the built-in table' : 'Edit prices to add models or correct rates without waiting for an app update'}; changes apply when the file is saved.
+              {pricing?.error ? <span style={{ color: 'var(--critical)' }}> {pricing.error}</span> : null}
+              {pricing?.problems.length ? <span style={{ color: 'var(--critical)' }}> Skipped: {pricing.problems.join('; ')}</span> : null}
+            </>
+          }
+        >
+          <div className="row">
+            {pricing?.exists ? (
+              <button className="btn ghost sm" onClick={() => call('shell.showItem', pricing.path)}>
+                <FolderOpen size={14} /> Show file
+              </button>
+            ) : null}
+            <button className="btn sm" onClick={editPricing}>
+              Edit prices
+            </button>
           </div>
         </Setting>
       </div>

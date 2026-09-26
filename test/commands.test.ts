@@ -28,6 +28,7 @@ describe('command lines', () => {
 
   it('maps Codex permissions and isolates second accounts from the shared daemon', () => {
     expect(codexCommand({ provider: 'codex', profileId: 'x', cwd: 'C:\\r', mode: 'interactive', permission: 'auto' }, isolated, true).args).toEqual(['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request', '--no-daemon']);
+    expect(codexCommand({ provider: 'codex', profileId: 'x', cwd: 'C:\\r', mode: 'interactive', permission: 'approve-for-me' }, builtin, true).args).toEqual(['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request', '-c', 'approvals_reviewer="auto_review"']);
     expect(codexCommand({ provider: 'codex', profileId: 'x', cwd: 'C:\\r', mode: 'interactive' }, builtin, true).args).toEqual([]);
     expect(codexCommand({ provider: 'codex', profileId: 'x', cwd: 'C:\\r', mode: 'task', prompt: 'p', effort: 'high' }, isolated, true).args).toEqual(['exec', '--skip-git-repo-check', '--color', 'always', '-c', 'model_reasoning_effort="high"', 'p']);
   });

@@ -20,7 +20,7 @@ import { AGENT_MODES, CONVERSATION_MODES, LIVE_STATUSES, PROVIDER_LABEL, type Ag
 import { ChatView } from './ChatView';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
-import { ago, compact, duration, folderName, percent, shortPath, usd } from '../format';
+import { ago, compact, duration, folderName, modelLabel, percent, shortPath, usd } from '../format';
 import { AccountChip, Empty, Meter, MiniMeter, ProviderIcon, StatusPill, confirmDialog, useTicker } from '../ui';
 import { mountTerminal, terminalBackground } from '../terminals';
 
@@ -112,12 +112,41 @@ function AgentListItem({ agent, selected, onSelect }: { agent: AgentInfo; select
         : agent.endedAt
           ? `${agent.statusDetail ?? 'Ended'} · ${ago(agent.endedAt)}`
           : `Idle · ${ago(agent.lastActivityAt)}`;
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(agent.title);
+  const rename = async () => {
+    setEditing(false);
+    if (name.trim() && name.trim() !== agent.title) await call('agents.rename', agent.id, name.trim());
+  };
   return (
     <div className={`agent-item ${selected ? 'on' : ''} ${agent.status === 'needs-input' ? 'attention' : ''}`} onClick={onSelect}>
       <ProviderIcon provider={agent.provider} size={24} />
-      <div className="ai-title" title={agent.title}>
-        {agent.title}
-      </div>
+      {editing ? (
+        <input
+          className="input ai-rename"
+          value={name}
+          autoFocus
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={rename}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') rename();
+            if (e.key === 'Escape') setEditing(false);
+          }}
+        />
+      ) : (
+        <div
+          className="ai-title"
+          title={`${agent.title}\nDouble-click to rename`}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            setName(agent.title);
+            setEditing(true);
+          }}
+        >
+          {agent.title}
+        </div>
+      )}
       <div className="ai-meta">
         <StatusPill status={agent.status} />
         {agent.usesScreen ? <MousePointer2 size={12} color="var(--warning)" /> : null}
@@ -175,7 +204,7 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
             }}
           />
         ) : (
-          <div className="name" title={agent.title} onDoubleClick={() => setEditing(true)}>
+          <div className="name" title={`${agent.title}\nDouble-click to rename`} onDoubleClick={() => setEditing(true)}>
             {agent.title}
           </div>
         )}
@@ -185,7 +214,7 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
           <span className="ellipsis mono" title={agent.cwd}>
             {shortPath(agent.cwd)}
           </span>
-          {agent.model || t?.model ? <span className="badge">{t?.model ?? agent.model}</span> : null}
+          {agent.model || t?.model ? <span className="badge" title={t?.model ?? agent.model ?? undefined}>{modelLabel(t?.model ?? agent.model)}</span> : null}
         </div>
       </div>
       <div className="th-actions">
@@ -211,7 +240,8 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
         <button className="btn ghost icon" title="Open folder" onClick={() => call('shell.openPath', agent.cwd)}>
           <FolderOpen size={15} />
         </button>
-        {live ? (
+        {/* A chat stops from its composer; terminal agents have no composer. */}
+        {live && display !== 'chat' ? (
           <button className="btn danger sm" onClick={() => stopAgent(agent)}>
             <Square size={12} /> Stop
           </button>

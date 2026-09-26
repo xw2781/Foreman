@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp, Cpu, History, LayoutGrid, MonitorDot, Plus, Search,
 import { AGENT_MODES, LIVE_STATUSES, PROVIDER_LABEL, type AgentInfo, type ExternalAgentProcess, type Provider } from '@shared/types';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
-import { STATUS_LABEL, ago, compact, duration, folderName, usd } from '../format';
+import { STATUS_LABEL, ago, compact, duration, folderName, modelLabel, usd } from '../format';
 import { AccountChip, Empty, MiniMeter, ProviderIcon, Segmented, StatusPill, confirmDialog, useTicker } from '../ui';
 import { canResume, resumeAgent, stopAgent } from './AgentsView';
 
@@ -298,7 +298,7 @@ export function TaskManagerView() {
                         <AccountChip label={a.profileLabel} color={a.profileColor} />
                       </td>
                       <td className="secondary ellipsis" style={{ maxWidth: 150 }}>
-                        {t?.model ?? a.model ?? <span className="muted">default</span>}
+                        {modelLabel(t?.model ?? a.model) || <span className="muted">default</span>}
                       </td>
                       <td style={{ minWidth: 130 }}>
                         <MiniMeter value={t?.contextPercent ?? null} title={t ? `${compact(t.contextUsedTokens)} of ${compact(t.contextWindow)} tokens` : undefined} />

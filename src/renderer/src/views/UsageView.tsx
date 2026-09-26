@@ -273,7 +273,7 @@ export function UsageView() {
   const liveSessionIds = new Set(agents.filter((a) => !a.endedAt).map((a) => a.telemetry?.sessionId ?? a.sessionId));
 
   const resume = (row: UsageSessionRow) => {
-    useApp.getState().openLauncher({ provider: row.provider, profileId: row.profileId, cwd: row.cwd ?? settings?.defaultCwd, mode: 'chat', resumeSessionId: row.sessionId, title: row.title ?? undefined });
+    useApp.getState().openLauncher({ provider: row.provider, profileId: row.profileId, cwd: row.cwd ?? settings?.defaultCwd, mode: 'chat', resumeSessionId: row.sessionId });
   };
 
   return (

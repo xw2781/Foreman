@@ -126,3 +126,26 @@ export function initials(label: string): string {
   const words = label.trim().split(/\s+/);
   return (words.length > 1 ? words[0][0] + words[1][0] : label.slice(0, 2)).toUpperCase();
 }
+
+const MODEL_FAMILIES = ['opus', 'sonnet', 'haiku', 'fable', 'mythos'];
+
+/**
+ * A model id as people say it: claude-opus-5-5 → "Opus 5.5",
+ * claude-haiku-4-5-20251001 → "Haiku 4.5", opus[1m] → "Opus (latest) · 1M",
+ * gpt-6-astra → "GPT-6 Astra". Ids it doesn't recognise are shown as they are.
+ */
+export function modelLabel(id: string | null | undefined): string {
+  const raw = (id ?? '').trim();
+  if (!raw) return '';
+  const longContext = /\[1m\]$/i.test(raw);
+  const base = raw.replace(/\[[^\]]*\]$/, '').toLowerCase();
+  const word = (w: string) => w.charAt(0).toUpperCase() + w.slice(1);
+  let name: string | null = null;
+  const claude = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(base);
+  const gpt = /^gpt-(\d+(?:\.\d+)?)(?:-([a-z0-9-]+))?$/.exec(base);
+  if (claude && MODEL_FAMILIES.includes(claude[1])) name = `${word(claude[1])} ${claude[2]}${claude[3] ? `.${claude[3]}` : ''}`;
+  else if (MODEL_FAMILIES.includes(base)) name = `${word(base)} (latest)`;
+  else if (gpt) name = `GPT-${gpt[1]}${gpt[2] ? ` ${gpt[2].split('-').map(word).join(' ')}` : ''}`;
+  if (!name) return raw;
+  return longContext ? `${name} · 1M` : name;
+}

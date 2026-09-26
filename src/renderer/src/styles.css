@@ -213,11 +213,7 @@ button {
 .brand-mark {
   width: 22px;
   height: 22px;
-  border-radius: 7px;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(135deg, var(--accent), #b07bff);
-  color: white;
+  flex: none;
 }
 .titlebar .spacer {
   flex: 1;
@@ -388,7 +384,6 @@ button {
 }
 
 .input,
-.select,
 .textarea {
   width: 100%;
   height: 34px;
@@ -408,18 +403,9 @@ button {
   line-height: 1.5;
 }
 .input:focus,
-.select:focus,
 .textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
-}
-.select {
-  appearance: none;
-  background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%), linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
-  background-position: calc(100% - 15px) 15px, calc(100% - 10px) 15px;
-  background-size: 5px 5px;
-  background-repeat: no-repeat;
-  padding-right: 28px;
 }
 .field {
   display: grid;
@@ -717,11 +703,178 @@ button {
   border-radius: 7px;
   color: white;
 }
+/* The products' own icon colors, not palette slots: they must match the real apps. */
 .provider-icon.claude {
-  background: var(--claude);
+  background: #d97757;
+  color: #faf9f5;
 }
 .provider-icon.codex {
-  background: var(--codex);
+  /* The image is the whole tile, rounded corners included. */
+  border-radius: 0;
+}
+
+/* ---------------------------------------------------------------- select */
+
+.sel {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  font: inherit;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
+}
+.sel.field {
+  width: 100%;
+  height: 34px;
+  padding: 0 9px 0 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--page);
+}
+.sel.field.sm {
+  height: 28px;
+  padding: 0 7px 0 9px;
+  font-size: 12.5px;
+  border-radius: var(--radius-sm);
+}
+.sel.field:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
+}
+.sel.field:focus-visible,
+.sel.field.open {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.sel.ghost {
+  height: 26px;
+  max-width: 220px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.sel.ghost:hover:not(:disabled),
+.sel.ghost.open {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+.sel.ghost:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.sel:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.sel-icon {
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.sel-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sel-prefix {
+  color: var(--text-muted);
+  margin-right: 6px;
+}
+.sel-chev {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+.sel.open .sel-chev {
+  transform: rotate(180deg);
+}
+.sel-menu {
+  position: fixed;
+  z-index: 300;
+  display: grid;
+  align-content: start;
+  gap: 1px;
+  max-width: min(420px, calc(100vw - 16px));
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  box-shadow: var(--shadow);
+  animation: sel-in 0.1s ease-out;
+}
+@keyframes sel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+.sel-heading {
+  padding: 4px 9px 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.sel-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 6px 10px 6px 7px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+.sel-option.active {
+  background: var(--surface-3);
+}
+.sel-option.on .sel-label {
+  color: var(--accent-strong);
+  font-weight: 500;
+}
+.sel-check {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 18px;
+  flex-shrink: 0;
+  color: var(--accent-strong);
+}
+.sel-text {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.sel-label {
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+.sel-hint {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+.sel-custom {
+  margin-top: 4px;
+  padding: 6px 2px 1px;
+  border-top: 1px solid var(--border);
+}
+.sel-custom .input {
+  height: 28px;
+  font-size: 12px;
 }
 
 /* ----------------------------------------------------------------- meters */
@@ -1277,6 +1430,11 @@ table.table {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.agent-item .ai-rename {
+  height: 24px;
+  min-width: 0;
+  padding: 0 6px;
+}
 .agent-item .ai-meta {
   grid-column: 2;
   display: flex;
@@ -1672,4 +1830,20 @@ table.table {
   .account-columns {
     grid-template-columns: 1fr;
   }
+}
+
+/* Account card: default model and effort for new agents */
+.account-card .ac-defaults {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 170px);
+  gap: 8px;
+  align-items: center;
+}
+.account-card .ac-defaults-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
 }

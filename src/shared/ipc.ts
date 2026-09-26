@@ -9,6 +9,7 @@ import type {
   EnvironmentInfo,
   ExternalAgentProcess,
   LaunchOptions,
+  PricingStatus,
   NewProfileInput,
   ProfileView,
   Provider,
@@ -31,7 +32,8 @@ export interface InvokeMap {
 
   'profiles.list': () => ProfileView[];
   'profiles.create': (input: NewProfileInput) => ProfileView[];
-  'profiles.update': (id: string, patch: { label?: string; color?: string; emailHint?: string }) => ProfileView[];
+  /** An empty defaultModel / defaultEffort clears it (back to the CLI default). */
+  'profiles.update': (id: string, patch: { label?: string; color?: string; emailHint?: string; defaultModel?: string; defaultEffort?: string }) => ProfileView[];
   'profiles.remove': (id: string, deleteData: boolean) => ProfileView[];
   'profiles.setActive': (provider: Provider, id: string) => ProfileView[];
   'profiles.refresh': () => ProfileView[];
@@ -65,6 +67,9 @@ export interface InvokeMap {
   'processes.kill': (pid: number) => void;
 
   'usage.report': (force?: boolean) => UsageReport;
+  'pricing.status': () => PricingStatus;
+  /** Creates the editable pricing.json if needed and opens it. */
+  'pricing.edit': () => PricingStatus;
 
   'computerUse.status': () => ComputerUseStatus;
   'computerUse.command': (name: 'release' | 'stop' | 'demo') => { code: number; output: string };
@@ -96,6 +101,7 @@ export interface EventMap {
   toast: Toast;
   settings: AppSettings;
   update: UpdateStatus;
+  pricing: PricingStatus;
 }
 
 export type EventName = keyof EventMap;
@@ -109,13 +115,13 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'agents.rename', 'agents.resume', 'agents.buffer',
   'chat.items', 'chat.send', 'chat.interrupt', 'chat.respond', 'chat.configure',
   'processes.external', 'processes.kill',
-  'usage.report',
+  'usage.report', 'pricing.status', 'pricing.edit',
   'computerUse.status', 'computerUse.command', 'computerUse.setPolicy', 'computerUse.install', 'computerUse.image',
   'update.status', 'update.check', 'update.install'
 ];
 
 export const EVENT_NAMES: EventName[] = [
-  'agents', 'agent-data', 'chat', 'profiles', 'usage', 'usage-progress', 'computer-use', 'externals', 'navigate', 'toast', 'settings', 'update'
+  'agents', 'agent-data', 'chat', 'profiles', 'usage', 'usage-progress', 'computer-use', 'externals', 'navigate', 'toast', 'settings', 'update', 'pricing'
 ];
 
 /** Fire-and-forget channels (no reply), for the hot path of terminal I/O. */

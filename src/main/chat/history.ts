@@ -57,6 +57,9 @@ export function claudeHistory(lines: Iterable<string>, limit = HISTORY_LIMIT): H
     if (!record || record.isSidechain) continue;
     const at = typeof record.timestamp === 'string' ? record.timestamp : null;
     const uuid = String(record.uuid ?? `${out.size}`);
+    if (record.type === 'system' && record.subtype === 'informational' && record.level === 'warning' && typeof record.content === 'string') {
+      out.put({ kind: 'notice', id: `info-${uuid}`, tone: 'warning', text: record.content.trim() }, at);
+    }
     if (record.type === 'system' && record.subtype === 'compact_boundary') {
       out.put({ kind: 'notice', id: `compact-${uuid}`, tone: 'info', text: 'Context compacted' }, at);
       continue;

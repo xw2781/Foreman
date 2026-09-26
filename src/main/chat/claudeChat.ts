@@ -74,12 +74,15 @@ export class ClaudeChat implements ChatDriver {
   private toolStarts = new Map<string, number>();
   private declined = new Set<string>();
   private requestCounter = 0;
+  /** Our control requests awaiting the CLI's response, by request id. */
+  private replies = new Map<string, (response: any) => void>();
   private userCounter = 0;
   private interrupting = false;
   private lastTotalCost = 0;
   busy = false;
 
-  constructor(private host: ChatHost, private write: (message: object) => void) {}
+  /** `permission`: the mode asked for at launch, to notice when the CLI starts in another. */
+  constructor(private host: ChatHost, private write: (message: object) => void, private permission?: string) {}
 
   async start(prompt?: string) {
     // The CLI says nothing until the first message arrives.
@@ -111,6 +114,8 @@ export class ClaudeChat implements ChatDriver {
       this.request({ subtype: 'set_model', model: patch.model || 'default' });
       this.host.session({ model: patch.model });
     }
+    // No dedicated request: effort rides on the session's flag settings.
+    if (patch.effort) this.request({ subtype: 'apply_flag_settings', settings: { effortLevel: patch.effort } });
   }
 
   respond(itemId: string, answer: ChatAnswer) {
@@ -191,6 +196,9 @@ export class ClaudeChat implements ChatDriver {
       case 'control_cancel_request':
         this.onCancel(event.request_id);
         break;
+      case 'control_response':
+        this.onControlResponse(event.response);
+        return;
       case 'rate_limit_event':
         this.onRateLimit(event.rate_limit_info);
         break;
@@ -285,8 +293,22 @@ export class ClaudeChat implements ChatDriver {
   private onSystem(event: any) {
     if (event.subtype === 'init') {
       this.host.session({ sessionId: event.session_id, model: event.model, permission: event.permissionMode });
+      // Claude Code quietly falls back when a mode isn't available (Auto needs a supported model).
+      const asked = this.permission;
+      this.permission = undefined;
+      if (asked && asked !== 'default' && event.permissionMode && event.permissionMode !== asked) {
+        this.host.log.upsert({
+          kind: 'notice',
+          id: `mode-${event.session_id ?? Date.now()}`,
+          tone: 'warning',
+          text: `Claude Code didn't start in "${asked}" permission mode with ${event.model ?? 'this model'}; it's using "${event.permissionMode}".`
+        });
+      }
     } else if (event.subtype === 'compact_boundary') {
       this.host.log.upsert({ kind: 'notice', id: `compact-${event.uuid ?? Date.now()}`, tone: 'info', text: 'Context compacted' });
+    } else if (event.subtype === 'informational' && typeof event.content === 'string' && event.content.trim()) {
+      const tone = event.level === 'warning' ? 'warning' : event.level === 'error' ? 'error' : 'info';
+      this.host.log.upsert({ kind: 'notice', id: `info-${event.uuid ?? Date.now()}`, tone, text: event.content.trim() });
     }
   }
 
@@ -406,7 +428,33 @@ export class ClaudeChat implements ChatDriver {
     if (limits) this.host.limits(limits);
   }
 
+  dispose() {
+    for (const reply of this.replies.values()) reply(null);
+    this.replies.clear();
+  }
+
+  rename(title: string) {
+    this.request({ subtype: 'rename_session', title });
+  }
+
+  generateTitle(description: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      const id = this.request({ subtype: 'generate_session_title', description, persist: true });
+      this.replies.set(id, (response) => resolve(typeof response?.title === 'string' && response.title.trim() ? response.title.trim() : null));
+    });
+  }
+
+  /** The CLI's answer to one of our control requests. */
+  private onControlResponse(response: any) {
+    const reply = this.replies.get(response?.request_id);
+    if (!reply) return;
+    this.replies.delete(response.request_id);
+    reply(response.subtype === 'success' ? response.response : null);
+  }
+
   private request(request: Record<string, unknown>) {
-    this.write({ type: 'control_request', request_id: `atc-${++this.requestCounter}`, request });
+    const id = `atc-${++this.requestCounter}`;
+    this.write({ type: 'control_request', request_id: id, request });
+    return id;
   }
 }

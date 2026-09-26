@@ -100,6 +100,44 @@ describe('Claude chat protocol', () => {
     expect(chat.busy).toBe(false);
   });
 
+  it('asks the CLI to title the session and renames it', async () => {
+    const { host } = fakeHost();
+    const sent: any[] = [];
+    const chat = new ClaudeChat(host, (m) => sent.push(m));
+    const title = chat.generateTitle('fix the flaky upload test');
+    const request = sent.at(-1);
+    expect(request).toMatchObject({ type: 'control_request', request: { subtype: 'generate_session_title', description: 'fix the flaky upload test', persist: true } });
+    chat.receive(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: request.request_id, response: { title: 'Fix flaky upload test' } } }));
+    await expect(title).resolves.toBe('Fix flaky upload test');
+
+    const failed = chat.generateTitle('x');
+    chat.receive(JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: sent.at(-1).request_id, error: 'nope' } }));
+    await expect(failed).resolves.toBeNull();
+
+    chat.rename('Upload tests');
+    expect(sent.at(-1)).toMatchObject({ type: 'control_request', request: { subtype: 'rename_session', title: 'Upload tests' } });
+
+    chat.configure({ effort: 'xhigh' });
+    expect(sent.at(-1)).toMatchObject({ type: 'control_request', request: { subtype: 'apply_flag_settings', settings: { effortLevel: 'xhigh' } } });
+  });
+
+  it("shows the CLI's warnings, such as a refused model", () => {
+    const { host, log } = fakeHost();
+    const chat = new ClaudeChat(host, () => {});
+    const text = `Model "claude-haiku-4-5" is restricted by your organization's settings. Using claude-opus-5-5[1m] instead.`;
+    chat.receive(JSON.stringify({ type: 'system', subtype: 'informational', level: 'warning', content: text, uuid: 'w1' }));
+    const [notice] = log.list();
+    expect(notice.kind === 'notice' && [notice.tone, notice.text]).toEqual(['warning', text]);
+  });
+
+  it('says so when the CLI starts in another permission mode than asked', () => {
+    const { host, log } = fakeHost();
+    const chat = new ClaudeChat(host, () => {}, 'auto');
+    chat.receive(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', model: 'claude-haiku-4-5-20251001', permissionMode: 'default' }));
+    chat.receive(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', model: 'claude-haiku-4-5-20251001', permissionMode: 'default' }));
+    expect(log.list().map((i) => i.kind === 'notice' && i.tone)).toEqual(['warning']);
+  });
+
   it('shows streamed text before the block completes', () => {
     const { host, log } = fakeHost();
     const chat = new ClaudeChat(host, () => {});
@@ -232,6 +270,45 @@ describe('Codex chat protocol', () => {
     expect(card?.kind === 'approval' && [card.body, card.detail, card.options.map((o) => o.id)]).toEqual(['rm -rf build', 'Needs write access', ['allow', 'allow-session', 'deny', 'cancel']]);
     chat.respond('approval-77', { optionId: 'allow-session' });
     expect(sent.at(-1)).toEqual({ id: 77, result: { decision: 'acceptForSession' } });
+  });
+
+  it('saves a rename into the thread', async () => {
+    const { chat, sent, ready } = started();
+    chat.receive(JSON.stringify({ id: 1, result: {} }));
+    await Promise.resolve();
+    await Promise.resolve();
+    chat.receive(JSON.stringify({ id: sent[2].id, result: { thread: { id: 'th-1', path: null }, model: 'm' } }));
+    await ready;
+    chat.rename('Release notes');
+    expect(sent.at(-1)).toMatchObject({ method: 'thread/name/set', params: { threadId: 'th-1', name: 'Release notes' } });
+  });
+
+  it('lets the auto-reviewer approve, and prices each turn from its token usage', async () => {
+    const { host, log } = fakeHost();
+    const sent: any[] = [];
+    const chat = new CodexChat(host, (m) => sent.push(m), { cwd: 'C:\\r', permission: 'approve-for-me', appVersion: '0.1.0' });
+    const ready = chat.start();
+    chat.receive(JSON.stringify({ id: 1, result: {} }));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sent[2]).toMatchObject({ method: 'thread/start', params: { approvalPolicy: 'on-request', approvalsReviewer: 'auto_review', sandbox: 'workspace-write' } });
+    chat.receive(JSON.stringify({ id: sent[2].id, result: { thread: { id: 'th-1', path: null }, model: 'gpt-6-sol' } }));
+    await ready;
+
+    const notify = (method: string, params: object) => chat.receive(JSON.stringify({ method, params: { threadId: 'th-1', ...params } }));
+    const usage = (input: number, cached: number, output: number) => ({ inputTokens: input, cachedInputTokens: cached, cacheWriteInputTokens: 0, outputTokens: output, reasoningOutputTokens: 0, totalTokens: input + output });
+    // gpt-6-sol: $2 input, $0.20 cached, $10 output per 1M tokens.
+    notify('turn/started', { turn: { id: 't1' } });
+    notify('thread/tokenUsage/updated', { turnId: 't1', tokenUsage: { total: usage(100_000, 0, 0), last: usage(100_000, 0, 0) } });
+    notify('thread/tokenUsage/updated', { turnId: 't1', tokenUsage: { total: usage(200_000, 100_000, 10_000), last: usage(100_000, 100_000, 10_000) } });
+    notify('turn/completed', { turn: { id: 't1', status: 'completed' } });
+    const first = log.get('turn-t1');
+    expect(first?.kind === 'turn' && first.costUsd).toBeCloseTo(0.2 + 0.02 + 0.1, 6);
+
+    // Switching to "Ask for approval" hands escalations back to the person on the next turn.
+    chat.configure({ permission: 'auto' });
+    chat.send('again');
+    expect(sent.at(-1)).toMatchObject({ method: 'turn/start', params: { approvalPolicy: 'on-request', approvalsReviewer: 'user' } });
   });
 
   it('answers unsupported server requests with an error', () => {

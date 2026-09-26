@@ -1,15 +1,53 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, FolderOpen, History, MessagesSquare, Play, Rocket, SquareTerminal, Zap } from 'lucide-react';
-import { PROVIDER_LABEL, type AgentMode, type LaunchOptions, type Provider } from '@shared/types';
+import { PROVIDER_LABEL, type AgentMode, type CliDefaults, type LaunchOptions, type Provider } from '@shared/types';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
-import { colorVar, limitSummary } from '../format';
-import { Modal, ProviderIcon } from '../ui';
+import { colorVar, limitSummary, modelLabel } from '../format';
+import { Modal, ProviderIcon, Select, type SelectOption } from '../ui';
 
+/** Newest first; Claude's family aliases (always the latest of each) follow its dated ids. */
 export const MODELS: Record<Provider, string[]> = {
-  claude: ['opus', 'sonnet', 'fable', 'haiku', 'opus[1m]', 'claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5', 'claude-haiku-4-5'],
+  claude: ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5', 'claude-haiku-4-5', 'opus', 'opus[1m]', 'fable', 'sonnet', 'haiku'],
   codex: ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']
 };
+
+/** "Default · gpt-6-astra": what the CLI picks when nothing is chosen, from its own config. */
+export function defaultLabel(configured: string | null | undefined) {
+  return configured ? `Default · ${configured}` : 'CLI default';
+}
+
+/** Version numbers in a model id, for newest-first order: claude-opus-4-8 → [4, 8], gpt-5.6-sol → [5, 6]. */
+function modelVersion(id: string): number[] {
+  const match = /(\d+)(?:[.-](\d{1,2}))?(?![\d])/.exec(id.replace(/-\d{8}/, ''));
+  return match ? [Number(match[1]), Number(match[2] ?? 0)] : [0, 0];
+}
+
+/**
+ * Model choices by name, newest first. When the account's CLI config limits
+ * the models (Claude's availableModels) only those are offered; `current`
+ * (e.g. the id a running session resolved to) is kept when unlisted.
+ */
+export function modelOptions(provider: Provider, defaults: CliDefaults | null | undefined, current = ''): SelectOption[] {
+  const listed = defaults?.models?.length
+    ? [...defaults.models].sort((a, b) => {
+        const [x, y] = [modelVersion(a), modelVersion(b)];
+        return y[0] - x[0] || y[1] - x[1];
+      })
+    : MODELS[provider];
+  const models = [...(current && !listed.includes(current) ? [current] : []), ...listed];
+  return [{ value: '', label: defaultLabel(modelLabel(defaults?.model)) }, ...models.map((m) => ({ value: m, label: modelLabel(m) }))];
+}
+
+/** "high" → "High": effort values stay lower case for the CLIs, labels don't. */
+export function effortLabel(effort: string) {
+  return effort.charAt(0).toUpperCase() + effort.slice(1);
+}
+
+export function effortOptions(provider: Provider, configured: string | null | undefined, current = ''): SelectOption[] {
+  const efforts = [...EFFORTS[provider], ...(current && !EFFORTS[provider].includes(current) ? [current] : [])];
+  return [{ value: '', label: defaultLabel(configured && effortLabel(configured)) }, ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))];
+}
 
 export const EFFORTS: Record<Provider, string[]> = {
   claude: ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -25,12 +63,16 @@ export const PERMISSIONS: Record<Provider, Array<{ value: string; label: string;
     { value: 'bypassPermissions', label: 'Bypass permissions', hint: 'Never asks. Use only in a sandbox or a throwaway checkout.' }
   ],
   codex: [
-    { value: 'default', label: 'Codex default', hint: 'Uses the sandbox and approval policy from config.toml.' },
+    { value: 'approve-for-me', label: 'Approve for me', hint: "Edits the workspace; Codex's auto-reviewer decides when to leave the sandbox instead of asking you." },
+    { value: 'auto', label: 'Ask for approval', hint: 'Edits the workspace; asks you before leaving the sandbox.' },
     { value: 'read-only', label: 'Read only', hint: 'Sandboxed read-only access.' },
-    { value: 'auto', label: 'Workspace write', hint: 'Can edit the workspace; asks before leaving the sandbox.' },
-    { value: 'full-access', label: 'Full access', hint: 'No sandbox, no approvals. Use only in an isolated environment.' }
+    { value: 'full-access', label: 'Full access', hint: 'No sandbox, no approvals. Use only in an isolated environment.' },
+    { value: 'default', label: 'Codex default', hint: 'Uses the sandbox and approval policy from config.toml.' }
   ]
 };
+
+/** What a new agent starts with when the launcher isn't told otherwise. */
+export const DEFAULT_PERMISSION: Record<Provider, string> = { claude: 'auto', codex: 'approve-for-me' };
 
 export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
   const close = useApp((s) => s.closeLauncher);
@@ -49,20 +91,40 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
   const [title, setTitle] = useState(preset.title ?? '');
   const [model, setModel] = useState(preset.model ?? '');
   const [effort, setEffort] = useState(preset.effort ?? '');
-  const [permission, setPermission] = useState(preset.permission ?? 'default');
+  const [permission, setPermission] = useState(preset.permission ?? DEFAULT_PERMISSION[preset.provider ?? 'claude']);
   const [extraArgs, setExtraArgs] = useState(preset.extraArgs ?? '');
   const [advanced, setAdvanced] = useState(Boolean(preset.model || preset.effort || preset.extraArgs));
   const [busy, setBusy] = useState(false);
   const resuming = Boolean(preset.resumeSessionId);
+  // A model or effort from the preset, or picked here, wins over the account's defaults.
+  const modelChosen = useRef(preset.model !== undefined);
+  const effortChosen = useRef(preset.effort !== undefined);
 
-  // Switching tool resets the account to that tool's active one.
+  // Switching tool resets the account to that tool's active one, and the permissions to its default.
+  const initialProvider = useRef(provider);
   useEffect(() => {
     if (!providerProfiles.some((p) => p.id === profileId)) setProfileId(activeId);
-    if (!PERMISSIONS[provider].some((p) => p.value === permission)) setPermission('default');
+    if (provider !== initialProvider.current || !PERMISSIONS[provider].some((p) => p.value === permission)) {
+      initialProvider.current = provider;
+      setPermission(DEFAULT_PERMISSION[provider]);
+      // Another tool's model means nothing here: take the new account's defaults.
+      modelChosen.current = false;
+      effortChosen.current = false;
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider]);
 
   const profile = providerProfiles.find((p) => p.id === profileId);
+
+  // The account's default model and effort fill the fields until the user picks their own.
+  useEffect(() => {
+    if (!modelChosen.current) setModel(profile?.defaultModel ?? '');
+    if (!effortChosen.current) setEffort(profile?.defaultEffort ?? '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.id, profile?.defaultModel, profile?.defaultEffort]);
+  const modelFromAccount = Boolean(profile?.defaultModel) && model === profile?.defaultModel;
+  const effortFromAccount = Boolean(profile?.defaultEffort) && effort === profile?.defaultEffort;
+  const modelSummary = [modelLabel(model.trim()), effort ? `${effortLabel(effort)} effort` : ''].filter(Boolean).join(', ');
   const cli = env?.clis.find((c) => c.provider === provider);
   const permissionHint = PERMISSIONS[provider].find((p) => p.value === permission)?.hint;
   const canLaunch = Boolean(profile && cwd.trim() && cli?.path && (mode !== 'task' || prompt.trim()));
@@ -152,17 +214,20 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
         <div className="grid-2">
           <div className="field">
             <label>Account</label>
-            <select className="select" value={profileId} onChange={(e) => setProfileId(e.target.value)} disabled={resuming}>
-              {providerProfiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                  {p.identity?.email ? ` — ${p.identity.email}` : p.identity?.loggedIn ? '' : ' — not signed in'}
-                </option>
-              ))}
-            </select>
+            <Select
+              value={profileId}
+              onChange={setProfileId}
+              disabled={resuming}
+              aria-label="Account"
+              options={providerProfiles.map((p) => ({
+                value: p.id,
+                label: p.planTier ? `${p.label} · ${p.planTier}` : p.label,
+                hint: p.identity?.email ?? (p.identity?.loggedIn ? undefined : 'Not signed in')
+              }))}
+            />
             <div className="hint row">
               {profile ? <span className="swatch" style={{ background: colorVar(profile.color), borderRadius: '50%' }} /> : null}
-              <span className="ellipsis">{limitSummary(profile?.limits?.windows) || (profile?.identity?.plan ? `Plan: ${profile.identity.plan}` : 'Plan usage appears after the first session')}</span>
+              <span className="ellipsis">{limitSummary(profile?.limits?.windows) || (profile?.planTier ?? profile?.identity?.plan ? `Plan: ${profile?.planTier ?? profile?.identity?.plan}` : 'Plan usage appears after the first session')}</span>
             </div>
           </div>
           <div className="field">
@@ -227,13 +292,12 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
           </div>
           <div className="field">
             <label>Permissions</label>
-            <select className="select" value={permission} onChange={(e) => setPermission(e.target.value)}>
-              {PERMISSIONS[provider].map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
+            <Select
+              value={permission}
+              onChange={setPermission}
+              aria-label="Permissions"
+              options={PERMISSIONS[provider].map((p) => ({ value: p.value, label: p.label, hint: p.hint }))}
+            />
             <div className="hint" style={{ color: /never|No sandbox/i.test(permissionHint ?? '') ? 'var(--serious)' : undefined }}>
               {permissionHint}
             </div>
@@ -242,28 +306,36 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
 
         <button className="btn ghost sm" style={{ justifySelf: 'start' }} onClick={() => setAdvanced(!advanced)}>
           <ChevronRight size={14} style={{ transform: advanced ? 'rotate(90deg)' : undefined, transition: 'transform .15s' }} /> Model & advanced
+          {!advanced && modelSummary ? <span className="muted" style={{ fontWeight: 400 }}>· {modelSummary}</span> : null}
         </button>
         {advanced ? (
-          <div className="grid-3">
+          <div className="grid-3" style={{ alignItems: 'start' }}>
             <div className="field">
               <label>Model</label>
-              <input className="input" list={`models-${provider}`} value={model} onChange={(e) => setModel(e.target.value)} placeholder="CLI default" />
-              <datalist id={`models-${provider}`}>
-                {MODELS[provider].map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
+              <Select
+                value={model}
+                aria-label="Model"
+                options={modelOptions(provider, profile?.cliDefaults)}
+                custom={{ placeholder: 'Other model id…' }}
+                onChange={(next) => {
+                  modelChosen.current = true;
+                  setModel(next);
+                }}
+              />
+              {modelFromAccount ? <div className="hint">This account's default</div> : null}
             </div>
             <div className="field">
               <label>Reasoning effort</label>
-              <select className="select" value={effort} onChange={(e) => setEffort(e.target.value)}>
-                <option value="">CLI default</option>
-                {EFFORTS[provider].map((e) => (
-                  <option key={e} value={e}>
-                    {e}
-                  </option>
-                ))}
-              </select>
+              <Select
+                value={effort}
+                aria-label="Reasoning effort"
+                options={effortOptions(provider, profile?.cliDefaults.effort, effort)}
+                onChange={(next) => {
+                  effortChosen.current = true;
+                  setEffort(next);
+                }}
+              />
+              {effortFromAccount ? <div className="hint">This account's default</div> : null}
             </div>
             <div className="field">
               <label>Extra arguments</label>

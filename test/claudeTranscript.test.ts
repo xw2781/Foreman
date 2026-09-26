@@ -74,7 +74,7 @@ describe('Claude transcript parser', () => {
     expect(state.lastCompactionAt).toBe('2026-09-23T12:00:01.000Z');
   });
 
-  it('prefers a custom title, then the AI title, then the last prompt', async () => {
+  it('prefers a custom title, then the AI title, then the first prompt', async () => {
     const file = path.join(dir, `${SESSION}.jsonl`);
     fs.writeFileSync(
       file,
@@ -85,6 +85,7 @@ describe('Claude transcript parser', () => {
     );
     const parser = new ClaudeTranscriptParser(file);
     let state = await parser.update();
+    expect(claudeTitle({ ...state, aiTitle: null })).toBe(claudeTitle({ ...state, aiTitle: null, lastPrompt: 'a later prompt' }));
     expect(claudeTitle(state)).toBe('Refactor parser');
     fs.appendFileSync(file, `${JSON.stringify({ type: 'custom-title', customTitle: 'My rename', sessionId: SESSION })}\n`);
     state = await parser.update();

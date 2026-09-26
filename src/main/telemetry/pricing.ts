@@ -1,18 +1,11 @@
 import type { CostEstimate, Provider, TokenUsage } from '../../shared/types';
+import defaults from './prices.json';
 
 /**
- * Public list prices in USD per 1M tokens, Standard tier. These are
- * API-equivalent estimates: a Claude or ChatGPT subscription is billed
- * differently, and tool/container fees are not included.
- *
- * Anthropic rates: Claude API model table, checked 2026-09-23. Cache writes
- * are 1.25x input (5-minute) and 2x input (1-hour); cache reads are 0.1x
- * input except where a model publishes its own rate (Fable 5.1, Opus 5.5).
- * OpenAI rates: developers.openai.com/api/docs/pricing, checked 2026-09-23.
- * Models marked longContext bill every token at 2x when a request's input
- * exceeds 272K tokens.
+ * Model prices, USD per 1M tokens. The table ships as prices.json (its
+ * "about" notes say how to edit it); a pricing.json in the app's data folder
+ * overrides it at runtime, so new models get priced without an app release.
  */
-export const PRICING_DATE = '2026-09-23';
 export const LONG_CONTEXT_THRESHOLD = 272_000;
 const PER_MILLION = 1_000_000;
 
@@ -29,87 +22,101 @@ export interface Rate {
   contextWindow: number | null;
 }
 
-function openai(
-  model: string,
-  input: number,
-  cachedInput: number | null,
-  output: number,
-  options: { cacheWrite?: number; longContext?: boolean; aliases?: string[]; contextWindow?: number } = {}
-): Rate {
+export interface PricingTable {
+  pricingDate: string;
+  rates: Rate[];
+  /** Entries that were skipped, and why. */
+  problems: string[];
+}
+
+function price(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/** A rate from one prices.json entry; omitted values take the provider's defaults. */
+function parseRate(entry: any): Rate | string {
+  const model = typeof entry?.model === 'string' ? normalizeModelId(entry.model) : '';
+  if (!model) return 'an entry has no model id';
+  const provider = entry.provider;
+  if (provider !== 'claude' && provider !== 'codex') return `${model}: provider must be "claude" or "codex"`;
+  const input = price(entry.input);
+  const output = price(entry.output);
+  if (input === null || output === null) return `${model}: input and output must be non-negative numbers`;
+  const claude = provider === 'claude';
+  const optional = (key: string, fallback: number | null) => (key in entry ? (entry[key] === null ? null : price(entry[key]) ?? fallback) : fallback);
+  const aliases: unknown[] = Array.isArray(entry.aliases) ? entry.aliases : [];
   return {
-    provider: 'codex',
+    provider,
     model,
-    aliases: options.aliases ?? [],
+    aliases: aliases.filter((a): a is string => typeof a === 'string').map(normalizeModelId).filter(Boolean),
     input,
-    cachedInput,
-    cacheWrite: options.cacheWrite ?? null,
-    cacheWriteLong: null,
+    cachedInput: optional('cachedInput', claude ? input * 0.1 : null),
+    cacheWrite: optional('cacheWrite', claude ? input * 1.25 : null),
+    cacheWriteLong: optional('cacheWriteLong', claude ? input * 2 : null),
     output,
-    longContext: options.longContext === true,
-    contextWindow: options.contextWindow ?? null
+    longContext: entry.longContext === true,
+    contextWindow: optional('contextWindow', claude ? 1_000_000 : null)
   };
 }
 
-function claude(
-  model: string,
-  input: number,
-  output: number,
-  options: { cacheRead?: number; contextWindow?: number; aliases?: string[] } = {}
-): Rate {
-  return {
-    provider: 'claude',
-    model,
-    aliases: options.aliases ?? [],
-    input,
-    cachedInput: options.cacheRead ?? input * 0.1,
-    cacheWrite: input * 1.25,
-    cacheWriteLong: input * 2,
-    output,
-    longContext: false,
-    contextWindow: options.contextWindow ?? 1_000_000
-  };
+/** Reads a prices.json-shaped object. Throws only when it isn't one at all. */
+export function parsePricingTable(raw: unknown): PricingTable {
+  const data = raw as any;
+  if (!data || typeof data !== 'object' || !Array.isArray(data.models)) throw new Error('expected an object with a "models" list');
+  const rates: Rate[] = [];
+  const problems: string[] = [];
+  for (const entry of data.models) {
+    const rate = parseRate(entry);
+    if (typeof rate === 'string') problems.push(rate);
+    else rates.push(rate);
+  }
+  return { pricingDate: typeof data.pricingDate === 'string' ? data.pricingDate : '', rates, problems };
 }
 
-export const RATES: Rate[] = [
-  openai('gpt-6-astra', 10, 1, 50, { cacheWrite: 12.5, longContext: true }),
-  openai('gpt-6-sol', 2, 0.2, 10, { cacheWrite: 2.5, longContext: true }),
-  openai('gpt-6-luna', 0.1, 0.01, 0.5, { cacheWrite: 0.125, longContext: true }),
-  openai('gpt-5.6-sol', 4, 0.4, 20, { cacheWrite: 5, longContext: true, aliases: ['gpt-5.6'] }),
-  openai('gpt-5.6-terra', 2, 0.2, 12, { cacheWrite: 2.5, longContext: true }),
-  openai('gpt-5.6-luna', 0.2, 0.02, 1.2, { cacheWrite: 0.25, longContext: true }),
-  openai('gpt-5.5', 5, 0.5, 30),
-  openai('gpt-5.5-pro', 30, null, 180),
-  openai('gpt-5.4', 2.5, 0.25, 15),
-  openai('gpt-5.4-mini', 0.75, 0.075, 4.5),
-  openai('gpt-5.4-nano', 0.2, 0.02, 1.25),
-  openai('gpt-5.4-pro', 30, null, 180),
-  openai('gpt-5.3-codex', 1.75, 0.175, 14),
-  openai('gpt-5.2', 1.75, 0.175, 14),
-  openai('gpt-5.2-codex', 1.75, 0.175, 14),
-  openai('gpt-5.2-pro', 21, null, 168),
-  openai('gpt-5.1', 1.25, 0.125, 10),
-  openai('gpt-5.1-codex', 1.25, 0.125, 10),
-  openai('gpt-5.1-codex-max', 1.25, 0.125, 10),
-  openai('gpt-5.1-codex-mini', 0.25, 0.025, 2),
-  openai('gpt-5', 1.25, 0.125, 10),
-  openai('gpt-5-codex', 1.25, 0.125, 10),
-  openai('gpt-5-mini', 0.25, 0.025, 2),
-  openai('gpt-5-nano', 0.05, 0.005, 0.4),
-  openai('gpt-5-pro', 15, null, 120),
+/** Per model, the entry from the more recently checked table wins; models in only one table are kept. */
+export function mergePricing(base: PricingTable, override: PricingTable | null): PricingTable {
+  if (!override) return base;
+  const overrideWins = override.pricingDate >= base.pricingDate;
+  const [older, newer] = overrideWins ? [base, override] : [override, base];
+  const byModel = new Map<string, Rate>();
+  for (const rate of [...older.rates, ...newer.rates]) byModel.set(rate.model, rate);
+  return { pricingDate: newer.pricingDate, rates: [...byModel.values()], problems: override.problems };
+}
 
-  claude('claude-fable-5-1', 10, 50, { cacheRead: 0.25 }),
-  claude('claude-mythos-5-1', 10, 50, { cacheRead: 0.25 }),
-  claude('claude-fable-5', 10, 50),
-  claude('claude-mythos-5', 10, 50),
-  claude('claude-opus-5-5', 4, 20, { cacheRead: 0.2 }),
-  claude('claude-opus-5', 5, 25),
-  claude('claude-opus-4-8', 5, 25),
-  claude('claude-opus-4-7', 5, 25),
-  claude('claude-opus-4-6', 5, 25),
-  claude('claude-sonnet-5', 2, 10),
-  claude('claude-sonnet-4-6', 3, 15),
-  claude('claude-haiku-4-5', 1, 5, { contextWindow: 200_000 })
-];
+/** The table that ships with the app, as JSON (seeds the editable copy) and parsed. */
+export const BUILTIN_PRICING_JSON = defaults;
+export const BUILTIN_PRICING: PricingTable = parsePricingTable(defaults);
+
+let table = BUILTIN_PRICING;
+let fingerprint = '';
+const rateIndex = new Map<string, Rate>();
+
+function reindex() {
+  rateIndex.clear();
+  // Aliases first, so an id that is some model's own always resolves to that model.
+  for (const rate of table.rates) for (const id of rate.aliases) rateIndex.set(id, rate);
+  for (const rate of table.rates) rateIndex.set(rate.model, rate);
+  const text = JSON.stringify(table.rates);
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) hash = (Math.imul(hash, 31) + text.charCodeAt(i)) | 0;
+  fingerprint = `${table.pricingDate}:${(hash >>> 0).toString(36)}`;
+}
+reindex();
+
+/** Applies the runtime override on top of the shipped table (null: shipped table only). */
+export function setPricingOverride(override: PricingTable | null) {
+  table = mergePricing(BUILTIN_PRICING, override);
+  reindex();
+}
+
+export function currentPricing(): PricingTable {
+  return table;
+}
+
+/** Changes whenever any rate does: costs cached under another version are stale. */
+export function pricingVersion(): string {
+  return fingerprint;
+}
 
 /** Strips decorations that don't change the price: case, `[1m]`, date snapshots. */
 export function normalizeModelId(model: string | null | undefined): string {
@@ -120,11 +127,6 @@ export function normalizeModelId(model: string | null | undefined): string {
     .replace(/@\d{8}$/, '')
     .replace(/-\d{8}$/, '')
     .replace(/-\d{4}-\d{2}-\d{2}$/, '');
-}
-
-const rateIndex = new Map<string, Rate>();
-for (const rate of RATES) {
-  for (const id of [rate.model, ...rate.aliases]) rateIndex.set(id, rate);
 }
 
 export function rateForModel(model: string | null | undefined): Rate | null {

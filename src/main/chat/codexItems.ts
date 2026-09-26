@@ -238,15 +238,19 @@ export function codexItemEntry(raw: any): ChatEntry | null {
 /** Sandbox and approval settings for the app's Codex permission choices. */
 export function codexPermission(permission: string | null | undefined): {
   approvalPolicy?: 'on-request' | 'never';
+  /** Who answers sandbox escalations: the person, or Codex's auto-reviewer ("Approve for me"). */
+  approvalsReviewer?: 'user' | 'auto_review';
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   sandboxPolicy?: Record<string, unknown>;
 } {
   switch (permission) {
     case 'read-only':
-      return { approvalPolicy: 'on-request', sandbox: 'read-only', sandboxPolicy: { type: 'readOnly', networkAccess: false } };
+      return { approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'read-only', sandboxPolicy: { type: 'readOnly', networkAccess: false } };
     case 'auto':
+    case 'approve-for-me':
       return {
         approvalPolicy: 'on-request',
+        approvalsReviewer: permission === 'auto' ? 'user' : 'auto_review',
         sandbox: 'workspace-write',
         sandboxPolicy: { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }
       };

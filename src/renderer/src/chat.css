@@ -232,6 +232,8 @@
 /* tools */
 .tool-group {
   display: grid;
+  /* Without this the column grows to the longest command and row ends are clipped. */
+  grid-template-columns: minmax(0, 1fr);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface-2);
@@ -325,6 +327,85 @@
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.tool-line.folded.expanded {
+  border-bottom: 1px solid var(--border);
+}
+
+/* turns */
+.turn {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+.turn > * {
+  min-width: 0;
+}
+.turn-fold {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 2px 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12.5px;
+  text-align: left;
+}
+.turn-fold:hover {
+  color: var(--text-secondary);
+}
+.turn-fold > span:first-child {
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.turn-fold-detail {
+  min-width: 0;
+}
+.turn-steps {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+}
+.turn-steps > * {
+  min-width: 0;
+}
+.changes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 4px 8px 8px;
+}
+.changes-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: none;
+  padding: 5px 2px 1px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+}
+.changes-head:hover {
+  color: var(--text-primary);
+}
+.changes-title {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.changes-head .chev {
+  margin-left: auto;
+  color: var(--text-muted);
 }
 
 /* diffs */
@@ -652,23 +733,9 @@
 .composer-bar .spacer {
   flex: 1;
 }
-.composer-select {
-  height: 26px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  padding: 0 6px;
-  max-width: 180px;
-  cursor: pointer;
-}
-.composer-select:hover {
-  background: var(--surface-3);
-}
-.composer-select option {
-  background: var(--surface-2);
-  color: var(--text-primary);
+.composer-context-of {
+  color: var(--text-muted);
+  opacity: 0.8;
 }
 .composer-context {
   display: flex;

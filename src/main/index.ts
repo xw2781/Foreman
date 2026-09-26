@@ -14,6 +14,7 @@ import type { EventMap, EventName, InvokeChannel, InvokeMap } from '../shared/ip
 import { ProfileService } from './profiles';
 import { PlanUsageClient } from './planUsage';
 import { TelemetryClient } from './telemetry/client';
+import { loadPricingFile, seedPricingFile } from './telemetry/pricingFile';
 import { HookServer } from './hookServer';
 import { ProcessMonitor, killTree } from './processMonitor';
 import { AgentManager } from './agents';
@@ -86,7 +87,10 @@ const skillSource = app.isPackaged
   : path.join(app.getAppPath(), 'resources', 'skills', 'computer-use');
 
 const profiles = new ProfileService(userData);
-const telemetry = new TelemetryClient(__dirname, path.join(userData, 'usage-cache.json'));
+// Editable model prices; the main process prices chat turns, the worker everything else.
+const pricingPath = path.join(userData, 'pricing.json');
+let pricing = loadPricingFile(pricingPath);
+const telemetry = new TelemetryClient(__dirname, path.join(userData, 'usage-cache.json'), pricingPath);
 const hooks = new HookServer(path.join(userData, 'agent-settings'));
 const processes = new ProcessMonitor();
 const computerUse = new ComputerUseService(exists(skillSource) ? skillSource : null);
@@ -349,6 +353,14 @@ function registerIpc() {
     const report = await telemetry.usageReport(Boolean(force));
     return report;
   });
+  handle('pricing.status', () => pricing);
+  handle('pricing.edit', async () => {
+    seedPricingFile(pricingPath);
+    await reloadPricing();
+    const error = await shell.openPath(pricingPath);
+    if (error) shell.showItemInFolder(pricingPath);
+    return pricing;
+  });
 
   handle('computerUse.status', () => computerUse.status());
   handle('computerUse.command', (name) => computerUse.command(name));
@@ -421,6 +433,19 @@ function startLoops() {
     setTimeout(usageLoop, 90_000);
   };
   setTimeout(usageLoop, 3000);
+
+  // An agent or the user may edit pricing.json at any time; polling survives editors that replace the file.
+  fs.watchFile(pricingPath, { interval: 2000 }, (current, previous) => {
+    if (current.mtimeMs !== previous.mtimeMs || current.size !== previous.size) reloadPricing().catch(() => {});
+  });
+}
+
+async function reloadPricing() {
+  pricing = loadPricingFile(pricingPath);
+  await telemetry.reloadPricing();
+  emit('pricing', pricing);
+  if (pricing.error) toast('error', pricing.error);
+  emit('usage', await telemetry.usageReport(true));
 }
 
 // ---------------------------------------------------------------------------

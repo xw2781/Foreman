@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type {
+  CliDefaults,
   LimitWindow,
   NewProfileInput,
   Profile,
@@ -51,6 +52,8 @@ export class ProfileService {
   private store: JsonStore<ProfilesFile>;
   private identities = new Map<string, ProfileIdentity>();
   private limits = new Map<string, ProfileLimits>();
+  /** Display name of each account's plan, read with its identity. */
+  private tiers = new Map<string, string | null>();
   private globalDefaults: Record<Provider, string | null> = { claude: null, codex: null };
   onChanged: () => void = () => {};
   codexLimitsLoader: (profile: Profile) => Promise<ProfileLimits | null> = async () => null;
@@ -99,11 +102,23 @@ export class ProfileService {
       ...profile,
       identity: this.identities.get(profile.id) ?? null,
       limits: this.limits.get(profile.id) ?? null,
+      planTier: this.planTier(profile),
+      cliDefaults: cliDefaults(profile),
       isActive: active[profile.provider] === profile.id,
       isGlobalDefault: this.isGlobalDefault(profile),
       skillInstalled: this.skillChecker(profile),
       runningAgents: this.runningCounter(profile.id)
     }));
+  }
+
+  /**
+   * Codex's usage endpoint reports the current plan_type, fresher than the
+   * sign-in token's claim.
+   */
+  private planTier(profile: Profile): string | null {
+    const reported = planTierLabel(profile.provider, this.limits.get(profile.id)?.planType);
+    const signedIn = this.tiers.get(profile.id) ?? null;
+    return profile.provider === 'codex' ? reported ?? signedIn : signedIn ?? reported;
   }
 
   private isGlobalDefault(profile: Profile) {
@@ -170,8 +185,8 @@ export class ProfileService {
     }
   }
 
-  update(id: string, patch: { label?: string; color?: string; emailHint?: string }) {
-    const profiles = this.list().map((p) => (p.id === id ? { ...p, ...patch, label: patch.label?.trim() || p.label } : p));
+  update(id: string, patch: ProfilePatch) {
+    const profiles = this.list().map((p) => (p.id === id ? applyProfilePatch(p, patch) : p));
     this.store.replace({ profiles });
     this.onChanged();
   }
@@ -185,6 +200,7 @@ export class ProfileService {
     this.store.replace({ profiles: this.list().filter((p) => p.id !== id) });
     this.identities.delete(id);
     this.limits.delete(id);
+    this.tiers.delete(id);
     this.onChanged();
   }
 
@@ -201,6 +217,7 @@ export class ProfileService {
           this.identities.set(profile.id, profile.provider === 'claude' ? this.claudeIdentity(profile) : this.codexIdentity(profile));
         } catch (error) {
           this.identities.set(profile.id, blankIdentity(String(error)));
+          this.tiers.delete(profile.id);
         }
         try {
           await this.refreshLimits(profile, Boolean(ids));
@@ -223,11 +240,13 @@ export class ProfileService {
     const oauth = credentials?.claudeAiOauth;
     const account = config.oauthAccount ?? {};
     const loggedIn = Boolean(oauth?.accessToken || oauth?.refreshToken) || Boolean(process.env.ANTHROPIC_API_KEY && profile.builtin);
+    const plan = oauth?.subscriptionType ?? planFromOrg(account.organizationType) ?? null;
+    this.tiers.set(profile.id, oauth ? planTierLabel('claude', plan) : null);
     return {
       loggedIn,
       email: account.emailAddress ?? null,
       name: account.displayName ?? account.fullName ?? null,
-      plan: oauth?.subscriptionType ?? planFromOrg(account.organizationType) ?? null,
+      plan,
       org: account.organizationName ?? null,
       authMethod: oauth ? 'Claude account' : loggedIn ? 'API key' : null,
       checkedAt: new Date().toISOString(),
@@ -282,12 +301,14 @@ export class ProfileService {
 
   private codexIdentity(profile: Profile): ProfileIdentity {
     const auth = readJsonFile<any>(path.join(profile.configDir, 'auth.json'));
+    this.tiers.delete(profile.id);
     if (!auth) return blankIdentity(null);
     if (auth.OPENAI_API_KEY && !auth.tokens) {
       return { ...blankIdentity(null), loggedIn: true, authMethod: 'API key' };
     }
     const claims = typeof auth.tokens?.id_token === 'string' ? decodeJwtPayload(auth.tokens.id_token) : null;
     const openai = claims?.['https://api.openai.com/auth'] ?? {};
+    this.tiers.set(profile.id, planTierLabel('codex', openai.chatgpt_plan_type));
     return {
       loggedIn: Boolean(auth.tokens?.refresh_token || auth.tokens?.access_token),
       email: claims?.email ?? null,
@@ -355,6 +376,30 @@ export class ProfileService {
   }
 }
 
+/** The editable fields of an account; an empty defaultModel / defaultEffort / emailHint clears it. */
+export interface ProfilePatch {
+  label?: string;
+  color?: string;
+  emailHint?: string;
+  defaultModel?: string;
+  defaultEffort?: string;
+}
+
+/** Applies an edit, taking only the editable fields; a blank label keeps the old one. */
+export function applyProfilePatch(profile: Profile, patch: ProfilePatch): Profile {
+  const next: Profile = { ...profile };
+  if (patch.label !== undefined) next.label = patch.label.trim() || profile.label;
+  if (patch.color !== undefined && patch.color) next.color = patch.color;
+  for (const key of ['emailHint', 'defaultModel', 'defaultEffort'] as const) {
+    const value = patch[key];
+    if (value === undefined) continue;
+    const trimmed = String(value).trim();
+    if (trimmed) next[key] = trimmed;
+    else delete next[key];
+  }
+  return next;
+}
+
 function blankIdentity(error: string | null): ProfileIdentity {
   return { loggedIn: false, email: null, name: null, plan: null, org: null, authMethod: null, checkedAt: new Date().toISOString(), error };
 }
@@ -362,4 +407,71 @@ function blankIdentity(error: string | null): ProfileIdentity {
 function planFromOrg(type: unknown): string | null {
   if (typeof type !== 'string') return null;
   return type.replace(/^claude_/, '') || null;
+}
+
+const TIER_NAMES: Record<Provider, Record<string, string>> = {
+  claude: { free: 'Free', pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' },
+  codex: {
+    free: 'Free',
+    go: 'Go',
+    plus: 'Plus',
+    pro: 'Pro',
+    prolite: 'Pro',
+    team: 'Team',
+    business: 'Business',
+    enterprise: 'Enterprise',
+    edu: 'Edu',
+    education: 'Edu'
+  }
+};
+
+const defaultsCache = new Map<string, { mtimeMs: number; value: CliDefaults }>();
+
+/**
+ * The model and effort the CLI uses when none is given: Claude Code's
+ * settings.json (`model`, `effortLevel`), Codex's config.toml (`model`,
+ * `model_reasoning_effort`, top level only). Claude's `availableModels` is
+ * the list of models it will run.
+ */
+export function cliDefaults(profile: Profile): CliDefaults {
+  const file = path.join(profile.configDir, profile.provider === 'claude' ? 'settings.json' : 'config.toml');
+  let mtimeMs = -1;
+  try {
+    mtimeMs = fs.statSync(file).mtimeMs;
+  } catch {
+    // no file: the CLI's built-in defaults
+  }
+  const cached = defaultsCache.get(file);
+  if (cached && cached.mtimeMs === mtimeMs) return cached.value;
+  let value: CliDefaults = { model: null, effort: null, models: null };
+  if (mtimeMs >= 0) {
+    if (profile.provider === 'claude') {
+      const settings = readJsonFile<any>(file) ?? {};
+      const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+      const models = Array.isArray(settings.availableModels) ? settings.availableModels.map(text).filter((m: string | null): m is string => Boolean(m)) : [];
+      value = { model: text(settings.model), effort: text(settings.effortLevel), models: models.length ? models : null };
+    } else {
+      value = { ...codexTopLevel(fs.readFileSync(file, 'utf8')), models: null };
+    }
+  }
+  defaultsCache.set(file, { mtimeMs, value });
+  return value;
+}
+
+/** `model` and `model_reasoning_effort` from config.toml's top level (before the first table). */
+export function codexTopLevel(toml: string): { model: string | null; effort: string | null } {
+  const values: Record<string, string> = {};
+  for (const line of toml.split(/\r?\n/)) {
+    if (/^\s*\[/.test(line)) break;
+    const match = /^\s*([A-Za-z0-9_]+)\s*=\s*["']([^"']*)["']/.exec(line);
+    if (match) values[match[1]] = match[2];
+  }
+  return { model: values.model || null, effort: values.model_reasoning_effort || null };
+}
+
+/** The plan's short name ("Max", "Pro"), without its usage multiple. */
+export function planTierLabel(provider: Provider, plan: unknown): string | null {
+  if (typeof plan !== 'string' || !plan.trim()) return null;
+  const key = plan.trim().toLowerCase().replace(/^claude_/, '');
+  return TIER_NAMES[provider][key] ?? key.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }

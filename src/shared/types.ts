@@ -23,6 +23,10 @@ export interface Profile {
   builtin: boolean;
   createdAt: string;
   emailHint?: string;
+  /** Model new agents on this account start with unless the launcher picks one (CLI default when unset). */
+  defaultModel?: string;
+  /** Reasoning effort new agents on this account start with unless the launcher picks one. */
+  defaultEffort?: string;
 }
 
 export interface ProfileIdentity {
@@ -55,12 +59,24 @@ export interface ProfileLimits {
 export interface ProfileView extends Profile {
   identity: ProfileIdentity | null;
   limits: ProfileLimits | null;
+  /** The subscription as the vendor names it ("Max 20x", "Pro", "Plus", "Business"); null when unknown or an API key. */
+  planTier: string | null;
+  /** What the CLI itself uses when no model or effort is given (its settings.json / config.toml). */
+  cliDefaults: CliDefaults;
   /** Default account for new agents started in this app. */
   isActive: boolean;
   /** The account other apps (VS Code, desktop apps, new terminals) pick up from the user environment. */
   isGlobalDefault: boolean;
   skillInstalled: boolean;
   runningAgents: number;
+}
+
+/** The CLI's own configuration for an account. */
+export interface CliDefaults {
+  model: string | null;
+  effort: string | null;
+  /** Claude Code's `availableModels` allowlist: other models are refused (it falls back to the default). */
+  models: string[] | null;
 }
 
 export interface NewProfileInput {
@@ -99,7 +115,7 @@ export type AgentStatus =
 export const LIVE_STATUSES: readonly AgentStatus[] = ['starting', 'working', 'needs-input', 'idle'];
 
 export type ClaudePermission = 'default' | 'acceptEdits' | 'auto' | 'plan' | 'bypassPermissions';
-export type CodexPermission = 'default' | 'read-only' | 'auto' | 'full-access';
+export type CodexPermission = 'default' | 'read-only' | 'auto' | 'approve-for-me' | 'full-access';
 
 export interface LaunchOptions {
   provider: Provider;
@@ -177,6 +193,8 @@ export interface AgentInfo {
   mode: AgentMode;
   title: string;
   model: string | null;
+  /** Reasoning effort chosen for it; null leaves the CLI's own default. */
+  effort?: string | null;
   permission: string | null;
   status: AgentStatus;
   statusDetail: string | null;
@@ -197,6 +215,8 @@ export interface AgentInfo {
   runId: string;
   /** False for agents restored from an earlier app run: they have no terminal buffer. */
   attached?: boolean;
+  /** The person named it (at launch or by renaming); automatic titles leave it alone. */
+  titleCustom?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +228,18 @@ export interface ChatFileChange {
   kind: 'add' | 'update' | 'delete';
   /** Unified-diff-style lines: ' ' context, '+' added, '-' removed, '@@' hunk headers. */
   diff: string;
+}
+
+/** The price table in force: the shipped one, overridden by the editable pricing.json. */
+export interface PricingStatus {
+  path: string;
+  exists: boolean;
+  pricingDate: string;
+  models: number;
+  /** Why the file was ignored (unreadable, not JSON). */
+  error: string | null;
+  /** Entries that were skipped. */
+  problems: string[];
 }
 
 export interface ChatQuestion {

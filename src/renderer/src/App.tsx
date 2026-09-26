@@ -5,7 +5,6 @@ import {
   ChevronDown,
   Download,
   LayoutGrid,
-  MonitorSmartphone,
   MousePointer2,
   Plus,
   Settings as SettingsIcon,
@@ -155,6 +154,9 @@ function AccountSwitcher({ provider }: { provider: Provider }) {
     return () => window.removeEventListener('mousedown', close);
   }, [open]);
   if (!active) return null;
+  const email = active.identity?.email ?? null;
+  // The plan names the account at a glance; the email stays in the tooltip.
+  const detail = active.planTier ?? email;
   const choose = async (id: string) => {
     setOpen(false);
     try {
@@ -168,14 +170,14 @@ function AccountSwitcher({ provider }: { provider: Provider }) {
   };
   return (
     <div className="switcher" ref={ref}>
-      <button className="switcher-button" onClick={() => setOpen(!open)} title={`${PROVIDER_LABEL[provider]} account for new agents`}>
+      <button className="switcher-button" onClick={() => setOpen(!open)} title={`${PROVIDER_LABEL[provider]} account for new agents${email ? `\n${email}` : ''}`}>
         <ProviderIcon provider={provider} size={20} />
         <span className="who">
           <span className="name ellipsis">
             {active.label}
-            {active.identity?.email ? <span className="muted"> · {active.identity.email}</span> : null}
+            {detail ? <span className="muted"> · {detail}</span> : null}
           </span>
-          <span className="limit ellipsis">{limitSummary(active.limits?.windows) || (active.identity?.loggedIn ? active.identity.plan ?? 'Signed in' : 'Not signed in')}</span>
+          <span className="limit ellipsis">{limitSummary(active.limits?.windows) || (active.identity?.loggedIn ? active.planTier ?? 'Signed in' : 'Not signed in')}</span>
         </span>
         <ChevronDown size={14} className="muted" />
       </button>
@@ -188,7 +190,7 @@ function AccountSwitcher({ provider }: { provider: Provider }) {
               <span style={{ minWidth: 0 }}>
                 <div className="ellipsis" style={{ fontWeight: 500 }}>
                   {p.label}
-                  {p.identity?.plan ? <span className="badge" style={{ marginLeft: 6 }}>{p.identity.plan}</span> : null}
+                  {p.planTier ? <span className="badge" style={{ marginLeft: 6 }}>{p.planTier}</span> : null}
                 </div>
                 <div className="muted ellipsis" style={{ fontSize: 11.5 }}>
                   {p.identity?.email ?? (p.identity?.loggedIn ? 'Signed in' : 'Not signed in')}
@@ -244,9 +246,21 @@ function TitleBar() {
   return (
     <header className="titlebar">
       <div className="brand">
-        <span className="brand-mark">
-          <MonitorSmartphone size={13} />
-        </span>
+        {/* resources/icon.svg, cropped to its plate */}
+        <svg className="brand-mark" viewBox="32 32 448 448" aria-hidden="true">
+          <defs>
+            <linearGradient id="brand-plate" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stopColor="#232650" />
+              <stop offset="1" stopColor="#15172e" />
+            </linearGradient>
+          </defs>
+          <rect x="32" y="32" width="448" height="448" rx="100" fill="url(#brand-plate)" />
+          <rect x="118" y="136" width="56" height="240" rx="28" fill="#fff" />
+          <rect x="118" y="136" width="210" height="56" rx="28" fill="#fff" />
+          <rect x="118" y="236" width="150" height="56" rx="28" fill="#fff" />
+          <circle cx="370" cy="164" r="28" fill="#e8662f" />
+          <circle cx="310" cy="264" r="28" fill="#3d8ff0" />
+        </svg>
         Foreman
       </div>
       {PROVIDERS.map((p) => (

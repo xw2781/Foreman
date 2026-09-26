@@ -9,7 +9,7 @@ import type {
   UsageReport,
   UsageSessionRow
 } from '../../shared/types';
-import { PRICING_DATE, contextWindowForModel, costFromModels, type ModelAccumulator } from './pricing';
+import { contextWindowForModel, costFromModels, currentPricing, pricingVersion, type ModelAccumulator } from './pricing';
 import {
   ClaudeTranscriptParser,
   claudeContextWindow,
@@ -54,10 +54,12 @@ export interface FileSummary {
   compactions: number;
   working: boolean;
   limits: ProfileLimits | null;
+  /** pricingVersion() the costs were computed with. */
+  pricing?: string;
 }
 
 const ACTIVE_WRITE_MS = 45_000;
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 
 type Parser = ClaudeTranscriptParser | CodexRolloutParser;
 
@@ -79,6 +81,12 @@ export class TelemetryEngine {
   configure(profiles: EngineProfile[], settings: Partial<EngineSettings>) {
     this.profiles = profiles;
     this.settings = { ...this.settings, ...settings };
+  }
+
+  /** Prices changed: live parsers hold costs at the old rates, and the next scan re-prices every file. */
+  pricingChanged() {
+    this.parsers.clear();
+    this.lastScanAt = 0;
   }
 
   // -------------------------------------------------------------------------
@@ -127,8 +135,11 @@ export class TelemetryEngine {
       return this.claudeTelemetry(filePath, state, subStates, snapshot, stat.mtimeMs);
     }
     const state = await (parser as CodexRolloutParser).update();
-    this.storeSummary(this.codexSummary(profileId, filePath, stat, state, null));
-    return this.codexTelemetry(filePath, state, null);
+    // Names (set in Codex's apps, or by renaming here) live in its session index, not the rollout.
+    const profile = this.profiles.find((p) => p.id === profileId);
+    const indexed = profile ? (await readCodexIndex(profile.configDir)).get(state.sessionId) ?? null : null;
+    this.storeSummary(this.codexSummary(profileId, filePath, stat, state, indexed));
+    return this.codexTelemetry(filePath, state, indexed);
   }
 
   private async claudeSubagentFiles(transcriptPath: string): Promise<string[]> {
@@ -404,7 +415,7 @@ export class TelemetryEngine {
             this.scannedFiles += 1;
             if (this.scannedFiles % 25 === 0) this.onProgress(this.scannedFiles);
             const cached = this.summaries.get(file.filePath);
-            if (cached && cached.size === file.size && cached.mtimeMs === file.mtimeMs && cached.profileId === profile.id) {
+            if (cached && cached.size === file.size && cached.mtimeMs === file.mtimeMs && cached.profileId === profile.id && cached.pricing === pricingVersion()) {
               if (profile.provider === 'codex') cached.title = titles.get(cached.sessionId) ?? cached.title;
               continue;
             }
@@ -497,6 +508,7 @@ export class TelemetryEngine {
   private storeSummary(summary: FileSummary) {
     const previous = this.summaries.get(summary.filePath);
     if (previous && summary.provider === 'codex' && !summary.title) summary.title = previous.title;
+    summary.pricing = pricingVersion();
     this.summaries.set(summary.filePath, summary);
     this.cacheDirty = true;
   }
@@ -606,7 +618,7 @@ export class TelemetryEngine {
       },
       scanning: this.scanning,
       scannedFiles: this.scannedFiles,
-      pricingDate: PRICING_DATE
+      pricingDate: currentPricing().pricingDate
     };
   }
 
@@ -618,7 +630,7 @@ export class TelemetryEngine {
     if (!this.cachePath) return;
     try {
       const raw = JSON.parse(fs.readFileSync(this.cachePath, 'utf8'));
-      if (raw?.version !== CACHE_VERSION || raw?.pricingDate !== PRICING_DATE) return;
+      if (raw?.version !== CACHE_VERSION) return;
       for (const summary of raw.files as FileSummary[]) this.summaries.set(summary.filePath, summary);
     } catch {
       // No cache yet, or a stale format: the next scan rebuilds it.
@@ -628,7 +640,7 @@ export class TelemetryEngine {
   saveCache() {
     if (!this.cachePath || !this.cacheDirty) return;
     try {
-      const payload = JSON.stringify({ version: CACHE_VERSION, pricingDate: PRICING_DATE, files: [...this.summaries.values()] });
+      const payload = JSON.stringify({ version: CACHE_VERSION, files: [...this.summaries.values()] });
       const tmp = `${this.cachePath}.tmp`;
       fs.mkdirSync(path.dirname(this.cachePath), { recursive: true });
       fs.writeFileSync(tmp, payload, 'utf8');

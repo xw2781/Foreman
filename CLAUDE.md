@@ -24,5 +24,5 @@ $env:PATH = "$PWD\.tools\node;$env:PATH" # PowerShell
 - The per-agent `--settings` file may contain only documented keys; an invalid one makes Claude Code show an error dialog.
 - Chat drivers (`src/main/chat`) must answer every control request / server request they receive, even unsupported ones (with an error): the CLI blocks until it gets a reply.
 - JSONL parsing belongs in the telemetry worker (`src/main/telemetry`), never on the main thread: session history is ~1 GB.
-- Pricing (`src/main/telemetry/pricing.ts`) carries a `PRICING_DATE`; update both together. `test/pricing.test.ts` pins a real Claude Code `cost-state` figure — if it breaks, the rate table is wrong, not the test.
+- Model prices live in `src/main/telemetry/prices.json` (its `about` notes give the schema and defaults); change rates and `pricingDate` together. Installed apps also read `<userData>/pricing.json` (Settings → Model prices), merged per model by the later `pricingDate` and reloaded on save, so prices can change without a release. `test/pricing.test.ts` pins a real Claude Code `cost-state` figure — if it breaks, the rate table is wrong, not the test.
 - Chart and account colors are validated palette slots (`--series-N` in styles.css; slots 1–2 are the providers, 3–8 accounts). Keep the order.

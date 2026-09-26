@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
-import type { ProfileLimits, Provider, SessionTelemetry, UsageReport } from '../../shared/types';
+import type { PricingStatus, ProfileLimits, Provider, SessionTelemetry, UsageReport } from '../../shared/types';
 import type { EngineProfile, EngineSettings } from './engine';
 import type { HistoryEntry } from '../chat/history';
 
@@ -11,8 +11,8 @@ export class TelemetryClient {
   private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   onProgress: (scanned: number) => void = () => {};
 
-  constructor(outDir: string, cachePath: string) {
-    this.worker = new Worker(path.join(outDir, 'telemetryWorker.js'), { workerData: { cachePath } });
+  constructor(outDir: string, cachePath: string, pricingPath: string) {
+    this.worker = new Worker(path.join(outDir, 'telemetryWorker.js'), { workerData: { cachePath, pricingPath } });
     this.worker.on('message', (message: any) => {
       if (message.event === 'progress') {
         this.onProgress(message.scanned);
@@ -77,6 +77,11 @@ export class TelemetryClient {
   /** A past conversation rebuilt from its session file. */
   chatHistory(provider: Provider, filePath: string) {
     return this.call<HistoryEntry[]>('chatHistory', provider, filePath);
+  }
+
+  /** Re-reads pricing.json; the next usage report re-prices every session. */
+  reloadPricing() {
+    return this.call<PricingStatus | null>('reloadPricing');
   }
 
   async dispose() {

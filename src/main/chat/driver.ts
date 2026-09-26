@@ -22,6 +22,10 @@ export interface ChatDriver {
   interrupt(): void;
   respond(itemId: string, answer: ChatAnswer): void;
   configure(patch: ChatSettingsPatch): void;
+  /** Saves a title the person chose into the CLI's own session record. */
+  rename?(title: string): void;
+  /** Asks the CLI to name the session from `description` (and remember it); null when it can't. */
+  generateTitle?(description: string): Promise<string | null>;
   readonly busy: boolean;
 }
 

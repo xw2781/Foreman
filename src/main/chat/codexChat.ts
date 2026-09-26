@@ -2,7 +2,9 @@
 // extension and desktop app use): newline-delimited JSON-RPC over stdio.
 // We call initialize → thread/start|resume → turn/start; the server streams
 // item and turn notifications and asks for approvals as server requests.
-import type { ChatAnswer, ChatOption, ChatQuestion, ChatSettingsPatch } from '../../shared/types';
+import type { ChatAnswer, ChatOption, ChatQuestion, ChatSettingsPatch, TokenUsage } from '../../shared/types';
+import { LONG_CONTEXT_THRESHOLD, priceUsage, rateForModel } from '../telemetry/pricing';
+import { normalizeCodexUsage, subtractUsage } from '../telemetry/codexRollout';
 import { codexItemEntry, codexPermission } from './codexItems';
 import type { ChatDriver, ChatHost } from './driver';
 import { clipText, TEXT_LIMIT } from './log';
@@ -41,6 +43,12 @@ export class CodexChat implements ChatDriver {
   private queued: Array<{ id: string; text: string }> = [];
   private overrides: Record<string, unknown> = {};
   private userCounter = 0;
+  /** The thread's model when none is chosen, and the one in use now (for pricing). */
+  private defaultModel: string | null = null;
+  private model: string | null = null;
+  private usageTotal: TokenUsage | null = null;
+  /** API-equivalent cost of the running turn; null once any request couldn't be priced. */
+  private turnCost: number | null = 0;
   busy = false;
 
   constructor(private host: ChatHost, private write: (message: object) => void, private options: CodexChatOptions) {}
@@ -54,12 +62,16 @@ export class CodexChat implements ChatDriver {
       model: this.options.model || null,
       approvalPolicy: permission.approvalPolicy ?? null,
       sandbox: permission.sandbox ?? null,
+      // Only sent when set: older app-servers don't know the field.
+      ...(permission.approvalsReviewer ? { approvalsReviewer: permission.approvalsReviewer } : {}),
       config: this.options.effort ? { model_reasoning_effort: this.options.effort } : null
     };
     const result = this.options.resumeThreadId
       ? await this.call('thread/resume', { threadId: this.options.resumeThreadId, ...params, excludeTurns: true })
       : await this.call('thread/start', params);
     this.threadId = result.thread.id;
+    this.defaultModel = typeof result.model === 'string' ? result.model : null;
+    this.model = this.options.model || this.defaultModel;
     this.host.session({ sessionId: result.thread.id, transcriptPath: result.thread.path ?? undefined, model: result.model });
     this.host.status('idle', null);
     if (prompt?.trim()) this.send(prompt);
@@ -111,10 +123,12 @@ export class CodexChat implements ChatDriver {
       const permission = codexPermission(patch.permission);
       if (permission.approvalPolicy) this.overrides.approvalPolicy = permission.approvalPolicy;
       if (permission.sandboxPolicy) this.overrides.sandboxPolicy = permission.sandboxPolicy;
+      if (permission.approvalsReviewer) this.overrides.approvalsReviewer = permission.approvalsReviewer;
       this.host.session({ permission: patch.permission });
     }
     if (patch.model !== undefined) {
       this.overrides.model = patch.model || null;
+      this.model = patch.model || this.defaultModel;
       this.host.session({ model: patch.model });
     }
     if (patch.effort) this.overrides.effort = patch.effort;
@@ -200,6 +214,7 @@ export class CodexChat implements ChatDriver {
     switch (method) {
       case 'turn/started':
         this.turnId = params.turn?.id ?? this.turnId;
+        this.turnCost = 0;
         this.busy = true;
         this.host.status('working', 'Thinking');
         break;
@@ -255,6 +270,9 @@ export class CodexChat implements ChatDriver {
           this.host.log.update(itemId, 'approval', () => ({ state: 'cancelled', resolution: 'Resolved' }));
         }
         break;
+      case 'thread/tokenUsage/updated':
+        this.onTokenUsage(params.tokenUsage);
+        break;
       case 'thread/name/updated':
         if (params.threadName) this.host.session({ title: params.threadName });
         break;
@@ -268,6 +286,27 @@ export class CodexChat implements ChatDriver {
     const item = this.host.log.get(itemId);
     const text = (item?.kind === kind ? item.text : '') + delta;
     if (text.trim()) this.host.log.upsert({ kind, id: itemId, text, streaming: true });
+  }
+
+  /** Prices each model request as its usage arrives, the way the rollout parser does. */
+  private onTokenUsage(tokenUsage: any) {
+    const snake = (value: any) =>
+      value && {
+        input_tokens: value.inputTokens,
+        cached_input_tokens: value.cachedInputTokens,
+        cache_write_input_tokens: value.cacheWriteInputTokens,
+        output_tokens: value.outputTokens,
+        reasoning_output_tokens: value.reasoningOutputTokens,
+        total_tokens: value.totalTokens
+      };
+    const total = normalizeCodexUsage(snake(tokenUsage?.total));
+    const last = normalizeCodexUsage(snake(tokenUsage?.last));
+    // The first report of a resumed thread carries its whole history: count only its last request.
+    const delta = total && this.usageTotal ? subtractUsage(total, this.usageTotal) ?? last : last;
+    if (total) this.usageTotal = total;
+    if (!delta || this.turnCost === null) return;
+    const rate = rateForModel(this.model);
+    this.turnCost = rate ? this.turnCost + priceUsage(rate, delta, (last?.inputTokens ?? 0) > LONG_CONTEXT_THRESHOLD) : null;
   }
 
   private onTurnCompleted(turn: any) {
@@ -285,7 +324,7 @@ export class CodexChat implements ChatDriver {
       id: `turn-${turn.id}`,
       ok: ok || interrupted,
       durationMs: typeof turn.durationMs === 'number' ? turn.durationMs : null,
-      costUsd: null,
+      costUsd: this.turnCost || null,
       text: interrupted ? 'Interrupted' : ok ? null : turn.error?.message ?? 'Turn failed'
     });
     this.host.status('idle', interrupted ? 'Interrupted' : ok ? 'Turn complete' : 'Turn failed');
@@ -376,6 +415,11 @@ export class CodexChat implements ChatDriver {
   private notice(tone: 'info' | 'warning' | 'error', text: string) {
     this.host.log.upsert({ kind: 'notice', id: `notice-${Date.now().toString(36)}-${this.nextId++}`, tone, text });
     this.host.changed();
+  }
+
+  /** Codex keeps the name in its session index, so its own apps show it too. */
+  rename(title: string) {
+    if (this.threadId) this.call('thread/name/set', { threadId: this.threadId, name: title }).catch(() => {});
   }
 
   private call(method: string, params: unknown): Promise<any> {

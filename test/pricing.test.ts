@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { billableTokens, costFromModels, normalizeModelId, priceUsage, rateForModel, recordRequest, type ModelAccumulator } from '../src/main/telemetry/pricing';
+import { afterEach, describe, expect, it } from 'vitest';
+import { BUILTIN_PRICING, BUILTIN_PRICING_JSON, billableTokens, costFromModels, normalizeModelId, parsePricingTable, priceUsage, pricingVersion, rateForModel, recordRequest, setPricingOverride, type ModelAccumulator } from '../src/main/telemetry/pricing';
 import type { TokenUsage } from '../src/shared/types';
 
 function usage(partial: Partial<TokenUsage>): TokenUsage {
@@ -66,5 +66,42 @@ describe('pricing', () => {
     const cost = costFromModels(byModel);
     expect(cost.totalUsd).toBeCloseTo(2, 6);
     expect(cost.unpricedModels).toEqual(['mystery-model']);
+  });
+});
+
+describe('editable price table', () => {
+  afterEach(() => setPricingOverride(null));
+
+  it('fills omitted rates with the provider defaults', () => {
+    const table = parsePricingTable({ pricingDate: '2030-01-01', models: [{ model: 'claude-new', provider: 'claude', input: 3, output: 15 }, { model: 'gpt-new', provider: 'codex', input: 1, output: 4 }] });
+    expect(table.rates[0]).toMatchObject({ cachedInput: expect.closeTo(0.3, 9), cacheWrite: 3.75, cacheWriteLong: 6, contextWindow: 1_000_000 });
+    expect(table.rates[1]).toMatchObject({ cachedInput: null, cacheWrite: null, longContext: false, contextWindow: null });
+  });
+
+  it('skips broken entries and says why', () => {
+    const table = parsePricingTable({ pricingDate: '2030-01-01', models: [{ model: 'x', provider: 'gemini', input: 1, output: 1 }, { model: 'y', provider: 'codex', input: -1, output: 1 }, { provider: 'codex' }] });
+    expect(table.rates).toEqual([]);
+    expect(table.problems).toHaveLength(3);
+    expect(() => parsePricingTable([])).toThrow();
+  });
+
+  it('adds new models and prefers the more recently checked table per model', () => {
+    const newer = parsePricingTable({ pricingDate: '2099-01-01', models: [{ model: 'gpt-9', provider: 'codex', input: 1, output: 2 }, { model: 'gpt-6-astra', provider: 'codex', input: 99, output: 99 }] });
+    setPricingOverride(newer);
+    expect(rateForModel('gpt-9')?.input).toBe(1);
+    expect(rateForModel('gpt-6-astra')?.input).toBe(99);
+    expect(rateForModel('claude-opus-5-5')?.input).toBe(4);
+    const versionWithOverride = pricingVersion();
+
+    const older = parsePricingTable({ pricingDate: '2000-01-01', models: [{ model: 'gpt-9', provider: 'codex', input: 1, output: 2 }, { model: 'gpt-6-astra', provider: 'codex', input: 99, output: 99 }] });
+    setPricingOverride(older);
+    expect(rateForModel('gpt-9')?.input).toBe(1);
+    expect(rateForModel('gpt-6-astra')?.input).toBe(10);
+    expect(pricingVersion()).not.toBe(versionWithOverride);
+  });
+
+  it('ships a table whose every entry parses', () => {
+    expect(BUILTIN_PRICING.problems).toEqual([]);
+    expect(BUILTIN_PRICING.rates.length).toBe((BUILTIN_PRICING_JSON as any).models.length);
   });
 });

@@ -86,7 +86,7 @@ export function normalizeCodexUsage(value: unknown): TokenUsage | null {
   };
 }
 
-function subtractUsage(current: TokenUsage, previous: TokenUsage | null): TokenUsage | null {
+export function subtractUsage(current: TokenUsage, previous: TokenUsage | null): TokenUsage | null {
   if (!previous) return { ...current };
   const delta = emptyUsage();
   let negative = false;
