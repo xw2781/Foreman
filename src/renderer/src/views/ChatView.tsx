@@ -17,23 +17,40 @@ import {
   Image,
   Info,
   ListChecks,
+  ListEnd,
   LoaderCircle,
+  Navigation,
+  Pencil,
   Plug,
   Search,
   Shield,
   ShieldAlert,
+  Sparkles,
   Square,
+  SquareSlash,
   Terminal,
   TriangleAlert,
-  Wrench
+  Wrench,
+  X
 } from 'lucide-react';
-import { LIVE_STATUSES, PROVIDER_LABEL, type AgentInfo, type ChatFileChange, type ChatItem, type ChatQuestion, type ChatSettingsPatch } from '@shared/types';
+import {
+  LIVE_STATUSES,
+  PROVIDER_LABEL,
+  type AgentInfo,
+  type ChatCommand,
+  type ChatFileChange,
+  type ChatItem,
+  type ChatQuestion,
+  type ChatSendMode,
+  type ChatSettingsPatch
+} from '@shared/types';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
-import { drafts, loadChat, useChats } from '../chats';
+import { commandLists, drafts, loadChat, loadCommands, sendModes, useChats } from '../chats';
+import { commandToken, rankCommands } from '../commands';
 import { CopyButton, Markdown } from '../markdown';
-import { compact, folderName, percent, usd } from '../format';
-import { ProviderIcon, Select } from '../ui';
+import { folderName, percent, usd } from '../format';
+import { ProviderIcon, Select, useFit } from '../ui';
 import { PERMISSIONS, effortOptions, modelOptions } from './LaunchDialog';
 import '../chat.css';
 
@@ -436,6 +453,20 @@ function Notice({ item }: { item: Item<'notice'> }) {
   );
 }
 
+/** A message sent into a running turn, marked as such so it doesn't read as a new prompt. */
+function SteerMessage({ item }: { item: Item<'user'> }) {
+  const waiting = item.delivery === 'steering';
+  return (
+    <div className={`msg-user steer ${waiting ? 'waiting' : ''}`}>
+      <div className="msg-tag" title={waiting ? 'Sent into the running turn; the agent reads it after its current step' : 'The agent took this in without starting a new turn'}>
+        {waiting ? <LoaderCircle size={11} className="spin" /> : <Navigation size={11} />}
+        <span>{waiting ? 'Steering · waiting for the next step' : 'Steered mid-turn'}</span>
+      </div>
+      <div className="bubble selectable">{item.text}</div>
+    </div>
+  );
+}
+
 /** Renders a run of entries, folding consecutive tool calls into groups. */
 function renderEntries(items: ChatItem[], agent: AgentInfo, activeTail: boolean, groupsOpen: boolean): ReactNode[] {
   const nodes: ReactNode[] = [];
@@ -456,9 +487,13 @@ function renderEntries(items: ChatItem[], agent: AgentInfo, activeTail: boolean,
     switch (item.kind) {
       case 'user':
         nodes.push(
-          <div key={item.id} className="msg-user">
-            <div className="bubble selectable">{item.text}</div>
-          </div>
+          item.delivery ? (
+            <SteerMessage key={item.id} item={item} />
+          ) : (
+            <div key={item.id} className="msg-user">
+              <div className="bubble selectable">{item.text}</div>
+            </div>
+          )
         );
         break;
       case 'assistant':
@@ -496,7 +531,11 @@ function splitTurns(items: ChatItem[]): TurnSlice[] {
   const turns: TurnSlice[] = [];
   let current: TurnSlice | null = null;
   for (const item of items) {
-    if (item.kind === 'user') {
+    // Queued messages wait above the composer until they're sent.
+    if (item.kind === 'user' && item.delivery === 'queued') continue;
+    // A steer belongs to the turn it went into.
+    const steer = item.kind === 'user' && item.delivery !== undefined && current !== null && !current.footer;
+    if (item.kind === 'user' && !steer) {
       current = { key: item.id, prompt: item, body: [], footer: null };
       turns.push(current);
       continue;
@@ -535,6 +574,8 @@ const TurnView = memo(
     const changes = useMemo(() => (done ? turnChanges(turn.body) : []), [done, turn.body]);
     const duration = fold ? turnDuration(turn) : null;
     const tools = steps.filter((i): i is Item<'tool'> => i.kind === 'tool');
+    // What the person said mid-turn stays in view when the steps fold.
+    const steers = steps.filter((i) => i.kind === 'user');
     return (
       <div className="turn">
         {turn.prompt ? renderEntries([turn.prompt], agent, false, false) : null}
@@ -547,7 +588,7 @@ const TurnView = memo(
               </span>
               <ChevronRight size={13} className={`chev ${open ? 'open' : ''}`} />
             </button>
-            {open ? <div className="turn-steps">{renderEntries(steps, agent, false, true)}</div> : null}
+            {open ? <div className="turn-steps">{renderEntries(steps, agent, false, true)}</div> : renderEntries(steers, agent, false, false)}
             {renderEntries(turn.body.slice(cut), agent, false, false)}
           </>
         ) : (
@@ -570,21 +611,274 @@ const TurnView = memo(
     a.turn.body.every((item, index) => item === b.turn.body[index])
 );
 
+// ------------------------------------------------------------- command menu
+
+function CommandMenu({ commands, loading, active, onHover, onChoose }: { commands: ChatCommand[]; loading: boolean; active: number; onHover: (index: number) => void; onChoose: (command: ChatCommand) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    ref.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' });
+  }, [active, commands]);
+  return (
+    // Clicks mustn't take focus from the composer.
+    <div className="command-menu" ref={ref} role="listbox" aria-label="Commands and skills" onMouseDown={(e) => e.preventDefault()}>
+      {commands.length === 0 ? (
+        <div className="command-empty">
+          {loading ? (
+            <>
+              <LoaderCircle size={13} className="spin" /> Loading commands…
+            </>
+          ) : (
+            'No matching commands or skills'
+          )}
+        </div>
+      ) : (
+        commands.map((c, index) => (
+          <div
+            key={`${c.trigger}${c.name}`}
+            data-index={index}
+            role="option"
+            aria-selected={index === active}
+            className={`command-item ${index === active ? 'active' : ''}`}
+            onMouseMove={() => index !== active && onHover(index)}
+            onClick={() => onChoose(c)}
+            title={c.description}
+          >
+            <span className="command-icon">{c.kind === 'skill' ? <Sparkles size={13} /> : <SquareSlash size={13} />}</span>
+            <span className="command-name">
+              {c.trigger}
+              {c.name}
+            </span>
+            {c.argumentHint ? <span className="command-args">{c.argumentHint}</span> : null}
+            <span className="command-desc ellipsis">
+              {c.aliases.length ? <span className="command-aliases">{c.aliases.map((a) => `${c.trigger}${a}`).join(' ')} · </span> : null}
+              {c.description}
+            </span>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 // ----------------------------------------------------------------- composer
 
-function Composer({ agent }: { agent: AgentInfo }) {
+type Telemetry = NonNullable<AgentInfo['telemetry']>;
+type Usage = NonNullable<Telemetry['totalUsage']>;
+
+function exact(n: number) {
+  return n.toLocaleString();
+}
+
+function UsageRows({ usage, reasoning }: { usage: Usage; reasoning: boolean }) {
+  return (
+    <>
+      <div className="tt-row">
+        Input (uncached)<span className="v">{exact(Math.max(0, usage.inputTokens - usage.cachedInputTokens - usage.cacheWriteInputTokens))}</span>
+      </div>
+      <div className="tt-row">
+        Cache reads<span className="v">{exact(usage.cachedInputTokens)}</span>
+      </div>
+      <div className="tt-row">
+        Cache writes<span className="v">{exact(usage.cacheWriteInputTokens)}</span>
+      </div>
+      <div className="tt-row">
+        Output<span className="v">{exact(usage.outputTokens)}</span>
+      </div>
+      {reasoning && usage.reasoningOutputTokens ? (
+        <div className="tt-row sub">
+          of which reasoning<span className="v">{exact(usage.reasoningOutputTokens)}</span>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/** The context ring's hover card: what fills the window, and the session's token totals. */
+function ContextCard({ telemetry: t }: { telemetry: Telemetry }) {
+  return (
+    <div className="tooltip context-card" role="tooltip">
+      <div className="tt-title">Context window</div>
+      <div className="tt-row">
+        Used
+        <span className="v">
+          {exact(t.contextUsedTokens)} / {exact(t.contextWindow)} · {percent(t.contextPercent)}
+        </span>
+      </div>
+      {t.contextWindowAssumed ? <div className="tt-note">Window size assumed from the model</div> : null}
+      {t.compactions ? (
+        <div className="tt-row">
+          Compactions<span className="v">{t.compactions}</span>
+        </div>
+      ) : null}
+      {t.lastUsage ? (
+        <>
+          <div className="tt-title tt-section">Last request</div>
+          <UsageRows usage={t.lastUsage} reasoning={false} />
+        </>
+      ) : null}
+      {t.totalUsage ? (
+        <>
+          <div className="tt-title tt-section">Session total</div>
+          <UsageRows usage={t.totalUsage} reasoning />
+          <div className="tt-row tt-total">
+            Total<span className="v">{exact(t.totalUsage.totalTokens)}</span>
+          </div>
+          <div className="tt-row">
+            Requests<span className="v">{exact(t.requests)}</span>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+const OTHER_MODE: Record<ChatSendMode, ChatSendMode> = { steer: 'queue', queue: 'steer' };
+
+/** Messages waiting for the running turn to end, above the composer. */
+function QueueTray({ agent, items, busy, onEdit }: { agent: AgentInfo; items: Array<Item<'user'>>; busy: boolean; onEdit: (text: string) => void }) {
+  const toast = useApp((s) => s.toast);
+  const name = PROVIDER_LABEL[agent.provider];
+  const act = (item: Item<'user'>, action: 'send' | 'remove') => call('chat.queued', agent.id, item.id, action);
+  const run = (promise: Promise<unknown>) => promise.catch((error) => toast('error', errorMessage(error)));
+  return (
+    <div className="queue" aria-label="Queued messages">
+      <div className="queue-head">
+        <ListEnd size={12} />
+        <span>
+          {items.length} queued · {agent.endedAt ? 'not sent: the conversation ended' : busy ? `sent one at a time after ${name} finishes this turn` : 'sending…'}
+        </span>
+      </div>
+      {items.map((item) => (
+        <div key={item.id} className="queue-item">
+          <span className="queue-text selectable">{item.text}</span>
+          <button
+            type="button"
+            className="btn ghost sm icon"
+            title={busy ? 'Steer now: send it into the running turn' : 'Send now'}
+            aria-label={busy ? 'Steer now' : 'Send now'}
+            onClick={() => run(act(item, 'send'))}
+          >
+            {busy ? <Navigation size={13} /> : <ArrowUp size={14} />}
+          </button>
+          <button type="button" className="btn ghost sm icon" title="Edit: take it off the queue, back into the message box" aria-label="Edit" onClick={() => run(act(item, 'remove').then(() => onEdit(item.text)))}>
+            <Pencil size={13} />
+          </button>
+          <button type="button" className="btn ghost sm icon" title="Remove from the queue" aria-label="Remove" onClick={() => run(act(item, 'remove'))}>
+            <X size={14} />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'user'>> }) {
   const toast = useApp((s) => s.toast);
   const [text, setText] = useState(() => drafts.get(agent.id) ?? '');
   const [sending, setSending] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const live = !agent.endedAt;
   const working = live && (agent.status === 'working' || agent.status === 'starting');
+  // While a turn runs (or waits on an approval) a message steers it or waits in the queue.
+  const midTurn = live && (agent.status === 'working' || agent.status === 'needs-input');
+  const defaultMode = useApp((s) => s.settings?.chatSendMode ?? 'steer');
+  const [modeOverride, setModeOverride] = useState(() => sendModes.get(agent.id));
+  const mode = modeOverride ?? defaultMode;
+  const name = PROVIDER_LABEL[agent.provider];
   const t = agent.telemetry;
+  const hintRow = useFit<HTMLDivElement>([agent.id, midTurn, working, mode]);
+
+  // The command menu: opened by typing "/" (or "$" for a Codex skill), or from its button to browse.
+  const [caret, setCaret] = useState(0);
+  const [browsing, setBrowsing] = useState(false);
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const [active, setActive] = useState(0);
+  const [commands, setCommands] = useState<ChatCommand[] | null>(() => commandLists.get(agent.id) ?? null);
+  const [loadingCommands, setLoadingCommands] = useState(false);
+  const token = commandToken(text, caret, agent.provider === 'codex');
+  const tokenKey = token ? `${token.trigger}${token.start}` : null;
+  const typed = token && tokenKey !== dismissed ? token : null;
+  const menuOpen = browsing || typed !== null;
+  const shown = useMemo(() => {
+    if (!menuOpen || !commands) return [];
+    return typed ? rankCommands(commands.filter((c) => c.trigger === typed.trigger), typed.query) : commands;
+  }, [menuOpen, commands, typed?.trigger, typed?.query]);
 
   useEffect(() => {
     setText(drafts.get(agent.id) ?? '');
+    setModeOverride(sendModes.get(agent.id));
+    setBrowsing(false);
+    setDismissed(null);
+    setCommands(commandLists.get(agent.id) ?? null);
     ref.current?.focus();
   }, [agent.id]);
+  useEffect(() => {
+    if (!token && dismissed) setDismissed(null);
+  }, [token === null]);
+  useEffect(() => setActive(0), [menuOpen, typed?.trigger, typed?.query]);
+  // A fresh list each time the menu opens: skills can come and go mid-session.
+  useEffect(() => {
+    if (!menuOpen) return;
+    let current = true;
+    setLoadingCommands(true);
+    loadCommands(agent.id)
+      .then((list) => current && setCommands(list))
+      .catch(() => {})
+      .finally(() => current && setLoadingCommands(false));
+    return () => {
+      current = false;
+    };
+  }, [menuOpen, agent.id, agent.runId]);
+
+  /** Puts the command into the message; returns the new text. */
+  const complete = (command: ChatCommand) => {
+    const name = `${command.trigger}${command.name} `;
+    let head: string;
+    let rest: string;
+    if (typed && typed.trigger === command.trigger) {
+      head = text.slice(0, typed.start) + name;
+      rest = text.slice(typed.end).replace(/^ /, '');
+    } else if (command.trigger === '/') {
+      // Browsing: the command goes first, whatever was written becomes its arguments.
+      head = name;
+      rest = text.replace(/^\/\S*\s*/, '');
+    } else {
+      const before = text.slice(0, caret);
+      head = before + (before && !/\s$/.test(before) ? ' ' : '') + name;
+      rest = text.slice(caret).replace(/^ /, '');
+    }
+    const next = head + rest;
+    update(next);
+    setBrowsing(false);
+    setCaret(head.length);
+    requestAnimationFrame(() => {
+      ref.current?.focus();
+      ref.current?.setSelectionRange(head.length, head.length);
+    });
+    return next;
+  };
+
+  const menuKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!shown.length) return false;
+      setActive((i) => (i + (e.key === 'ArrowDown' ? 1 : shown.length - 1)) % shown.length);
+      return true;
+    }
+    if (e.key === 'Escape') {
+      if (browsing) setBrowsing(false);
+      else setDismissed(tokenKey);
+      return true;
+    }
+    if ((e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) && shown[active]) {
+      const command = shown[active];
+      // Enter on a command typed out in full runs it; otherwise it's completed first.
+      const exact = e.key === 'Enter' && typed !== null && (typed.query === command.name || command.aliases.includes(typed.query)) && !text.slice(typed.end).trim();
+      const next = complete(command);
+      if (exact) send(next);
+      return true;
+    }
+    return false;
+  };
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -598,13 +892,13 @@ function Composer({ agent }: { agent: AgentInfo }) {
     else drafts.delete(agent.id);
   };
 
-  const send = async () => {
-    const message = text.trim();
+  const send = async (value = text, how: ChatSendMode = mode) => {
+    const message = value.trim();
     if (!message || sending) return;
     setSending(true);
     update('');
     try {
-      await call('chat.send', agent.id, message);
+      await call('chat.send', agent.id, message, how);
     } catch (error) {
       update(message);
       toast('error', errorMessage(error));
@@ -614,6 +908,26 @@ function Composer({ agent }: { agent: AgentInfo }) {
     }
   };
 
+  const chooseMode = (next: ChatSendMode) => {
+    if (next === defaultMode) sendModes.delete(agent.id);
+    else sendModes.set(agent.id, next);
+    setModeOverride(sendModes.get(agent.id));
+    ref.current?.focus();
+  };
+
+  /** Puts `texts` ahead of what's being written. */
+  const restore = (texts: string[]) => {
+    if (!texts.length) return;
+    update([...texts, drafts.get(agent.id) ?? ''].filter((t) => t.trim()).join('\n\n'));
+    ref.current?.focus();
+  };
+
+  // Queued messages come back into the message box, as in both CLIs' own apps.
+  const stop = () =>
+    call('chat.interrupt', agent.id)
+      .then(restore)
+      .catch((error) => toast('error', errorMessage(error)));
+
   const configure = (patch: ChatSettingsPatch) => call('chat.configure', agent.id, patch).catch((error) => toast('error', errorMessage(error)));
   const profile = useApp((s) => s.profiles.find((p) => p.id === agent.profileId));
   const currentModel = agent.model ?? '';
@@ -622,22 +936,62 @@ function Composer({ agent }: { agent: AgentInfo }) {
 
   return (
     <div className="composer">
+      {queued.length ? <QueueTray agent={agent} items={queued} busy={midTurn} onEdit={(queuedText) => restore([queuedText])} /> : null}
       <div className="composer-box">
+        {menuOpen ? <CommandMenu commands={shown} loading={loadingCommands || !commands} active={active} onHover={setActive} onChoose={complete} /> : null}
         <textarea
           ref={ref}
           rows={1}
           value={text}
-          placeholder={live ? (working ? `Message ${PROVIDER_LABEL[agent.provider]} (it's working; this is queued)` : `Message ${PROVIDER_LABEL[agent.provider]}…`) : 'Send a message to continue this conversation'}
-          onChange={(e) => update(e.target.value)}
+          placeholder={
+            !live
+              ? 'Send a message to continue this conversation'
+              : midTurn
+                ? mode === 'steer'
+                  ? `Steer ${name}: it reads this after its current step`
+                  : `Queue a message for when ${name} finishes this turn`
+                : `Message ${name}…`
+          }
+          aria-autocomplete="list"
+          aria-expanded={menuOpen}
+          onChange={(e) => {
+            update(e.target.value);
+            setCaret(e.target.selectionStart);
+            setBrowsing(false);
+          }}
+          onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+          onBlur={() => {
+            setBrowsing(false);
+            if (tokenKey) setDismissed(tokenKey);
+          }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+            if (e.nativeEvent.isComposing) return;
+            if (menuOpen && menuKey(e)) {
               e.preventDefault();
-              send();
+              e.stopPropagation();
+              return;
             }
-            if (e.key === 'Escape' && working) call('chat.interrupt', agent.id);
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              send(text, e.ctrlKey || e.metaKey ? OTHER_MODE[mode] : mode);
+            }
+            if (e.key === 'Escape' && working) stop();
           }}
         />
         <div className="composer-bar">
+          <button
+            type="button"
+            className={`composer-commands ${browsing ? 'on' : ''}`}
+            title={agent.provider === 'codex' ? 'Commands and skills (/ or $)' : 'Commands and skills (/)'}
+            aria-label="Commands and skills"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              setBrowsing(!browsing);
+              ref.current?.focus();
+            }}
+          >
+            <SquareSlash size={14} />
+          </button>
           <Select
             variant="ghost"
             size="sm"
@@ -670,46 +1024,106 @@ function Composer({ agent }: { agent: AgentInfo }) {
             options={effortOptions(agent.provider, profile?.cliDefaults.effort, currentEffort).filter((o) => o.value || !currentEffort)}
             onChange={(effort) => effort && configure({ effort })}
           />
-          <span className="spacer" />
-          {t && t.contextPercent !== null ? (
-            <span
-              className="composer-context"
-              title={`Context window: ${compact(t.contextUsedTokens)} of ${compact(t.contextWindow)} tokens used${t.contextWindowAssumed ? ' (window size assumed)' : ''}${t.compactions ? ` · compacted ${t.compactions}×` : ''}`}
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16">
-                <circle cx="8" cy="8" r="6" fill="none" stroke="var(--surface-3)" strokeWidth="2.5" />
-                <circle
-                  cx="8"
-                  cy="8"
-                  r="6"
-                  fill="none"
-                  stroke={t.contextPercent >= 90 ? 'var(--critical)' : t.contextPercent >= 75 ? 'var(--warning)' : 'var(--accent)'}
-                  strokeWidth="2.5"
-                  strokeDasharray={`${(Math.min(100, t.contextPercent) / 100) * 37.7} 37.7`}
-                  transform="rotate(-90 8 8)"
-                  strokeLinecap="round"
-                />
-              </svg>
-              <span>{percent(t.contextPercent)}</span>
-              <span className="composer-context-of">
-                {compact(t.contextUsedTokens)} / {compact(t.contextWindow)}
+          {/* Wraps to a line of its own rather than squeezing the controls' labels. */}
+          <div className="composer-send">
+            {t && t.contextPercent !== null ? (
+              <span className="composer-context" tabIndex={0} aria-label={`Context window ${percent(t.contextPercent)} used`}>
+                <ContextCard telemetry={t} />
+                <svg width="16" height="16" viewBox="0 0 16 16">
+                  <circle cx="8" cy="8" r="6" fill="none" stroke="var(--surface-3)" strokeWidth="2.5" />
+                  <circle
+                    cx="8"
+                    cy="8"
+                    r="6"
+                    fill="none"
+                    stroke={t.contextPercent >= 90 ? 'var(--critical)' : t.contextPercent >= 75 ? 'var(--warning)' : 'var(--accent)'}
+                    strokeWidth="2.5"
+                    strokeDasharray={`${(Math.min(100, t.contextPercent) / 100) * 37.7} 37.7`}
+                    transform="rotate(-90 8 8)"
+                    strokeLinecap="round"
+                  />
+                </svg>
+                <span>{percent(t.contextPercent)}</span>
               </span>
-            </span>
-          ) : null}
-          {working && !text.trim() ? (
-            <button type="button" className="send-btn stop" title="Stop (Esc)" onClick={() => call('chat.interrupt', agent.id)}>
-              <Square size={12} fill="currentColor" />
-            </button>
-          ) : (
-            <button type="button" className="send-btn" title="Send (Enter)" disabled={!text.trim() || sending} onClick={send}>
-              {sending ? <LoaderCircle size={15} className="spin" /> : <ArrowUp size={16} />}
-            </button>
-          )}
+            ) : null}
+            {working && !text.trim() ? (
+              <button type="button" className="send-btn stop" title="Stop (Esc)" onClick={stop}>
+                <Square size={12} fill="currentColor" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="send-btn"
+                title={midTurn ? `${mode === 'steer' ? 'Steer the running turn' : 'Queue for when this turn ends'} (Enter) · Ctrl+Enter to ${OTHER_MODE[mode]}` : 'Send (Enter)'}
+                disabled={!text.trim() || sending}
+                onClick={() => send()}
+              >
+                {sending ? <LoaderCircle size={15} className="spin" /> : midTurn && mode === 'steer' ? <Navigation size={15} /> : midTurn ? <ListEnd size={16} /> : <ArrowUp size={16} />}
+              </button>
+            )}
+          </div>
         </div>
       </div>
-      <div className="composer-hint">
-        <span>
-          <span className="kbd">Enter</span> send · <span className="kbd">Shift</span>+<span className="kbd">Enter</span> new line{working ? <> · <span className="kbd">Esc</span> stop</> : null}
+      {/* One line: the send mode while the agent works, then key hints, the least useful left out first when narrow. */}
+      <div className="composer-hint" ref={hintRow}>
+        {midTurn ? (
+          <div className="send-mode" role="radiogroup" aria-label={`While ${name} works`}>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={mode === 'steer'}
+              className={mode === 'steer' ? 'on' : ''}
+              title="Steer: your message goes into the running turn; the agent reads it after its current step"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => chooseMode('steer')}
+            >
+              <Navigation size={12} />
+              Steer
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={mode === 'queue'}
+              className={mode === 'queue' ? 'on' : ''}
+              title="Queue: your message waits until this turn ends, then goes as the next prompt"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => chooseMode('queue')}
+            >
+              <ListEnd size={12} />
+              Queue
+            </button>
+          </div>
+        ) : null}
+        <span className="composer-keys">
+          <span>
+            <span className="kbd">Enter</span> {midTurn ? mode : 'send'}
+          </span>
+          {midTurn ? (
+            <span data-fit="1">
+              {' · '}
+              <span className="kbd">Ctrl</span>+<span className="kbd">Enter</span> {OTHER_MODE[mode]}
+            </span>
+          ) : null}
+          <span data-fit="3">
+            {' · '}
+            <span className="kbd">Shift</span>+<span className="kbd">Enter</span> new line
+          </span>
+          <span data-fit="4">
+            {' · '}
+            <span className="kbd">/</span> commands
+          </span>
+          {agent.provider === 'codex' ? (
+            <span data-fit="5">
+              {' · '}
+              <span className="kbd">$</span> skills
+            </span>
+          ) : null}
+          {working ? (
+            <span data-fit="2">
+              {' · '}
+              <span className="kbd">Esc</span> stop
+            </span>
+          ) : null}
         </span>
       </div>
     </div>
@@ -744,6 +1158,7 @@ export function ChatView({ agent }: { agent: AgentInfo }) {
 
   const items = chat?.items ?? [];
   const turns = useMemo(() => splitTurns(items), [items]);
+  const queued = useMemo(() => items.filter((i): i is Item<'user'> => i.kind === 'user' && i.delivery === 'queued'), [items]);
 
   // Follow new output while the view is scrolled to the bottom.
   useLayoutEffect(() => {
@@ -807,7 +1222,7 @@ export function ChatView({ agent }: { agent: AgentInfo }) {
           <ArrowDown size={14} /> Latest
         </button>
       ) : null}
-      <Composer agent={agent} />
+      <Composer agent={agent} queued={queued} />
     </div>
   );
 }

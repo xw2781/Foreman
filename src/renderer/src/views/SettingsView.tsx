@@ -181,6 +181,25 @@ export function SettingsView() {
       </div>
 
       <div className="section-title">
+        <h2>Chat</h2>
+      </div>
+      <div className="card settings-list">
+        <Setting
+          title="Messages sent while an agent works"
+          description="Steer: the message goes into the running turn, and the agent reads it after its current step. Queue: it waits above the message box and goes as the next prompt when the turn ends. Ctrl+Enter sends the other way; each chat can also switch."
+        >
+          <Segmented
+            value={settings.chatSendMode}
+            onChange={(chatSendMode) => update({ chatSendMode })}
+            options={[
+              { value: 'steer', label: 'Steer' },
+              { value: 'queue', label: 'Queue' }
+            ]}
+          />
+        </Setting>
+      </div>
+
+      <div className="section-title">
         <h2>Notifications & safety</h2>
       </div>
       <div className="card settings-list">

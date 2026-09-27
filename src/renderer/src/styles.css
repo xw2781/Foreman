@@ -438,6 +438,7 @@ button {
 
 .segmented {
   display: inline-flex;
+  flex-shrink: 0;
   padding: 3px;
   border-radius: var(--radius);
   background: var(--page);
@@ -445,6 +446,7 @@ button {
   gap: 2px;
 }
 .segmented button {
+  white-space: nowrap;
   border: none;
   background: none;
   height: 26px;
@@ -530,6 +532,7 @@ button {
 }
 .section-title {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   margin: 26px 0 10px;
@@ -546,6 +549,8 @@ button {
 .section-title .actions {
   margin-left: auto;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
 }
 
@@ -1363,13 +1368,14 @@ table.table {
 /* ------------------------------------------------------------ agents view */
 
 .agents-layout {
+  position: relative;
   display: grid;
-  grid-template-columns: 290px 1fr;
+  grid-template-columns: 290px minmax(0, 1fr);
   height: 100%;
   min-height: 0;
 }
 .agents-layout.with-details {
-  grid-template-columns: 290px 1fr 320px;
+  grid-template-columns: 290px minmax(0, 1fr) 320px;
 }
 .agent-list {
   border-right: 1px solid var(--border);
@@ -1470,6 +1476,8 @@ table.table {
 }
 .term-header .th-title {
   display: grid;
+  /* Bounded, so the status line overflows itself (and leaves items out) instead of being clipped here. */
+  grid-template-columns: minmax(0, 1fr);
   min-width: 160px;
   flex: 1;
   gap: 2px;
@@ -1491,15 +1499,10 @@ table.table {
   min-width: 0;
   overflow: hidden;
 }
+/* Whole items only: what doesn't fit is left out (useFit), never cut. */
 .term-header .th-title .meta > * {
   flex-shrink: 0;
-}
-.term-header .th-title .meta > .ellipsis,
-.term-header .th-title .meta > .badge {
-  flex-shrink: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .term-header .th-actions {
   flex-shrink: 0;
@@ -1548,6 +1551,21 @@ table.table {
   font-size: 12.5px;
 }
 
+/* In a window too narrow to dock it, the panel opens over the conversation. */
+.details.overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  z-index: 25;
+  box-shadow: var(--shadow);
+}
+.details-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
 .details {
   border-left: 1px solid var(--border);
   overflow: auto;

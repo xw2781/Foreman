@@ -13,7 +13,9 @@ import {
   type AgentStatus,
   type AppSettings,
   type ChatAnswer,
+  type ChatCommand,
   type ChatItem,
+  type ChatSendMode,
   type ChatSettingsPatch,
   type LaunchOptions,
   type Profile
@@ -75,6 +77,8 @@ interface Session {
   /** Chat mode: the conversation and the protocol driver behind it. */
   chat: ChatLog | null;
   driver: (ChatDriver & { dispose?: (reason: string) => void }) | null;
+  /** The driver's slash commands and skills, kept for after the process ends. */
+  commands: ChatCommand[];
   stderrTail: string;
   /** Set when the chat protocol failed to start; the exit then counts as a failure. */
   failure: string | null;
@@ -254,6 +258,7 @@ export class AgentManager {
       claudeSessionId,
       settingsFile,
       chat,
+      commands: previousSession?.commands ?? [],
       titleLocked: info.titleCustom === true || options.mode === 'login'
     });
 
@@ -305,6 +310,7 @@ export class AgentManager {
       statusLine: null,
       chat: null,
       driver: null,
+      commands: [],
       stderrTail: '',
       failure: null,
       exitWaiters: [],
@@ -481,6 +487,8 @@ export class AgentManager {
         if (session.needsInput) session.needsInputSince = Date.now();
         info.lastOutputAt = new Date().toISOString();
         this.updateStatus(session, status, detail);
+        // Once the driver has finished its own bookkeeping.
+        if (status === 'idle') setImmediate(() => this.sendQueued(session));
       },
       session: (update) => {
         if (update.sessionId && update.sessionId !== info.sessionId) {
@@ -497,8 +505,29 @@ export class AgentManager {
         this.refreshTelemetry(session).catch(() => {});
         this.syncTitle(session);
       },
-      limits: (limits) => this.deps.profiles.applyReportedLimits(session.profile.id, limits)
+      limits: (limits) => this.deps.profiles.applyReportedLimits(session.profile.id, limits),
+      requeue: (itemId) => {
+        session.chat?.update(itemId, 'user', () => ({ delivery: 'queued' }));
+        this.scheduleChatFlush();
+        setImmediate(() => this.sendQueued(session));
+      }
     };
+  }
+
+  /** The messages waiting for the running turn to end, oldest first. */
+  private queuedItems(session: Session) {
+    return (session.chat?.list() ?? []).filter((i): i is Extract<ChatItem, { kind: 'user' }> => i.kind === 'user' && i.delivery === 'queued');
+  }
+
+  /** Sends the oldest queued message as a new turn once the agent is idle. */
+  private sendQueued(session: Session) {
+    const { driver, chat } = session;
+    if (!driver || !chat || driver.busy || session.info.endedAt) return;
+    const next = this.queuedItems(session)[0];
+    if (!next) return;
+    chat.moveToEnd(next.id);
+    driver.send(next.text, next.id);
+    session.info.lastActivityAt = new Date().toISOString();
   }
 
   /** A past conversation as a chat log, from the CLI's session file. */
@@ -550,13 +579,21 @@ export class AgentManager {
     return log.list();
   }
 
-  /** Sends a chat message; a chat that has ended is resumed in place with it. */
-  async chatSend(id: string, text: string): Promise<AgentInfo> {
+  /**
+   * Sends a chat message; a chat that has ended is resumed in place with it.
+   * While the agent works the message steers the running turn, or waits in
+   * the queue for it to end (commands always wait: they're turns of their own).
+   */
+  async chatSend(id: string, text: string, mode: ChatSendMode = 'steer'): Promise<AgentInfo> {
     if (!text.trim()) throw new Error('Type a message first.');
     const session = this.sessions.get(id);
     if (session && !session.info.endedAt) {
-      if (!session.driver) throw new Error('This agent runs in the terminal; type your message there.');
-      session.driver.send(text);
+      const { driver, chat } = session;
+      if (!driver || !chat) throw new Error('This agent runs in the terminal; type your message there.');
+      if (driver.busy && (mode === 'queue' || !driver.canSteer(text))) {
+        chat.upsert({ kind: 'user', id: crypto.randomUUID(), text, delivery: 'queued' });
+        this.scheduleChatFlush();
+      } else driver.send(text);
       session.info.lastActivityAt = new Date().toISOString();
       return session.info;
     }
@@ -565,8 +602,51 @@ export class AgentManager {
     return this.continueAgent(info, 'chat', text);
   }
 
-  chatInterrupt(id: string) {
-    this.sessions.get(id)?.driver?.interrupt();
+  async chatCommands(id: string): Promise<ChatCommand[]> {
+    const session = this.sessions.get(id);
+    if (!session) return [];
+    if (session.driver?.commands && !session.info.endedAt) {
+      const commands = await session.driver.commands();
+      if (commands.length) session.commands = commands;
+    }
+    return session.commands;
+  }
+
+  /** A queued message sent right away (into the running turn, if there is one), or dropped. */
+  async chatQueued(id: string, itemId: string, action: 'send' | 'remove'): Promise<AgentInfo> {
+    const session = this.sessions.get(id);
+    const item = session?.chat?.get(itemId);
+    if (!session?.chat || item?.kind !== 'user' || item.delivery !== 'queued') throw new Error('That message is no longer queued.');
+    const { driver, chat } = session;
+    if (action === 'remove' || session.info.endedAt || !driver) {
+      chat.remove(itemId);
+      this.scheduleChatFlush();
+      if (action === 'remove') return session.info;
+      // A conversation that has ended is resumed with it.
+      try {
+        return await this.chatSend(id, item.text);
+      } catch (error) {
+        chat.upsert({ kind: 'user', id: itemId, text: item.text, delivery: 'queued' });
+        this.scheduleChatFlush();
+        throw error;
+      }
+    }
+    if (driver.busy && !driver.canSteer(item.text)) throw new Error(`${PROVIDER_LABEL[session.profile.provider]} can't take this in mid-turn; it's sent when the turn ends.`);
+    chat.moveToEnd(itemId);
+    driver.send(item.text, itemId);
+    session.info.lastActivityAt = new Date().toISOString();
+    return session.info;
+  }
+
+  /** Stops the running turn. As in both CLIs' own apps, the queued messages come back (their texts) for editing. */
+  chatInterrupt(id: string): string[] {
+    const session = this.sessions.get(id);
+    if (!session) return [];
+    const queued = this.queuedItems(session);
+    for (const item of queued) session.chat!.remove(item.id);
+    if (queued.length) this.scheduleChatFlush();
+    session.driver?.interrupt();
+    return queued.map((i) => i.text);
   }
 
   chatRespond(id: string, itemId: string, answer: ChatAnswer) {
@@ -732,6 +812,10 @@ export class AgentManager {
     info.statusDetail = session.failure ? 'Failed to start' : session.stopping ? 'Stopped' : `Exited with code ${exitCode}`;
     if (session.chat) {
       session.chat.settle(session.stopping ? 'Stopped' : 'The process exited');
+      // Steers the agent hadn't taken in yet wait for the conversation to continue.
+      for (const item of session.chat.list()) {
+        if (item.kind === 'user' && item.delivery === 'steering') session.chat.update(item.id, 'user', () => ({ delivery: 'queued' }));
+      }
       if (status === 'failed') {
         const log = session.stderrTail.replace(/\x1b\[[0-9;]*m/g, '').trim().split(/\r?\n/).slice(-12).join('\n');
         const text = session.failure ?? `${PROVIDER_LABEL[session.profile.provider]} exited unexpectedly (code ${exitCode}).`;

@@ -21,7 +21,7 @@ import { ChatView } from './ChatView';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
 import { ago, compact, duration, folderName, modelLabel, percent, shortPath, usd } from '../format';
-import { AccountChip, Empty, Meter, MiniMeter, ProviderIcon, StatusPill, confirmDialog, useTicker } from '../ui';
+import { AccountChip, Empty, Meter, MiniMeter, ProviderIcon, StatusPill, confirmDialog, useFit, useMediaQuery, useTicker } from '../ui';
 import { mountTerminal, terminalBackground } from '../terminals';
 
 export async function stopAgent(agent: AgentInfo) {
@@ -174,20 +174,34 @@ function TerminalHost({ agent }: { agent: AgentInfo }) {
   return <div className="term-host" ref={hostRef} style={{ ['--term-bg' as any]: terminalBackground() }} />;
 }
 
-function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display }) {
-  const toggleDetails = useApp((s) => s.toggleDetails);
+/** Wide enough to dock the details beside a conversation that still has room; narrower, they open over it. */
+const DOCK_DETAILS = '(min-width: 1420px)';
+
+function useDetails() {
+  const docked = useMediaQuery(DOCK_DETAILS);
   const showDetails = useApp((s) => s.showDetails);
+  const overlay = useApp((s) => s.detailsOverlay);
+  const toggle = () => (docked ? useApp.getState().toggleDetails() : useApp.setState({ detailsOverlay: !overlay }));
+  return { docked, visible: docked ? showDetails : overlay, toggle };
+}
+
+function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display }) {
+  const details = useDetails();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(agent.title);
   useEffect(() => setName(agent.title), [agent.title]);
   const live = !agent.endedAt;
   const t = agent.telemetry;
+  const model = t?.model ?? agent.model;
+  // What doesn't fit is left out whole: the cost first (the details have it), then shortcuts the title offers too.
+  const row = useFit<HTMLDivElement>([agent.id, agent.title, agent.status, display, details.visible, live, editing]);
+  const meta = useFit<HTMLDivElement>([agent.id, agent.status, agent.statusDetail, agent.profileLabel, agent.cwd, model]);
   const rename = async () => {
     setEditing(false);
     if (name.trim() && name !== agent.title) await call('agents.rename', agent.id, name.trim());
   };
   return (
-    <div className="term-header">
+    <div className="term-header" ref={row}>
       <ProviderIcon provider={agent.provider} size={30} />
       <div className="th-title">
         {editing ? (
@@ -208,13 +222,19 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
             {agent.title}
           </div>
         )}
-        <div className="meta">
+        <div className="meta" ref={meta}>
           <StatusPill status={agent.status} detail={agent.statusDetail} />
-          <AccountChip label={agent.profileLabel} color={agent.profileColor} />
-          <span className="ellipsis mono" title={agent.cwd}>
+          <span data-fit="2">
+            <AccountChip label={agent.profileLabel} color={agent.profileColor} />
+          </span>
+          <span className="mono" data-fit="3" title={agent.cwd}>
             {shortPath(agent.cwd)}
           </span>
-          {agent.model || t?.model ? <span className="badge" title={t?.model ?? agent.model ?? undefined}>{modelLabel(t?.model ?? agent.model)}</span> : null}
+          {model ? (
+            <span className="badge" data-fit="1" title={model}>
+              {modelLabel(model)}
+            </span>
+          ) : null}
         </div>
       </div>
       <div className="th-actions">
@@ -224,8 +244,8 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
             <Meter label="Context" value={t.contextPercent} valueText={`${percent(t.contextPercent)} of ${compact(t.contextWindow)}`} title={`${compact(t.contextUsedTokens)} tokens in context${t.contextWindowAssumed ? ' (window size assumed)' : ''}`} />
           </div>
         ) : null}
-        {t && !showDetails ? (
-          <div style={{ textAlign: 'right', minWidth: 70 }} title={t.cost.reportedUsd != null ? "Claude Code's own estimate" : 'Estimated at API list prices'}>
+        {t && !details.visible ? (
+          <div data-fit="3" style={{ textAlign: 'right', minWidth: 70 }} title={t.cost.reportedUsd != null ? "Claude Code's own estimate" : 'Estimated at API list prices'}>
             <div className="num" style={{ fontWeight: 600 }}>
               {usd(t.cost.reportedUsd ?? t.cost.totalUsd)}
             </div>
@@ -234,10 +254,10 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
             </div>
           </div>
         ) : null}
-        <button className="btn ghost icon" title="Rename" onClick={() => setEditing(true)}>
+        <button className="btn ghost icon" data-fit="2" title="Rename" onClick={() => setEditing(true)}>
           <Pencil size={15} />
         </button>
-        <button className="btn ghost icon" title="Open folder" onClick={() => call('shell.openPath', agent.cwd)}>
+        <button className="btn ghost icon" data-fit="1" title="Open folder" onClick={() => call('shell.openPath', agent.cwd)}>
           <FolderOpen size={15} />
         </button>
         {/* A chat stops from its composer; terminal agents have no composer. */}
@@ -255,8 +275,8 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
             <Trash2 size={15} />
           </button>
         ) : null}
-        <button className="btn ghost icon" title={showDetails ? 'Hide details' : 'Show details'} onClick={toggleDetails}>
-          {showDetails ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+        <button className="btn ghost icon" title={details.visible ? 'Hide details' : 'Show details'} onClick={details.toggle}>
+          {details.visible ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
         </button>
       </div>
     </div>
@@ -272,12 +292,23 @@ function TokenRow({ label, value }: { label: string; value: number | undefined }
   );
 }
 
-function AgentDetails({ agent }: { agent: AgentInfo }) {
+function AgentDetails({ agent, overlay, onClose }: { agent: AgentInfo; overlay: boolean; onClose: () => void }) {
   useTicker(5000);
   const t = agent.telemetry;
   const total = t?.totalUsage;
+  useEffect(() => {
+    if (!overlay) return;
+    const key = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, [overlay]);
   return (
-    <aside className="details">
+    <aside className={`details ${overlay ? 'overlay' : ''}`} aria-label="Agent details">
+      {overlay ? (
+        <button className="btn ghost icon details-close" title="Close details (Esc)" aria-label="Close details" onClick={onClose}>
+          <X size={16} />
+        </button>
+      ) : null}
       <section>
         <h3>Cost</h3>
         <div className="big-number">{usd(t?.cost.reportedUsd ?? t?.cost.totalUsd ?? null)}</div>
@@ -411,7 +442,7 @@ export function AgentsView() {
   useTicker(15_000);
   const agents = useApp((s) => s.agents);
   const selectedId = useApp((s) => s.selectedAgentId);
-  const showDetails = useApp((s) => s.showDetails);
+  const details = useDetails();
   const openLauncher = useApp((s) => s.openLauncher);
   const [query, setQuery] = useState('');
 
@@ -430,7 +461,7 @@ export function AgentsView() {
   }, [selectedId, selected]);
 
   return (
-    <div className={`agents-layout ${selected && showDetails ? 'with-details' : ''}`}>
+    <div className={`agents-layout ${selected && details.docked && details.visible ? 'with-details' : ''}`}>
       <div className="agent-list">
         <div className="agent-list-head">
           <button className="btn primary" onClick={() => openLauncher()}>
@@ -532,7 +563,7 @@ export function AgentsView() {
           </Empty>
         </section>
       )}
-      {selected && showDetails ? <AgentDetails agent={selected} /> : null}
+      {selected && details.visible ? <AgentDetails agent={selected} overlay={!details.docked} onClose={details.toggle} /> : null}
     </div>
   );
 }

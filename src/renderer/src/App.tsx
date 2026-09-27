@@ -12,7 +12,7 @@ import {
   Users
 } from 'lucide-react';
 import { AGENT_MODES, LIVE_STATUSES, PROVIDERS, PROVIDER_LABEL, type Provider } from '@shared/types';
-import { call, errorMessage, listen } from './api';
+import { call, errorMessage, listen, pageTheme } from './api';
 import { useApp, type View } from './store';
 import { colorVar, limitSummary, usd } from './format';
 import { ConfirmHost, LimitMeters, ProviderIcon, Toasts } from './ui';
@@ -98,8 +98,7 @@ function useTheme() {
     query.addEventListener('change', onChange);
     return () => query.removeEventListener('change', onChange);
   }, []);
-  const mode = settings?.theme === 'system' ? (systemDark ? 'dark' : 'light') : settings?.theme ?? 'dark';
-  const theme = mode === 'dark' ? 'dark' : settings?.lightPalette ?? 'cream';
+  const theme = pageTheme(settings ?? window.atc.initialTheme, systemDark);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);

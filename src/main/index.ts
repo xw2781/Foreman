@@ -10,7 +10,7 @@ import {
   type AppSettings,
   type EnvironmentInfo
 } from '../shared/types';
-import type { EventMap, EventName, InvokeChannel, InvokeMap } from '../shared/ipc';
+import type { EventMap, EventName, InvokeChannel, InvokeMap, ThemePrefs } from '../shared/ipc';
 import { ProfileService } from './profiles';
 import { PlanUsageClient } from './planUsage';
 import { TelemetryClient } from './telemetry/client';
@@ -72,7 +72,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   usageDays: 30,
   codexNoDaemonForIsolated: true,
   shellForTerminals: 'powershell.exe',
-  claudeStatusLine: true
+  claudeStatusLine: true,
+  chatSendMode: 'steer'
 };
 
 const settingsStore = new JsonStore<AppSettings>(path.join(userData, 'settings.json'), DEFAULT_SETTINGS);
@@ -333,12 +334,18 @@ function registerIpc() {
   handle('agents.resume', (id, mode) => agents.resume(id, mode));
   handle('agents.buffer', (id) => agents.buffer(id));
   handle('chat.items', (id) => agents.chatItems(id));
-  handle('chat.send', (id, text) => agents.chatSend(id, text));
+  handle('chat.send', (id, text, mode) => agents.chatSend(id, text, mode));
+  handle('chat.queued', (id, itemId, action) => agents.chatQueued(id, itemId, action));
   handle('chat.interrupt', (id) => agents.chatInterrupt(id));
   handle('chat.respond', (id, itemId, answer) => agents.chatRespond(id, itemId, answer));
   handle('chat.configure', (id, patch) => agents.chatConfigure(id, patch));
+  handle('chat.commands', (id) => agents.chatCommands(id));
   ipcMain.on('agents.write', (_event, id: string, data: string) => agents.write(id, data));
   ipcMain.on('agents.resize', (_event, id: string, cols: number, rows: number) => agents.resize(id, cols, rows));
+  ipcMain.on('theme.initial', (event) => {
+    const { theme, lightPalette } = settings();
+    event.returnValue = { theme, lightPalette } satisfies ThemePrefs;
+  });
 
   handle('processes.external', () => (processes.lastSnapshotAt ? processes.externalAgents(agents.ownedPids()) : null));
   handle('processes.kill', async (pid) => {
@@ -578,9 +585,10 @@ function createWindow() {
  */
 function captureViews(dir: string) {
   const views = (process.env.ATC_CAPTURE_VIEWS ?? 'agents,tasks,usage,accounts,computer,settings,launcher').split(',');
-  // ATC_CAPTURE_SCRIPT: a JSON list of { js?, wait?, shot?, save? } steps run in the page, for
-  // end-to-end checks; `save` writes the step's result (JSON) to that file in the capture folder.
-  const script: Array<{ js?: string; wait?: number; shot?: string; save?: string }> = process.env.ATC_CAPTURE_SCRIPT
+  // ATC_CAPTURE_SCRIPT: a JSON list of { size?, js?, wait?, shot?, save? } steps run in the page, for
+  // end-to-end checks; `size` ([width, height]) resizes the window first, to check narrow layouts;
+  // `save` writes the step's result (JSON) to that file in the capture folder.
+  const script: Array<{ size?: [number, number]; js?: string; wait?: number; shot?: string; save?: string }> = process.env.ATC_CAPTURE_SCRIPT
     ? JSON.parse(fs.readFileSync(process.env.ATC_CAPTURE_SCRIPT, 'utf8'))
     : views.map((view) => ({ js: `window.__atcDev && window.__atcDev(${JSON.stringify(view)})`, wait: 1800, shot: view }));
   mainWindow?.webContents.once('did-finish-load', async () => {
@@ -589,6 +597,10 @@ function captureViews(dir: string) {
     await wait(Number(process.env.ATC_CAPTURE_DELAY ?? 6000));
     for (const step of script) {
       try {
+        if (step.size) {
+          mainWindow?.unmaximize();
+          mainWindow?.setSize(step.size[0], step.size[1]);
+        }
         const result = step.js ? await mainWindow?.webContents.executeJavaScript(step.js) : undefined;
         if (step.save) fs.writeFileSync(path.join(dir, step.save), JSON.stringify(result ?? null, null, 2));
       } catch (error) {

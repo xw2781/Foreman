@@ -4,7 +4,7 @@ import { AGENT_MODES, LIVE_STATUSES, PROVIDER_LABEL, type AgentInfo, type Extern
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
 import { STATUS_LABEL, ago, compact, duration, folderName, modelLabel, usd } from '../format';
-import { AccountChip, Empty, MiniMeter, ProviderIcon, Segmented, StatusPill, confirmDialog, useTicker } from '../ui';
+import { AccountChip, Empty, MiniMeter, ProviderIcon, Segmented, StatusPill, confirmDialog, useFit, useTicker } from '../ui';
 import { canResume, resumeAgent, stopAgent } from './AgentsView';
 
 type SortKey = 'status' | 'title' | 'account' | 'context' | 'cost' | 'cpu' | 'memory' | 'started';
@@ -72,10 +72,10 @@ function SummaryTiles({ agents }: { agents: AgentInfo[] }) {
   );
 }
 
-function HeaderCell({ label, sortKey, sort, setSort, right }: { label: string; sortKey: SortKey; sort: { key: SortKey; desc: boolean }; setSort: (s: { key: SortKey; desc: boolean }) => void; right?: boolean }) {
+function HeaderCell({ label, sortKey, sort, setSort, right, fit }: { label: string; sortKey: SortKey; sort: { key: SortKey; desc: boolean }; setSort: (s: { key: SortKey; desc: boolean }) => void; right?: boolean; fit?: number }) {
   const on = sort.key === sortKey;
   return (
-    <th className={right ? 'r' : ''} style={{ cursor: 'pointer' }} onClick={() => setSort({ key: sortKey, desc: on ? !sort.desc : true })}>
+    <th className={right ? 'r' : ''} data-fit={fit} style={{ cursor: 'pointer' }} onClick={() => setSort({ key: sortKey, desc: on ? !sort.desc : true })}>
       <span className="row" style={{ gap: 4, justifyContent: right ? 'flex-end' : 'flex-start' }}>
         {label}
         {on ? sort.desc ? <ArrowDown size={11} /> : <ArrowUp size={11} /> : null}
@@ -87,6 +87,8 @@ function HeaderCell({ label, sortKey, sort, setSort, right }: { label: string; s
 function ExternalSection() {
   const externals = useApp((s) => s.externals);
   const toast = useApp((s) => s.toast);
+  // Columns too many for the width leave whole (the least useful first) rather than be cut off.
+  const fit = useFit<HTMLDivElement>([externals]);
   const end = async (process: ExternalAgentProcess) => {
     const { ok } = await confirmDialog({
       title: `End ${process.name}?`,
@@ -123,17 +125,17 @@ function ExternalSection() {
             No other Claude Code or Codex processes are running.
           </div>
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap" ref={fit}>
             <table className="table">
               <thead>
                 <tr>
                   <th>Process</th>
-                  <th>Started from</th>
-                  <th className="r">PID</th>
-                  <th className="r">CPU</th>
-                  <th className="r">Memory</th>
-                  <th className="r">Processes</th>
-                  <th>Running for</th>
+                  <th data-fit="1">Started from</th>
+                  <th className="r" data-fit="4">PID</th>
+                  <th className="r" data-fit="2">CPU</th>
+                  <th className="r" data-fit="2">Memory</th>
+                  <th className="r" data-fit="5">Processes</th>
+                  <th data-fit="3">Running for</th>
                   <th />
                 </tr>
               </thead>
@@ -151,14 +153,14 @@ function ExternalSection() {
                         </div>
                       </div>
                     </td>
-                    <td>
+                    <td data-fit="1">
                       <span className="badge">{p.host}</span>
                     </td>
-                    <td className="r num">{p.pid}</td>
-                    <td className="r num">{p.cpuPercent.toFixed(1)}%</td>
-                    <td className="r num">{Math.round(p.memoryMB)} MB</td>
-                    <td className="r num">{p.processCount}</td>
-                    <td className="num">{duration(p.startedAt)}</td>
+                    <td className="r num" data-fit="4">{p.pid}</td>
+                    <td className="r num" data-fit="2">{p.cpuPercent.toFixed(1)}%</td>
+                    <td className="r num" data-fit="2">{Math.round(p.memoryMB)} MB</td>
+                    <td className="r num" data-fit="5">{p.processCount}</td>
+                    <td className="num" data-fit="3">{duration(p.startedAt)}</td>
                     <td className="actions-cell">
                       <button className="btn danger sm" onClick={() => end(p)}>
                         <XCircle size={13} /> End task
@@ -202,6 +204,7 @@ export function TaskManagerView() {
     // Live agents first regardless of the sort, like a task manager.
     return [...list.filter((a) => !a.endedAt), ...list.filter((a) => a.endedAt)];
   }, [agents, filter, provider, query, sort]);
+  const fit = useFit<HTMLDivElement>([rows]);
 
   const open = (agent: AgentInfo) => useApp.setState({ selectedAgentId: agent.id, view: 'agents' });
 
@@ -255,19 +258,19 @@ export function TaskManagerView() {
             {agents.length ? 'Try a different filter.' : 'Start a Claude Code or Codex agent and it shows up here.'}
           </Empty>
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap" ref={fit}>
             <table className="table">
               <thead>
                 <tr>
                   <HeaderCell label="Status" sortKey="status" sort={sort} setSort={setSort} />
                   <HeaderCell label="Agent" sortKey="title" sort={sort} setSort={setSort} />
-                  <HeaderCell label="Account" sortKey="account" sort={sort} setSort={setSort} />
-                  <th>Model</th>
-                  <HeaderCell label="Context" sortKey="context" sort={sort} setSort={setSort} />
+                  <HeaderCell label="Account" sortKey="account" sort={sort} setSort={setSort} fit={2} />
+                  <th data-fit="3">Model</th>
+                  <HeaderCell label="Context" sortKey="context" sort={sort} setSort={setSort} fit={1} />
                   <HeaderCell label="Cost" sortKey="cost" sort={sort} setSort={setSort} right />
-                  <HeaderCell label="CPU" sortKey="cpu" sort={sort} setSort={setSort} right />
-                  <HeaderCell label="Memory" sortKey="memory" sort={sort} setSort={setSort} right />
-                  <HeaderCell label="Uptime" sortKey="started" sort={sort} setSort={setSort} />
+                  <HeaderCell label="CPU" sortKey="cpu" sort={sort} setSort={setSort} right fit={5} />
+                  <HeaderCell label="Memory" sortKey="memory" sort={sort} setSort={setSort} right fit={5} />
+                  <HeaderCell label="Uptime" sortKey="started" sort={sort} setSort={setSort} fit={4} />
                   <th />
                 </tr>
               </thead>
@@ -294,19 +297,19 @@ export function TaskManagerView() {
                           </div>
                         </div>
                       </td>
-                      <td>
+                      <td data-fit="2">
                         <AccountChip label={a.profileLabel} color={a.profileColor} />
                       </td>
-                      <td className="secondary ellipsis" style={{ maxWidth: 150 }}>
+                      <td className="secondary" data-fit="3" style={{ whiteSpace: 'nowrap' }}>
                         {modelLabel(t?.model ?? a.model) || <span className="muted">default</span>}
                       </td>
-                      <td style={{ minWidth: 130 }}>
+                      <td data-fit="1" style={{ minWidth: 130 }}>
                         <MiniMeter value={t?.contextPercent ?? null} title={t ? `${compact(t.contextUsedTokens)} of ${compact(t.contextWindow)} tokens` : undefined} />
                       </td>
                       <td className="r num">{usd(t?.cost.reportedUsd ?? t?.cost.totalUsd ?? null)}</td>
-                      <td className="r num">{a.resources ? `${a.resources.cpuPercent.toFixed(1)}%` : <span className="muted">—</span>}</td>
-                      <td className="r num">{a.resources ? `${Math.round(a.resources.memoryMB)} MB` : <span className="muted">—</span>}</td>
-                      <td className="num secondary">{duration(a.startedAt, a.endedAt)}</td>
+                      <td className="r num" data-fit="5">{a.resources ? `${a.resources.cpuPercent.toFixed(1)}%` : <span className="muted">—</span>}</td>
+                      <td className="r num" data-fit="5">{a.resources ? `${Math.round(a.resources.memoryMB)} MB` : <span className="muted">—</span>}</td>
+                      <td className="num secondary" data-fit="4">{duration(a.startedAt, a.endedAt)}</td>
                       <td className="actions-cell" onClick={(e) => e.stopPropagation()}>
                         {live ? (
                           <button className="btn danger sm" onClick={() => stopAgent(a)}>

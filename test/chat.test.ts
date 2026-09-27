@@ -12,6 +12,7 @@ function fakeHost() {
   const statuses: Array<[string, string | null | undefined]> = [];
   const sessions: Array<Record<string, unknown>> = [];
   let turns = 0;
+  const requeued: string[] = [];
   const host: ChatHost = {
     log,
     changed: () => {},
@@ -20,9 +21,13 @@ function fakeHost() {
     turnComplete: () => {
       turns += 1;
     },
-    limits: () => {}
+    limits: () => {},
+    requeue: (id) => {
+      requeued.push(id);
+      log.update(id, 'user', () => ({ delivery: 'queued' }));
+    }
   };
-  return { host, log, statuses, sessions, turns: () => turns };
+  return { host, log, statuses, sessions, requeued, turns: () => turns };
 }
 
 const kinds = (items: ChatItem[]) => items.map((i) => i.kind);
@@ -100,6 +105,95 @@ describe('Claude chat protocol', () => {
     expect(chat.busy).toBe(false);
   });
 
+  // Lifecycle reports as claude.exe 2.1.280 sends them: queued on arrival, started when a turn takes the message in.
+  const lifecycle = (uuid: string, state: string) => ({ type: 'command_lifecycle', command_uuid: uuid, state, uuid: `ev-${uuid}-${state}`, session_id: 'sess-1' });
+
+  it('steers a running turn and shows when Claude takes the message in', () => {
+    const { host, log, statuses } = fakeHost();
+    const sent: any[] = [];
+    const chat = new ClaudeChat(host, (m) => sent.push(m));
+    chat.send('run echo hello');
+    const first = sent[0].uuid;
+    expect(log.get(first)).toMatchObject({ kind: 'user', text: 'run echo hello' });
+    chat.receive(JSON.stringify(lifecycle(first, 'queued')));
+    chat.receive(JSON.stringify(lifecycle(first, 'started')));
+    for (const event of turn.slice(0, 8)) chat.receive(JSON.stringify(event));
+
+    expect(chat.canSteer('also say banana')).toBe(true);
+    chat.send('also say banana');
+    const steer = sent.at(-1);
+    expect(steer).toMatchObject({ type: 'user', message: { content: [{ type: 'text', text: 'also say banana' }] } });
+    expect(steer.priority).toBeUndefined();
+    expect(log.get(steer.uuid)).toMatchObject({ kind: 'user', delivery: 'steering' });
+    chat.receive(JSON.stringify(lifecycle(steer.uuid, 'queued')));
+    expect(log.get(steer.uuid)).toMatchObject({ delivery: 'steering' });
+    chat.receive(JSON.stringify(lifecycle(steer.uuid, 'started')));
+    expect(log.get(steer.uuid)).toMatchObject({ delivery: 'steered' });
+
+    for (const event of turn.slice(8)) chat.receive(JSON.stringify(event));
+    expect(kinds(log.list())).toEqual(['user', 'tool', 'user', 'assistant', 'turn']);
+    expect(statuses.at(-1)).toEqual(['idle', 'Turn complete']);
+    expect(chat.busy).toBe(false);
+  });
+
+  it('lets a steer that missed the turn start the next one', () => {
+    const { host, log, statuses } = fakeHost();
+    const sent: any[] = [];
+    const chat = new ClaudeChat(host, (m) => sent.push(m));
+    chat.send('run echo hello');
+    chat.receive(JSON.stringify(lifecycle(sent[0].uuid, 'started')));
+    chat.send('and then list files');
+    const late = sent.at(-1).uuid;
+    for (const event of turn) chat.receive(JSON.stringify(event));
+    // The turn ended first: the CLI runs the message next, so the chat stays busy.
+    expect(chat.busy).toBe(true);
+    expect(statuses.at(-1)).toEqual(['working', 'Thinking']);
+    chat.receive(JSON.stringify(lifecycle(late, 'started')));
+    const items = log.list();
+    expect(items.at(-1)).toMatchObject({ id: late, kind: 'user' });
+    expect(items.at(-1)).not.toHaveProperty('delivery', 'steering');
+    expect(kinds(items)).toEqual(['user', 'tool', 'assistant', 'turn', 'user']);
+  });
+
+  it('requeues a steer the CLI dropped', () => {
+    const { host, log, statuses, requeued } = fakeHost();
+    const sent: any[] = [];
+    const chat = new ClaudeChat(host, (m) => sent.push(m));
+    chat.send('go');
+    chat.receive(JSON.stringify(lifecycle(sent[0].uuid, 'started')));
+    chat.send('actually wait');
+    const steer = sent.at(-1).uuid;
+    chat.interrupt();
+    chat.receive(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, uuid: 'r1' }));
+    chat.receive(JSON.stringify(lifecycle(steer, 'cancelled')));
+    expect(requeued).toEqual([steer]);
+    expect(log.get(steer)).toMatchObject({ delivery: 'queued' });
+    expect(chat.busy).toBe(false);
+    expect(statuses.at(-1)).toEqual(['idle', null]);
+  });
+
+  it('assumes steers went in when the CLI reports no lifecycle', () => {
+    const { host, log } = fakeHost();
+    const sent: any[] = [];
+    const chat = new ClaudeChat(host, (m) => sent.push(m));
+    chat.send('go');
+    chat.send('more');
+    for (const event of turn) chat.receive(JSON.stringify(event));
+    expect(log.get(sent[1].uuid)).toMatchObject({ delivery: 'steered' });
+    expect(chat.busy).toBe(false);
+  });
+
+  it('keeps slash commands out of a running turn', () => {
+    const { host } = fakeHost();
+    const chat = new ClaudeChat(host, () => {});
+    // Before the command list arrives, anything command-like waits.
+    expect(chat.canSteer('/tmp/log has it')).toBe(false);
+    chat.receive(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', slash_commands: ['compact', 'review'] }));
+    expect(chat.canSteer('/compact')).toBe(false);
+    expect(chat.canSteer('/tmp/log has it')).toBe(true);
+    expect(chat.canSteer('use the other file')).toBe(true);
+  });
+
   it('asks the CLI to title the session and renames it', async () => {
     const { host } = fakeHost();
     const sent: any[] = [];
@@ -119,6 +213,56 @@ describe('Claude chat protocol', () => {
 
     chat.configure({ effort: 'xhigh' });
     expect(sent.at(-1)).toMatchObject({ type: 'control_request', request: { subtype: 'apply_flag_settings', settings: { effortLevel: 'xhigh' } } });
+  });
+
+  it('lists slash commands and skills from the initialize reply', async () => {
+    const { host } = fakeHost();
+    const sent: any[] = [];
+    const chat = new ClaudeChat(host, (m) => sent.push(m));
+    await chat.start('hi');
+    expect(sent[0]).toMatchObject({ type: 'control_request', request: { subtype: 'initialize' } });
+    expect(sent[1]).toMatchObject({ type: 'user' });
+    const commands = chat.commands();
+    // Recorded from claude.exe 2.1.280 (trimmed).
+    chat.receive(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', skills: ['simplify', 'anthropic-skills:pdf'], terminal_slash_commands: ['color'] }));
+    chat.receive(
+      JSON.stringify({
+        type: 'control_response',
+        response: {
+          subtype: 'success',
+          request_id: sent[0].request_id,
+          response: {
+            commands: [
+              { name: 'simplify', description: 'Review the changed code', argumentHint: '[<target>]', builtin: true },
+              { name: 'compact', description: 'Free up context', argumentHint: '<optional custom summarization instructions>', builtin: true },
+              { name: 'usage', description: 'Show session cost', argumentHint: '', aliases: ['cost', 'stats'], builtin: true },
+              { name: 'color', description: 'Set the prompt bar color', argumentHint: '[red|blue]', builtin: true },
+              { name: '__remote-workflow', description: 'internal', argumentHint: '', builtin: true },
+              { name: 'anthropic-skills:pdf', description: 'PDF files', argumentHint: '', aliases: ['pdf'] }
+            ]
+          }
+        }
+      })
+    );
+    expect(await commands).toEqual([
+      { name: 'simplify', trigger: '/', kind: 'skill', description: 'Review the changed code', argumentHint: '[<target>]', aliases: [] },
+      { name: 'compact', trigger: '/', kind: 'command', description: 'Free up context', argumentHint: '<optional custom summarization instructions>', aliases: [] },
+      { name: 'usage', trigger: '/', kind: 'command', description: 'Show session cost', argumentHint: null, aliases: ['cost', 'stats'] },
+      { name: 'anthropic-skills:pdf', trigger: '/', kind: 'skill', description: 'PDF files', argumentHint: null, aliases: ['pdf'] }
+    ]);
+  });
+
+  it('falls back to the init event names when initialize is refused', async () => {
+    const { host } = fakeHost();
+    const sent: any[] = [];
+    const chat = new ClaudeChat(host, (m) => sent.push(m));
+    await chat.start();
+    chat.receive(JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: sent[0].request_id, error: 'Unknown request' } }));
+    chat.receive(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', slash_commands: ['compact', 'review'], skills: ['review'] }));
+    expect((await chat.commands()).map((c) => [c.name, c.kind])).toEqual([
+      ['compact', 'command'],
+      ['review', 'skill']
+    ]);
   });
 
   it("shows the CLI's warnings, such as a refused model", () => {
@@ -214,12 +358,26 @@ describe('Claude chat protocol', () => {
 
 describe('Codex chat protocol', () => {
   function started() {
-    const { host, log, statuses, sessions } = fakeHost();
+    const { host, log, statuses, sessions, requeued } = fakeHost();
     const sent: any[] = [];
     const chat = new CodexChat(host, (m) => sent.push(m), { cwd: 'C:\\r', permission: 'auto', appVersion: '0.1.0' });
     const ready = chat.start();
-    return { chat, host, log, statuses, sessions, sent, ready };
+    return { chat, host, log, statuses, sessions, sent, ready, requeued };
   }
+
+  async function running() {
+    const context = started();
+    const { chat, sent, ready } = context;
+    chat.receive(JSON.stringify({ id: 1, result: {} }));
+    await Promise.resolve();
+    await Promise.resolve();
+    chat.receive(JSON.stringify({ id: sent[2].id, result: { thread: { id: 'th-1', path: null }, model: 'm' } }));
+    await ready;
+    const notify = (method: string, params: object) => chat.receive(JSON.stringify({ method, params: { threadId: 'th-1', ...params } }));
+    return { ...context, notify };
+  }
+
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
 
   it('initializes, starts a thread and runs a turn', async () => {
     const { chat, log, sent, sessions, statuses, ready } = started();
@@ -311,6 +469,137 @@ describe('Codex chat protocol', () => {
     expect(sent.at(-1)).toMatchObject({ method: 'turn/start', params: { approvalPolicy: 'on-request', approvalsReviewer: 'user' } });
   });
 
+  it('offers its skills, and passes the ones a message mentions along as skill inputs', async () => {
+    const { chat, sent, ready } = started();
+    chat.receive(JSON.stringify({ id: 1, result: {} }));
+    await Promise.resolve();
+    await Promise.resolve();
+    chat.receive(JSON.stringify({ id: sent[2].id, result: { thread: { id: 'th-1', path: null }, model: 'm' } }));
+    await ready;
+    const list = sent.at(-1);
+    expect(list).toMatchObject({ method: 'skills/list', params: { cwds: ['C:\\r'] } });
+    // Recorded from codex 0.155.0-alpha.16.3 (trimmed).
+    chat.receive(
+      JSON.stringify({
+        id: list.id,
+        result: {
+          data: [
+            {
+              cwd: 'C:\\r',
+              errors: [],
+              skills: [
+                { name: 'pdf:pdf', description: 'Read, create, inspect PDF files', interface: { shortDescription: 'Read and create PDFs' }, path: 'C:\\skills\\pdf\\SKILL.md', scope: 'user', enabled: true },
+                { name: 'imagegen', description: 'Generate images', path: 'C:\\skills\\imagegen\\SKILL.md', scope: 'system', enabled: true },
+                { name: 'off', description: 'Disabled', path: 'C:\\skills\\off\\SKILL.md', scope: 'user', enabled: false }
+              ]
+            }
+          ]
+        }
+      })
+    );
+    const commands = await chat.commands();
+    expect(commands.map((c) => `${c.trigger}${c.name}`)).toEqual(['/compact', '/review', '$pdf:pdf', '$imagegen']);
+    expect(commands[2].description).toBe('Read and create PDFs');
+
+    chat.send('Use $pdf to summarize report.pdf, then $imagegen.');
+    expect(sent.at(-1)).toMatchObject({
+      method: 'turn/start',
+      params: {
+        input: [
+          { type: 'text', text: 'Use $pdf to summarize report.pdf, then $imagegen.' },
+          { type: 'skill', name: 'pdf:pdf', path: 'C:\\skills\\pdf\\SKILL.md' },
+          { type: 'skill', name: 'imagegen', path: 'C:\\skills\\imagegen\\SKILL.md' }
+        ]
+      }
+    });
+  });
+
+  it('runs /compact and /review through their own requests', async () => {
+    const { chat, sent, log, statuses, ready } = started();
+    chat.receive(JSON.stringify({ id: 1, result: {} }));
+    await Promise.resolve();
+    await Promise.resolve();
+    chat.receive(JSON.stringify({ id: sent[2].id, result: { thread: { id: 'th-1', path: null }, model: 'm' } }));
+    await ready;
+
+    chat.send('/compact');
+    expect(sent.at(-1)).toMatchObject({ method: 'thread/compact/start', params: { threadId: 'th-1' } });
+    expect(log.list().at(-1)).toMatchObject({ kind: 'user', text: '/compact' });
+    expect(statuses.at(-1)).toEqual(['working', 'Compacting']);
+    const notify = (method: string, params: object) => chat.receive(JSON.stringify({ method, params: { threadId: 'th-1', ...params } }));
+    notify('turn/started', { turn: { id: 'c1' } });
+    expect(() => chat.send('/review')).toThrow(/once this turn ends/);
+    notify('turn/completed', { turn: { id: 'c1', status: 'completed' } });
+
+    chat.send('/review focus on the parser');
+    expect(sent.at(-1)).toMatchObject({ method: 'review/start', params: { threadId: 'th-1', target: { type: 'custom', instructions: 'focus on the parser' }, delivery: 'inline' } });
+    chat.receive(JSON.stringify({ id: sent.at(-1).id, result: { turn: { id: 'r1', status: 'inProgress' }, reviewThreadId: 'th-1' } }));
+    notify('turn/completed', { turn: { id: 'r1', status: 'completed' } });
+    chat.send('/review');
+    expect(sent.at(-1)).toMatchObject({ method: 'review/start', params: { target: { type: 'uncommittedChanges' } } });
+
+    // Anything else starting with a slash is an ordinary message.
+    chat.receive(JSON.stringify({ id: sent.at(-1).id, result: { turn: { id: 'r2', status: 'completed' } } }));
+    notify('turn/completed', { turn: { id: 'r2', status: 'completed' } });
+    chat.send('/tmp/build.log has the error');
+    expect(sent.at(-1)).toMatchObject({ method: 'turn/start', params: { input: [{ type: 'text', text: '/tmp/build.log has the error' }] } });
+  });
+
+  it('steers the running turn with mid-turn messages', async () => {
+    const { chat, sent, log, notify } = await running();
+    chat.send('fix the parser');
+    const start = sent.at(-1);
+    chat.receive(JSON.stringify({ id: start.id, result: { turn: { id: 'turn-1', status: 'inProgress' } } }));
+    notify('turn/started', { turn: { id: 'turn-1', status: 'inProgress' } });
+
+    expect(chat.canSteer('and add a test')).toBe(true);
+    chat.send('and add a test');
+    await settle();
+    const steer = sent.at(-1);
+    expect(steer).toMatchObject({ method: 'turn/steer', params: { threadId: 'th-1', expectedTurnId: 'turn-1', input: [{ type: 'text', text: 'and add a test' }] } });
+    const id = steer.params.clientUserMessageId;
+    expect(log.get(id)).toMatchObject({ kind: 'user', delivery: 'steering' });
+    chat.receive(JSON.stringify({ id: steer.id, result: { turnId: 'turn-1' } }));
+    await settle();
+    expect(log.get(id)).toMatchObject({ delivery: 'steered' });
+    // Codex's own record of the message keeps it marked as a steer.
+    notify('item/completed', { turnId: 'turn-1', item: { type: 'userMessage', id: 'srv-2', clientId: id, content: [{ type: 'text', text: 'and add a test' }] } });
+    expect(log.get(id)).toMatchObject({ delivery: 'steered' });
+  });
+
+  it('waits for turn/start to answer before steering', async () => {
+    const { chat, sent, notify } = await running();
+    chat.send('first');
+    const start = sent.at(-1);
+    chat.send('second');
+    await settle();
+    expect(sent.at(-1)).toBe(start);
+    chat.receive(JSON.stringify({ id: start.id, result: { turn: { id: 'turn-9', status: 'inProgress' } } }));
+    await settle();
+    expect(sent.at(-1)).toMatchObject({ method: 'turn/steer', params: { expectedTurnId: 'turn-9' } });
+    notify('turn/completed', { turn: { id: 'turn-9', status: 'completed' } });
+  });
+
+  it('requeues a steer that arrives too late, and keeps commands out of a turn', async () => {
+    const { chat, sent, log, notify, requeued } = await running();
+    chat.send('go');
+    chat.receive(JSON.stringify({ id: sent.at(-1).id, result: { turn: { id: 'turn-1', status: 'inProgress' } } }));
+    expect(chat.canSteer('/compact')).toBe(false);
+    chat.send('one more thing');
+    await settle();
+    const steer = sent.at(-1);
+    notify('turn/completed', { turn: { id: 'turn-1', status: 'completed' } });
+    chat.receive(JSON.stringify({ id: steer.id, error: { code: -32600, message: 'expected turn turn-1 is not active' } }));
+    await settle();
+    const id = steer.params.clientUserMessageId;
+    expect(requeued).toEqual([id]);
+    expect(log.get(id)).toMatchObject({ delivery: 'queued' });
+
+    // Compactions and reviews take no mid-turn input.
+    chat.send('/compact');
+    expect(chat.canSteer('keep going')).toBe(false);
+  });
+
   it('answers unsupported server requests with an error', () => {
     const { chat, sent } = started();
     chat.receive(JSON.stringify({ id: 5, method: 'account/chatgptAuthTokens/refresh', params: {} }));
@@ -393,5 +682,21 @@ describe('conversation history', () => {
     expect(history).toHaveLength(11);
     expect(history[0].entry.kind).toBe('notice');
     expect(history.at(-1)?.entry).toMatchObject({ text: 'm29' });
+  });
+});
+
+describe('queued messages in the log', () => {
+  it('moves a message to the end when it is sent, and removes one through a reset', () => {
+    const log = new ChatLog();
+    log.upsert({ kind: 'user', id: 'q', text: 'later', delivery: 'queued' });
+    log.upsert({ kind: 'assistant', id: 'a', text: 'working', streaming: false });
+    log.upsert({ kind: 'user', id: 'r', text: 'never mind', delivery: 'queued' });
+    log.takeDirty();
+    log.moveToEnd('q');
+    expect(log.list().map((i) => i.id)).toEqual(['a', 'r', 'q']);
+    expect(log.takeDirty().map((i) => i.id)).toEqual(['q']);
+    log.remove('r');
+    expect(log.list().map((i) => i.id)).toEqual(['a', 'q']);
+    expect(log.reset).toBe(true);
   });
 });

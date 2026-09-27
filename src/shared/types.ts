@@ -260,9 +260,20 @@ export interface ChatOption {
 
 export type ChatToolStatus = 'running' | 'done' | 'error' | 'declined';
 
+/** What a message sent while the agent works does: go into the running turn, or wait for it to end. */
+export type ChatSendMode = 'steer' | 'queue';
+
+/**
+ * A message sent while the agent was working. `queued`: held by the app and
+ * sent as the next turn once the running one ends. `steering`: sent into the
+ * running turn; the agent reads it at its next step. `steered`: the agent has
+ * taken it in.
+ */
+export type ChatDelivery = 'queued' | 'steering' | 'steered';
+
 /** One entry of a conversation, as the chat view renders it. Both CLIs' protocols are normalized to this. */
 export type ChatEntry =
-  | { kind: 'user'; id: string; text: string }
+  | { kind: 'user'; id: string; text: string; delivery?: ChatDelivery }
   | { kind: 'assistant'; id: string; text: string; streaming: boolean }
   | { kind: 'reasoning'; id: string; text: string; streaming: boolean }
   | {
@@ -311,6 +322,18 @@ export interface ChatAnswer {
   message?: string;
   /** Question id → chosen label(s), comma-joined for multi-select. */
   answers?: Record<string, string>;
+}
+
+/** A slash command or skill the chat composer offers. */
+export interface ChatCommand {
+  /** What follows the trigger: "compact", "anthropic-skills:pdf". */
+  name: string;
+  /** How it's typed: "/" at the start of a message, or "$" anywhere in it (Codex skills). */
+  trigger: '/' | '$';
+  kind: 'command' | 'skill';
+  description: string;
+  argumentHint: string | null;
+  aliases: string[];
 }
 
 export interface ChatSettingsPatch {
@@ -439,6 +462,8 @@ export interface AppSettings {
   shellForTerminals: string;
   /** Route Claude Code's status line through the app (keeps the user's own) for exact context, cost and plan limits. */
   claudeStatusLine: boolean;
+  /** What Enter does in a chat while the agent is working; Ctrl+Enter does the other. */
+  chatSendMode: ChatSendMode;
 }
 
 export interface CliInfo {

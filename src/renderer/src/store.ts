@@ -33,7 +33,10 @@ interface AppState {
   update: UpdateStatus | null;
   toasts: ToastItem[];
   launcher: Partial<LaunchOptions> | null;
+  /** The details panel beside the agent, when the window is wide enough to dock it. */
   showDetails: boolean;
+  /** The details panel over the agent, in a window too narrow to dock it. */
+  detailsOverlay: boolean;
   setView: (view: View) => void;
   selectAgent: (id: string | null) => void;
   openLauncher: (preset?: Partial<LaunchOptions>) => void;
@@ -60,6 +63,7 @@ export const useApp = create<AppState>((set, get) => ({
   toasts: [],
   launcher: null,
   showDetails: true,
+  detailsOverlay: false,
   setView: (view) => set({ view }),
   selectAgent: (id) => set({ selectedAgentId: id }),
   openLauncher: (preset = {}) => set({ launcher: preset }),

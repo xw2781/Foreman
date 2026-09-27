@@ -103,7 +103,8 @@ function StackedColumns({ days, series }: { days: UsageDay[]; series: Series[] }
                   : `M${x0},${rectY + drawH} L${x0},${rectY} L${x0 + barW},${rectY} L${x0 + barW},${rectY + drawH} Z`;
                 return <path key={seg.s.key} d={path} fill={seg.s.color} pointerEvents="none" />;
               })}
-              {i % labelEvery === 0 || i === days.length - 1 ? (
+              {/* "Today" always shows; a regular label too close to it would run into it. */}
+              {(i % labelEvery === 0 && days.length - 1 - i >= labelEvery) || i === days.length - 1 ? (
                 <text className="tick" x={cx} y={height - 8} textAnchor="middle">
                   {i === days.length - 1 ? 'Today' : dayLabel(day.date)}
                 </text>

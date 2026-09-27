@@ -3,7 +3,9 @@ import type {
   AgentMode,
   AppSettings,
   ChatAnswer,
+  ChatCommand,
   ChatItem,
+  ChatSendMode,
   ChatSettingsPatch,
   ComputerUseStatus,
   EnvironmentInfo,
@@ -56,11 +58,16 @@ export interface InvokeMap {
   'agents.buffer': (id: string) => { data: string; end: number };
 
   'chat.items': (id: string) => ChatItem[];
-  /** Sends a message; a finished chat is resumed with it. */
-  'chat.send': (id: string, text: string) => AgentInfo;
-  'chat.interrupt': (id: string) => void;
+  /** Sends a message; a finished chat is resumed with it. While the agent works, `mode` says whether it steers the turn or waits for it to end. */
+  'chat.send': (id: string, text: string, mode: ChatSendMode) => AgentInfo;
+  /** A queued message: `send` it now (into the running turn, if there is one) or `remove` it. */
+  'chat.queued': (id: string, itemId: string, action: 'send' | 'remove') => AgentInfo;
+  /** Stops the running turn; returns the queued messages' texts, which are taken off the queue for editing. */
+  'chat.interrupt': (id: string) => string[];
   'chat.respond': (id: string, itemId: string, answer: ChatAnswer) => void;
   'chat.configure': (id: string, patch: ChatSettingsPatch) => void;
+  /** The slash commands and skills the session accepts (the last known ones once it has ended). */
+  'chat.commands': (id: string) => ChatCommand[];
 
   /** null until the first process snapshot has been taken. */
   'processes.external': () => ExternalAgentProcess[] | null;
@@ -113,7 +120,7 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'profiles.login', 'profiles.logout', 'profiles.setGlobalDefault', 'profiles.shareConfig', 'profiles.openShell',
   'agents.list', 'agents.launch', 'agents.write', 'agents.resize', 'agents.stop', 'agents.remove', 'agents.clearFinished',
   'agents.rename', 'agents.resume', 'agents.buffer',
-  'chat.items', 'chat.send', 'chat.interrupt', 'chat.respond', 'chat.configure',
+  'chat.items', 'chat.send', 'chat.interrupt', 'chat.respond', 'chat.configure', 'chat.commands', 'chat.queued',
   'processes.external', 'processes.kill',
   'usage.report', 'pricing.status', 'pricing.edit',
   'computerUse.status', 'computerUse.command', 'computerUse.setPolicy', 'computerUse.install', 'computerUse.image',
@@ -127,7 +134,11 @@ export const EVENT_NAMES: EventName[] = [
 /** Fire-and-forget channels (no reply), for the hot path of terminal I/O. */
 export const SEND_CHANNELS = ['agents.write', 'agents.resize'] as const;
 
+/** The theme settings, read synchronously at page load so the first paint already uses them. */
+export type ThemePrefs = Pick<AppSettings, 'theme' | 'lightPalette'>;
+
 export interface AtcBridge {
+  initialTheme: ThemePrefs;
   invoke<C extends InvokeChannel>(channel: C, ...args: Parameters<InvokeMap[C]>): Promise<ReturnType<InvokeMap[C]>>;
   send(channel: (typeof SEND_CHANNELS)[number], ...args: unknown[]): void;
   on<E extends EventName>(event: E, listener: (payload: EventMap[E]) => void): () => void;

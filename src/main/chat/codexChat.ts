@@ -2,7 +2,8 @@
 // extension and desktop app use): newline-delimited JSON-RPC over stdio.
 // We call initialize → thread/start|resume → turn/start; the server streams
 // item and turn notifications and asks for approvals as server requests.
-import type { ChatAnswer, ChatOption, ChatQuestion, ChatSettingsPatch, TokenUsage } from '../../shared/types';
+import { randomUUID } from 'node:crypto';
+import type { ChatAnswer, ChatCommand, ChatOption, ChatQuestion, ChatSettingsPatch, TokenUsage } from '../../shared/types';
 import { LONG_CONTEXT_THRESHOLD, priceUsage, rateForModel } from '../telemetry/pricing';
 import { normalizeCodexUsage, subtractUsage } from '../telemetry/codexRollout';
 import { codexItemEntry, codexPermission } from './codexItems';
@@ -22,8 +23,33 @@ const APPROVAL_OPTIONS: ChatOption[] = [
   { id: 'cancel', label: 'Deny and stop', tone: 'normal' }
 ];
 
+const COMMAND = /^\/(compact|review)(?:\s+([\s\S]*))?$/;
+
 const DECISIONS: Record<string, string> = { allow: 'accept', 'allow-session': 'acceptForSession', deny: 'decline', cancel: 'cancel' };
 const RESOLUTIONS: Record<string, string> = { allow: 'Allowed', 'allow-session': 'Allowed for this session', deny: 'Denied', cancel: 'Denied · turn stopped' };
+
+/** Codex's own apps handle these client-side; here they map onto app-server calls. */
+const CODEX_COMMANDS: ChatCommand[] = [
+  { name: 'compact', trigger: '/', kind: 'command', description: 'Summarize the conversation to free up context', argumentHint: null, aliases: [] },
+  { name: 'review', trigger: '/', kind: 'command', description: 'Review uncommitted changes, or what you describe', argumentHint: '[instructions]', aliases: [] }
+];
+
+interface CodexSkill {
+  name: string;
+  path: string;
+  description: string;
+}
+
+/** `$name` mentions of known skills; a plugin skill ("pdf:pdf") also answers to its short name. */
+export function mentionedSkills(text: string, skills: CodexSkill[]): CodexSkill[] {
+  const found: CodexSkill[] = [];
+  for (const match of text.matchAll(/(?:^|\s)\$([\w][\w:.-]*)/g)) {
+    const name = match[1].replace(/[.:]+$/, '');
+    const skill = skills.find((s) => s.name === name) ?? skills.find((s) => s.name.split(':').pop() === name);
+    if (skill && !found.includes(skill)) found.push(skill);
+  }
+  return found;
+}
 
 export interface CodexChatOptions {
   cwd: string;
@@ -40,21 +66,30 @@ export class CodexChat implements ChatDriver {
   private requests = new Map<string, PendingServerRequest>();
   private threadId: string | null = null;
   private turnId: string | null = null;
-  private queued: Array<{ id: string; text: string }> = [];
+  /** The running turn's id, once `turn/start` answers (null if it didn't start one). */
+  private turnStarting: Promise<string | null> | null = null;
+  /** Reviews and compactions don't take mid-turn input. */
+  private steerable = true;
+  /** Messages sent before the thread existed. */
+  private early: Array<{ id: string; text: string }> = [];
   private overrides: Record<string, unknown> = {};
-  private userCounter = 0;
   /** The thread's model when none is chosen, and the one in use now (for pricing). */
   private defaultModel: string | null = null;
   private model: string | null = null;
   private usageTotal: TokenUsage | null = null;
   /** API-equivalent cost of the running turn; null once any request couldn't be priced. */
   private turnCost: number | null = 0;
+  private initialized: Promise<unknown> | null = null;
+  /** `skills/list`, fetched once and again after `skills/changed`. */
+  private skills: Promise<CodexSkill[]> | null = null;
+  private knownSkills: CodexSkill[] = [];
   busy = false;
 
   constructor(private host: ChatHost, private write: (message: object) => void, private options: CodexChatOptions) {}
 
   async start(prompt?: string) {
-    await this.call('initialize', { clientInfo: { name: 'foreman', title: 'Foreman', version: this.options.appVersion }, capabilities: null });
+    this.initialized = this.call('initialize', { clientInfo: { name: 'foreman', title: 'Foreman', version: this.options.appVersion }, capabilities: null });
+    await this.initialized;
     this.write({ method: 'initialized' });
     const permission = codexPermission(this.options.permission);
     const params = {
@@ -74,32 +109,73 @@ export class CodexChat implements ChatDriver {
     this.model = this.options.model || this.defaultModel;
     this.host.session({ sessionId: result.thread.id, transcriptPath: result.thread.path ?? undefined, model: result.model });
     this.host.status('idle', null);
+    // Known skills turn `$name` mentions into skill inputs.
+    this.loadSkills();
     if (prompt?.trim()) this.send(prompt);
-    for (const message of this.queued.splice(0)) this.startTurn(message.id, message.text);
+    for (const message of this.early.splice(0)) {
+      if (this.busy) this.steer(message.id, message.text);
+      else this.dispatch(message.id, message.text);
+    }
   }
 
-  send(text: string) {
-    const id = `user-${Date.now().toString(36)}-${++this.userCounter}`;
-    this.host.log.upsert({ kind: 'user', id, text });
+  send(text: string, itemId: string = randomUUID()) {
+    const command = COMMAND.exec(text.trim());
+    if (command && this.busy) throw new Error(`Codex is working; /${command[1]} can run once this turn ends.`);
+    if (this.busy) {
+      this.steer(itemId, text);
+      return;
+    }
+    this.host.log.upsert({ kind: 'user', id: itemId, text });
     this.host.changed();
-    if (!this.threadId) {
-      this.queued.push({ id, text });
-      return;
-    }
-    if (this.turnId) {
-      // Mid-turn messages steer the running turn, as in Codex's own apps.
-      this.call('turn/steer', { threadId: this.threadId, clientUserMessageId: id, input: this.input(text), expectedTurnId: this.turnId }).catch((error) => this.notice('error', error.message));
-      return;
-    }
-    this.startTurn(id, text);
+    if (!this.threadId) this.early.push({ id: itemId, text });
+    else this.dispatch(itemId, text);
   }
 
-  private startTurn(id: string, text: string) {
+  canSteer(text: string) {
+    return this.steerable && !COMMAND.test(text.trim());
+  }
+
+  /** Mid-turn messages steer the running turn, as in Codex's own apps. */
+  private async steer(id: string, text: string) {
+    this.host.log.upsert({ kind: 'user', id, text, delivery: 'steering' });
+    this.host.changed();
+    try {
+      const turnId = this.turnId ?? (await this.turnStarting);
+      if (!turnId || !this.threadId || !this.steerable) throw new Error('No turn to steer');
+      await this.call('turn/steer', { threadId: this.threadId, clientUserMessageId: id, input: this.input(text), expectedTurnId: turnId });
+      this.host.log.update(id, 'user', (item) => (item.delivery === 'steering' ? { delivery: 'steered' } : {}));
+    } catch {
+      // The turn ended first, or it's one that takes no input: the message waits for the next.
+      this.host.requeue(id);
+    }
+    this.host.changed();
+  }
+
+  /** A new turn: the message, or the command it names. */
+  private dispatch(id: string, text: string) {
+    const command = COMMAND.exec(text.trim());
+    this.steerable = !command;
+    if (command?.[1] === 'compact') {
+      this.begin('Compacting', this.call('thread/compact/start', { threadId: this.threadId }));
+    } else if (command?.[1] === 'review') {
+      const instructions = command[2]?.trim();
+      const target = instructions ? { type: 'custom', instructions } : { type: 'uncommittedChanges' };
+      this.begin('Reviewing', this.call('review/start', { threadId: this.threadId, target, delivery: 'inline' }));
+    } else {
+      const overrides = this.overrides;
+      this.overrides = {};
+      this.begin('Thinking', this.call('turn/start', { threadId: this.threadId, clientUserMessageId: id, input: this.input(text), ...overrides }));
+    }
+  }
+
+  private begin(detail: string, started: Promise<any>) {
     this.busy = true;
-    this.host.status('working', 'Thinking');
-    const overrides = this.overrides;
-    this.overrides = {};
-    this.call('turn/start', { threadId: this.threadId, clientUserMessageId: id, input: this.input(text), ...overrides })
+    this.host.status('working', detail);
+    this.turnStarting = started.then(
+      (result) => (result?.turn?.status === 'inProgress' ? String(result.turn.id) : null),
+      () => null
+    );
+    started
       .then((result) => {
         if (result?.turn?.id && result.turn.status === 'inProgress') this.turnId = result.turn.id;
       })
@@ -111,7 +187,36 @@ export class CodexChat implements ChatDriver {
   }
 
   private input(text: string) {
-    return [{ type: 'text', text, text_elements: [] }];
+    const skills = mentionedSkills(text, this.knownSkills).map((s) => ({ type: 'skill', name: s.name, path: s.path }));
+    return [{ type: 'text', text, text_elements: [] }, ...skills];
+  }
+
+  private loadSkills(): Promise<CodexSkill[]> {
+    this.skills ??= this.call('skills/list', { cwds: [this.options.cwd] })
+      .then((result) => {
+        const seen = new Set<string>();
+        this.knownSkills = (Array.isArray(result?.data) ? result.data : [])
+          .flatMap((entry: any) => (Array.isArray(entry?.skills) ? entry.skills : []))
+          .filter((s: any) => s?.enabled !== false && typeof s?.name === 'string' && typeof s?.path === 'string' && !seen.has(s.name) && seen.add(s.name))
+          .map((s: any) => ({ name: s.name, path: s.path, description: String(s.interface?.shortDescription || s.shortDescription || s.description || '') }));
+        return this.knownSkills;
+      })
+      .catch(() => {
+        this.skills = null;
+        return this.knownSkills;
+      });
+    return this.skills;
+  }
+
+  async commands(): Promise<ChatCommand[]> {
+    try {
+      if (!this.initialized) return CODEX_COMMANDS;
+      await this.initialized;
+    } catch {
+      return CODEX_COMMANDS;
+    }
+    const skills = await this.loadSkills();
+    return [...CODEX_COMMANDS, ...skills.map((s): ChatCommand => ({ name: s.name, trigger: '$', kind: 'skill', description: s.description, argumentHint: null, aliases: [] }))];
   }
 
   interrupt() {
@@ -233,6 +338,10 @@ export class CodexChat implements ChatDriver {
           if (method === 'item/started') this.host.status('working', entry.detail ? `${entry.title} ${entry.detail}`.slice(0, 120) : entry.title);
         } else if (entry.kind === 'reasoning') {
           this.host.log.upsert({ ...entry, streaming: method === 'item/started' });
+        } else if (entry.kind === 'user') {
+          // One of ours coming back: a steer shows up here once Codex takes it in.
+          const delivery = existing?.kind === 'user' ? existing.delivery : undefined;
+          this.host.log.upsert(delivery ? { ...entry, delivery: delivery === 'steering' ? 'steered' : delivery } : entry);
         } else {
           this.host.log.upsert(entry);
         }
@@ -276,6 +385,10 @@ export class CodexChat implements ChatDriver {
       case 'thread/name/updated':
         if (params.threadName) this.host.session({ title: params.threadName });
         break;
+      case 'skills/changed':
+        this.skills = null;
+        this.loadSkills();
+        break;
       default:
         break;
     }
@@ -312,6 +425,8 @@ export class CodexChat implements ChatDriver {
   private onTurnCompleted(turn: any) {
     if (!turn) return;
     if (this.turnId === turn.id || !this.turnId) this.turnId = null;
+    this.turnStarting = null;
+    this.steerable = true;
     this.busy = false;
     const status = String(turn.status ?? 'completed');
     const ok = status === 'completed';

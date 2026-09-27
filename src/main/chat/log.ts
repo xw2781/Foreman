@@ -55,6 +55,21 @@ export class ChatLog {
     return this.upsert({ ...item, ...change(item as Extract<ChatItem, { kind: K }>) } as ChatEntry);
   }
 
+  /** Puts an item last in the conversation (a queued message, when it's finally sent). */
+  moveToEnd(id: string) {
+    const item = this.items.get(id);
+    if (!item) return;
+    this.items.set(id, { ...item, seq: ++this.seq, rev: ++this.rev });
+    this.dirty.add(id);
+  }
+
+  /** Deletes an item; the renderer only learns of that from a full reset. */
+  remove(id: string) {
+    if (!this.items.delete(id)) return;
+    this.dirty.delete(id);
+    this.reset = true;
+  }
+
   list(): ChatItem[] {
     return [...this.items.values()].sort((a, b) => a.seq - b.seq);
   }

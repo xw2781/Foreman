@@ -7,6 +7,7 @@ const sendAllowed = new Set<string>(SEND_CHANNELS);
 const eventsAllowed = new Set<string>(EVENT_NAMES);
 
 const bridge: AtcBridge = {
+  initialTheme: ipcRenderer.sendSync('theme.initial'),
   invoke: ((channel: string, ...args: unknown[]) => {
     if (!invokeAllowed.has(channel)) return Promise.reject(new Error(`Blocked channel ${channel}`));
     return ipcRenderer.invoke(channel, ...args);

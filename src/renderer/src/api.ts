@@ -1,4 +1,5 @@
-import type { AtcBridge, EventMap, EventName, InvokeChannel, InvokeMap } from '@shared/ipc';
+import type { AtcBridge, EventMap, EventName, InvokeChannel, InvokeMap, ThemePrefs } from '@shared/ipc';
+import type { LightPalette } from '@shared/types';
 
 declare global {
   interface Window {
@@ -26,4 +27,10 @@ export function resizeAgent(id: string, cols: number, rows: number) {
 export function errorMessage(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   return text.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+}
+
+/** The `data-theme` for the page: dark, or the chosen light palette. */
+export function pageTheme(prefs: ThemePrefs, systemDark: boolean): 'dark' | LightPalette {
+  const mode = prefs.theme === 'system' ? (systemDark ? 'dark' : 'light') : prefs.theme;
+  return mode === 'dark' ? 'dark' : prefs.lightPalette;
 }

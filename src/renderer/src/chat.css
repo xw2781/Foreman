@@ -65,6 +65,26 @@
   overflow-wrap: anywhere;
   line-height: 1.55;
 }
+/* a message sent into a running turn */
+.msg-user.steer {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.msg-user.steer .bubble {
+  background: var(--accent-soft);
+  border: 1px solid transparent;
+}
+.msg-user.steer.waiting .bubble {
+  border: 1px dashed var(--accent);
+}
+.msg-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--accent-strong);
+}
 .msg-assistant {
   line-height: 1.62;
 }
@@ -697,6 +717,7 @@
   padding: 8px 20px 12px;
 }
 .composer-box {
+  position: relative;
   max-width: 820px;
   margin: 0 auto;
   border: 1px solid var(--border-strong);
@@ -709,6 +730,100 @@
 }
 .composer-box:focus-within {
   border-color: var(--accent);
+}
+.composer-commands {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.composer-commands:hover,
+.composer-commands.on {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+/* slash commands and skills, above the composer */
+.command-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 20;
+  display: grid;
+  align-content: start;
+  gap: 1px;
+  max-height: min(340px, 45vh);
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  box-shadow: var(--shadow);
+  animation: sel-in 0.1s ease-out;
+}
+.command-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 9px 5px 7px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  cursor: pointer;
+  user-select: none;
+}
+.command-item.active {
+  background: var(--surface-3);
+}
+.command-icon {
+  align-self: center;
+  display: grid;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.command-item.active .command-icon {
+  color: var(--accent-strong);
+}
+.command-name {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.command-args {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+.command-desc {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.command-aliases {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+.command-empty {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 .composer textarea {
   border: 0;
@@ -724,26 +839,68 @@
 .composer textarea::placeholder {
   color: var(--text-muted);
 }
+/* Nothing here shrinks: when the controls don't fit on one line, the send group wraps to the next. */
 .composer-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   min-width: 0;
 }
-.composer-bar .spacer {
-  flex: 1;
+.composer-bar > *,
+.composer-send > * {
+  flex-shrink: 0;
 }
-.composer-context-of {
-  color: var(--text-muted);
-  opacity: 0.8;
+.composer-bar .sel.ghost {
+  max-width: none;
+}
+.composer-bar .sel-value {
+  overflow: visible;
+}
+.composer-send {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
 }
 .composer-context {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 5px;
   font-size: 11.5px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+  cursor: default;
+  outline: none;
+}
+/* the ring's token breakdown, above it on hover or focus */
+/* (scoped: .tooltip in styles.css, loaded later, would show it) */
+.composer-context .context-card {
+  display: none;
+  right: -8px;
+  bottom: calc(100% + 12px);
+  width: 250px;
+  gap: 4px;
+}
+.composer-context:hover .context-card,
+.composer-context:focus-visible .context-card {
+  display: grid;
+}
+.context-card .tt-section {
+  margin-top: 6px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+}
+.context-card .tt-row.sub {
+  padding-left: 12px;
+}
+.context-card .tt-total .v {
+  font-weight: 600;
+}
+.context-card .tt-note {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 .send-btn {
   width: 30px;
@@ -766,10 +923,90 @@
   background: var(--text-primary);
   color: var(--surface-1);
 }
+
+/* what Enter does while the agent works */
+.send-mode {
+  display: inline-flex;
+  padding: 1px;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--page);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.send-mode button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.send-mode button:hover {
+  color: var(--text-primary);
+}
+.send-mode button.on {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+/* messages waiting for the turn to end */
+.queue {
+  max-width: 820px;
+  margin: 0 auto 6px;
+  display: grid;
+  gap: 4px;
+}
+.queue-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 3px 4px 3px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.queue-text {
+  flex: 1;
+  min-width: 0;
+  margin-right: 6px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .composer-hint {
   max-width: 820px;
   margin: 5px auto 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
   font-size: 11px;
   color: var(--text-muted);
-  text-align: center;
+}
+.composer-hint > * {
+  flex-shrink: 0;
 }

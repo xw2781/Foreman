@@ -2,7 +2,8 @@
 // --output-format stream-json --permission-prompt-tool stdio`. User messages
 // and control requests go in on stdin; conversation events, streaming deltas
 // and permission requests (`can_use_tool`) come out on stdout.
-import type { ChatAnswer, ChatOption, ChatQuestion, ChatSettingsPatch } from '../../shared/types';
+import { randomUUID } from 'node:crypto';
+import type { ChatAnswer, ChatCommand, ChatOption, ChatQuestion, ChatSettingsPatch } from '../../shared/types';
 import { describeToolInput } from '../streamFormat';
 import { parseStatusPayload } from '../statusLine';
 import { claudeFileChanges, claudeToolEntry, claudeToolTitle, toolResultText } from './claudeTools';
@@ -76,27 +77,52 @@ export class ClaudeChat implements ChatDriver {
   private requestCounter = 0;
   /** Our control requests awaiting the CLI's response, by request id. */
   private replies = new Map<string, (response: any) => void>();
-  private userCounter = 0;
   private interrupting = false;
+  /** Between a turn's first message and its result. */
+  private running = false;
+  /** Messages sent into a running turn that the CLI hasn't taken in yet. */
+  private steering = new Set<string>();
+  /** Whether the CLI reports `command_lifecycle` for the messages it's given (older ones don't). */
+  private lifecycle = false;
   private lastTotalCost = 0;
+  /** The CLI's reply to `initialize` (null if it refused). */
+  private initialized: Promise<any> | null = null;
+  /** From each turn's init event: which commands are skills, which only work in the terminal. */
+  private slashCommands: string[] = [];
+  private skills = new Set<string>();
+  private terminalOnly = new Set<string>();
   busy = false;
 
   /** `permission`: the mode asked for at launch, to notice when the CLI starts in another. */
   constructor(private host: ChatHost, private write: (message: object) => void, private permission?: string) {}
 
   async start(prompt?: string) {
-    // The CLI says nothing until the first message arrives.
+    // As the SDK does; the reply lists the session's slash commands and skills.
+    this.initialized = this.ask({ subtype: 'initialize' });
+    // The CLI says nothing else until the first message arrives.
     this.host.status('idle', null);
     if (prompt?.trim()) this.send(prompt);
   }
 
-  send(text: string) {
-    const id = `user-${Date.now().toString(36)}-${++this.userCounter}`;
-    this.host.log.upsert({ kind: 'user', id, text });
-    this.write({ type: 'user', session_id: '', message: { role: 'user', content: [{ type: 'text', text }] }, parent_tool_use_id: null });
-    this.busy = true;
-    this.host.status('working', 'Thinking');
+  send(text: string, itemId: string = randomUUID()) {
+    // While a turn runs the CLI folds the message in after the current step (its "next" priority).
+    const steer = this.busy;
+    this.host.log.upsert(steer ? { kind: 'user', id: itemId, text, delivery: 'steering' } : { kind: 'user', id: itemId, text });
+    this.write({ type: 'user', uuid: itemId, session_id: '', message: { role: 'user', content: [{ type: 'text', text }] }, parent_tool_use_id: null });
+    if (steer) this.steering.add(itemId);
+    else {
+      this.busy = true;
+      this.running = true;
+      this.host.status('working', 'Thinking');
+    }
     this.host.changed();
+  }
+
+  /** Slash commands run as turns of their own. */
+  canSteer(text: string) {
+    const name = /^\/(\S+)/.exec(text.trim())?.[1];
+    // Before the command list is known, anything that looks like one waits.
+    return !name || (this.slashCommands.length > 0 && !this.slashCommands.includes(name));
   }
 
   interrupt() {
@@ -202,6 +228,9 @@ export class ClaudeChat implements ChatDriver {
       case 'rate_limit_event':
         this.onRateLimit(event.rate_limit_info);
         break;
+      case 'command_lifecycle':
+        this.onLifecycle(String(event.command_uuid ?? ''), String(event.state ?? ''));
+        break;
       default:
         return;
     }
@@ -293,6 +322,10 @@ export class ClaudeChat implements ChatDriver {
   private onSystem(event: any) {
     if (event.subtype === 'init') {
       this.host.session({ sessionId: event.session_id, model: event.model, permission: event.permissionMode });
+      const names = (value: unknown) => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []);
+      this.slashCommands = names(event.slash_commands);
+      this.skills = new Set(names(event.skills));
+      this.terminalOnly = new Set(names(event.terminal_slash_commands));
       // Claude Code quietly falls back when a mode isn't available (Auto needs a supported model).
       const asked = this.permission;
       this.permission = undefined;
@@ -312,10 +345,41 @@ export class ClaudeChat implements ChatDriver {
     }
   }
 
+  /** The CLI's progress through a message it was given: queued, started (taken into a turn), completed or cancelled. */
+  private onLifecycle(uuid: string, state: string) {
+    this.lifecycle = true;
+    if (!this.steering.has(uuid) || state === 'queued') return;
+    this.steering.delete(uuid);
+    if (state === 'started' && this.running) {
+      this.host.log.update(uuid, 'user', () => ({ delivery: 'steered' }));
+    } else if (state === 'started') {
+      // The turn ended before its next step, so the message starts a turn of its own.
+      this.host.log.moveToEnd(uuid);
+      this.host.log.update(uuid, 'user', () => ({ delivery: undefined }));
+      this.running = true;
+      this.host.status('working', 'Thinking');
+    } else {
+      // Dropped without being read (the turn was stopped): it waits for the next turn instead.
+      if (!this.running && this.steering.size === 0) {
+        this.busy = false;
+        this.host.status('idle', null);
+      }
+      this.host.requeue(uuid);
+    }
+  }
+
   private onResult(event: any) {
     const interrupted = this.interrupting;
     this.interrupting = false;
-    this.busy = false;
+    this.running = false;
+    // Without lifecycle reports there's no telling when a steer went in; assume it did.
+    if (!this.lifecycle) {
+      for (const id of this.steering) this.host.log.update(id, 'user', () => ({ delivery: 'steered' }));
+      this.steering.clear();
+    }
+    // A message that missed this turn starts the next one straight away.
+    const next = this.steering.size > 0;
+    this.busy = next;
     const ok = !event.is_error && event.subtype === 'success';
     const total = typeof event.total_cost_usd === 'number' ? event.total_cost_usd : null;
     const cost = total !== null && total >= this.lastTotalCost ? total - this.lastTotalCost : total;
@@ -334,7 +398,8 @@ export class ClaudeChat implements ChatDriver {
       costUsd: cost,
       text
     });
-    this.host.status('idle', interrupted ? 'Interrupted' : ok ? 'Turn complete' : 'Turn failed');
+    if (next) this.host.status('working', 'Thinking');
+    else this.host.status('idle', interrupted ? 'Interrupted' : ok ? 'Turn complete' : 'Turn failed');
     this.host.turnComplete();
   }
 
@@ -437,11 +502,25 @@ export class ClaudeChat implements ChatDriver {
     this.request({ subtype: 'rename_session', title });
   }
 
-  generateTitle(description: string): Promise<string | null> {
-    return new Promise((resolve) => {
-      const id = this.request({ subtype: 'generate_session_title', description, persist: true });
-      this.replies.set(id, (response) => resolve(typeof response?.title === 'string' && response.title.trim() ? response.title.trim() : null));
-    });
+  async generateTitle(description: string): Promise<string | null> {
+    const response = await this.ask({ subtype: 'generate_session_title', description, persist: true });
+    return typeof response?.title === 'string' && response.title.trim() ? response.title.trim() : null;
+  }
+
+  /** The `initialize` reply's commands, else the names from the last init event. Internal and terminal-only ones are left out. */
+  async commands(): Promise<ChatCommand[]> {
+    const reply = this.initialized ? await this.initialized : null;
+    const listed: any[] = Array.isArray(reply?.commands) ? reply.commands : this.slashCommands.map((name) => ({ name }));
+    return listed
+      .filter((c) => typeof c?.name === 'string' && c.name && !c.name.startsWith('_') && !this.terminalOnly.has(c.name))
+      .map((c) => ({
+        name: c.name,
+        trigger: '/',
+        kind: this.skills.has(c.name) ? 'skill' : 'command',
+        description: typeof c.description === 'string' ? c.description : '',
+        argumentHint: typeof c.argumentHint === 'string' && c.argumentHint.trim() ? c.argumentHint.trim() : null,
+        aliases: Array.isArray(c.aliases) ? c.aliases.filter((a: unknown): a is string => typeof a === 'string') : []
+      }));
   }
 
   /** The CLI's answer to one of our control requests. */
@@ -456,5 +535,10 @@ export class ClaudeChat implements ChatDriver {
     const id = `atc-${++this.requestCounter}`;
     this.write({ type: 'control_request', request_id: id, request });
     return id;
+  }
+
+  /** A control request whose reply we need: its response, or null on an error or exit. */
+  private ask(request: Record<string, unknown>): Promise<any> {
+    return new Promise((resolve) => this.replies.set(this.request(request), resolve));
   }
 }

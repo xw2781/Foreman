@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ChatItem } from '@shared/types';
+import type { ChatCommand, ChatItem, ChatSendMode } from '@shared/types';
 import { call, errorMessage, listen } from './api';
 
 interface ChatState {
@@ -57,5 +57,17 @@ export function forgetChat(id: string) {
   useChats.setState({ chats: rest });
 }
 
+/** Each agent's last known slash commands and skills, so the menu opens with them while a fresh list loads. */
+export const commandLists = new Map<string, ChatCommand[]>();
+
+export async function loadCommands(id: string): Promise<ChatCommand[]> {
+  const list = await call('chat.commands', id);
+  if (list.length || !commandLists.has(id)) commandLists.set(id, list);
+  return commandLists.get(id)!;
+}
+
 /** Unsent composer text per agent, so switching agents doesn't lose it. */
 export const drafts = new Map<string, string>();
+
+/** Chats whose composer was switched away from the default send mode (Settings → Chat). */
+export const sendModes = new Map<string, ChatSendMode>();

@@ -1,4 +1,4 @@
-import type { ChatAnswer, ChatSettingsPatch, ProfileLimits } from '../../shared/types';
+import type { ChatAnswer, ChatCommand, ChatSettingsPatch, ProfileLimits } from '../../shared/types';
 import type { ChatLog } from './log';
 
 /** What a chat driver tells the agent manager. */
@@ -10,6 +10,8 @@ export interface ChatHost {
   session(info: { sessionId?: string; transcriptPath?: string; model?: string; permission?: string; title?: string }): void;
   turnComplete(): void;
   limits(limits: ProfileLimits): void;
+  /** A message meant for the running turn couldn't go in; hold it for the next one. */
+  requeue(itemId: string): void;
 }
 
 /** One CLI's structured protocol, driven over the child's stdin/stdout. */
@@ -18,7 +20,14 @@ export interface ChatDriver {
   start(prompt?: string): Promise<void>;
   /** One line of the child's stdout. */
   receive(line: string): void;
-  send(text: string): void;
+  /**
+   * Starts a turn with the message, or steers the running one with it when
+   * `busy`. `itemId` names the chat item to use (a queued message's); it's a
+   * UUID, as Claude Code wants for its message ids.
+   */
+  send(text: string, itemId?: string): void;
+  /** Whether `text` can go into the running turn (commands can't; they wait for it to end). */
+  canSteer(text: string): boolean;
   interrupt(): void;
   respond(itemId: string, answer: ChatAnswer): void;
   configure(patch: ChatSettingsPatch): void;
@@ -26,6 +35,8 @@ export interface ChatDriver {
   rename?(title: string): void;
   /** Asks the CLI to name the session from `description` (and remember it); null when it can't. */
   generateTitle?(description: string): Promise<string | null>;
+  /** The slash commands and skills the session accepts. */
+  commands?(): Promise<ChatCommand[]>;
   readonly busy: boolean;
 }
 

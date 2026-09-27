@@ -264,6 +264,53 @@ export function useTicker(ms = 15_000) {
   }, [ms]);
 }
 
+export function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const list = window.matchMedia(query);
+    const change = () => setMatches(list.matches);
+    change();
+    list.addEventListener('change', change);
+    return () => list.removeEventListener('change', change);
+  }, [query]);
+  return matches;
+}
+
+/**
+ * Keeps a row's labels whole. While the row (or a scrolling table's wrapper)
+ * is too narrow for its content it hides optional items — descendants marked
+ * `data-fit="N"`, every item of the highest N at once (a table column's
+ * cells), then the next — rather than letting text be cut. `deps`: what
+ * changes the content's width. Rows can nest; each manages only its own items.
+ */
+export function useFit<T extends HTMLElement>(deps: unknown[]) {
+  const ref = useRef<T>(null);
+  useLayoutEffect(() => {
+    const row = ref.current;
+    if (!row) return;
+    row.dataset.fitRow = '';
+    const fit = () => {
+      const levels = new Map<number, HTMLElement[]>();
+      for (const item of row.querySelectorAll<HTMLElement>('[data-fit]')) {
+        if (item.parentElement?.closest('[data-fit-row]') !== row) continue;
+        item.style.removeProperty('display');
+        const level = Number(item.dataset.fit);
+        levels.set(level, [...(levels.get(level) ?? []), item]);
+      }
+      for (const level of [...levels.keys()].sort((a, b) => b - a)) {
+        if (row.scrollWidth <= row.clientWidth) break;
+        for (const item of levels.get(level)!) item.style.display = 'none';
+      }
+    };
+    fit();
+    // Only the row's own size is watched, which hiding its items doesn't change, so this can't loop.
+    const observer = new ResizeObserver(fit);
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, deps);
+  return ref;
+}
+
 // ------------------------------------------------------------------ select
 
 export interface SelectOption {
