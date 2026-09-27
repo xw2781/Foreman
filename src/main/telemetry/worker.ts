@@ -17,9 +17,13 @@ async function chatHistory(provider: 'claude' | 'codex', filePath: string) {
 const pricingPath: string | null = workerData?.pricingPath ?? null;
 if (pricingPath) loadPricingFile(pricingPath);
 
-const engine = new TelemetryEngine(workerData?.cachePath ?? null, (scanned) => {
-  parentPort?.postMessage({ event: 'progress', scanned });
-});
+const engine = new TelemetryEngine(
+  workerData?.cachePath ?? null,
+  (scanned) => {
+    parentPort?.postMessage({ event: 'progress', scanned });
+  },
+  { importedPath: workerData?.importedPath ?? null, machine: workerData?.machine, appVersion: workerData?.appVersion }
+);
 
 const methods: Record<string, (...args: any[]) => unknown> = {
   configure: (profiles, settings) => engine.configure(profiles, settings),
@@ -33,6 +37,11 @@ const methods: Record<string, (...args: any[]) => unknown> = {
   codexLimits: (profile) => engine.codexLimits(profile),
   chatHistory: (provider, filePath) => chatHistory(provider, filePath),
   saveCache: () => engine.saveCache(),
+  localUsage: (previous) => engine.localUsage(previous),
+  exportUsage: (filePath) => engine.exportUsage(filePath),
+  importUsageFiles: (filePaths) => engine.importUsageFiles(filePaths),
+  importUsage: (contents, names) => engine.importUsage(contents, names),
+  forgetMachine: (id) => engine.forgetMachine(id),
   reloadPricing: () => {
     if (!pricingPath) return null;
     const status = loadPricingFile(pricingPath);

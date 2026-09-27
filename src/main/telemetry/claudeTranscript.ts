@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { TokenUsage } from '../../shared/types';
-import { emptyUsage, recordRequest, type ModelAccumulator } from './pricing';
+import { emptyUsage, modelKey, recordRequest, type ModelAccumulator } from './pricing';
 import {
   IncrementalLineReader,
   addToDay,
@@ -237,7 +237,7 @@ export class ClaudeTranscriptParser {
     s.requests += 1;
     for (const key of Object.keys(delta) as Array<keyof TokenUsage>) s.totals[key] += delta[key];
     const usd = recordRequest(s.byModel, model, delta);
-    addToDay(s.byDay, localDay(timestamp), usd, delta.totalTokens);
+    addToDay(s.byDay, localDay(timestamp), usd, delta.totalTokens, modelKey(model));
   }
 
   // A compaction leaves a compact_boundary system record and then the summary

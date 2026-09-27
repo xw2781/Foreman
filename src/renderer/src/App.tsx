@@ -54,6 +54,7 @@ function useBootstrap() {
         call('processes.external').then((externals) => set({ externals })).catch(() => {});
         call('usage.report').then((usage) => set({ usage })).catch(() => {});
         call('update.status').then((update) => set({ update })).catch(() => {});
+        call('github.status').then((github) => set({ github })).catch(() => {});
       } catch (error) {
         store().toast('error', errorMessage(error));
       }
@@ -79,6 +80,7 @@ function useBootstrap() {
       listen('externals', (externals) => set({ externals })),
       listen('settings', (settings) => set({ settings })),
       listen('update', (update) => set({ update })),
+      listen('github', (github) => set({ github })),
       listen('toast', (t) => store().toast(t.kind, t.message)),
       listen('navigate', ({ view, agentId }) => {
         set({ view: view as View });

@@ -129,6 +129,11 @@ export function normalizeModelId(model: string | null | undefined): string {
     .replace(/-\d{4}-\d{2}-\d{2}$/, '');
 }
 
+/** The key usage is recorded under: the normalized id, or `unknown`. */
+export function modelKey(model: string | null | undefined): string {
+  return normalizeModelId(model) || 'unknown';
+}
+
 export function rateForModel(model: string | null | undefined): Rate | null {
   const id = normalizeModelId(model);
   if (!id) return null;
@@ -210,7 +215,7 @@ export function recordRequest(
   usage: TokenUsage,
   longContext = false
 ): number | null {
-  const key = normalizeModelId(model) || 'unknown';
+  const key = modelKey(model);
   let entry = byModel.get(key);
   if (!entry) {
     entry = { usage: emptyUsage(), usd: 0, priced: true, requests: 0 };

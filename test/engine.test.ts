@@ -62,6 +62,34 @@ describe('usage report', () => {
     expect(report.sessions.filter((s) => s.provider === 'claude')).toHaveLength(1);
   });
 
+  it('keeps each day split by model, so the page can filter by it', async () => {
+    const stamp = new Date().toISOString();
+    const claudeDir = path.join(root, 'claude');
+    const assistant = (id: string, model: string, input: number) => ({
+      type: 'assistant', cwd: 'C:\work', sessionId: SESSION, requestId: id, timestamp: stamp,
+      message: { id, model, stop_reason: 'end_turn', usage: { input_tokens: input, output_tokens: 0 } }
+    });
+    write(path.join(claudeDir, 'projects', 'C--work', `${SESSION}.jsonl`), [
+      assistant('r1', 'claude-sonnet-5', 1_000_000),
+      assistant('r2', 'claude-sonnet-5', 500_000),
+      assistant('r3', 'claude-made-up-9', 10)
+    ]);
+    const engine = new TelemetryEngine(null, () => {}, { machine: { id: 'pc', name: 'PC' } });
+    engine.configure([{ id: 'claude-a', provider: 'claude', configDir: claudeDir }], { usageDays: 7 });
+    const report = await engine.usageReport(true);
+    const today = report.days[report.days.length - 1].date;
+    const facts = report.facts.map(({ date, ...rest }) => ({ today: date === today, ...rest }));
+    expect(facts).toEqual(
+      expect.arrayContaining([
+        { today: true, provider: 'claude', profileId: 'claude-a', machineId: 'pc', model: 'claude-sonnet-5', usd: expect.closeTo(3, 6), tokens: 1_500_000, requests: 2 },
+        // No list price: counted, but not as spend.
+        { today: true, provider: 'claude', profileId: 'claude-a', machineId: 'pc', model: 'claude-made-up-9', usd: null, tokens: 10, requests: 1 }
+      ])
+    );
+    expect(facts).toHaveLength(2);
+    expect(report.sessions[0].models.sort()).toEqual(['claude-made-up-9', 'claude-sonnet-5']);
+  });
+
   it('finds the rollout a freshly launched Codex agent wrote', async () => {
     const codexDir = path.join(root, 'codex');
     const now = new Date();

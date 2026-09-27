@@ -4,7 +4,7 @@ A Windows desktop app for running **Claude Code** and **Codex** side by side:
 
 - **Agents** — chat with an agent (the default) or run it in a real terminal (the CLI's own UI), with live status: working, needs input, idle, done. The chat streams replies, shows each tool step with its output and diffs, and asks for approvals inline; typing into a finished chat continues it, and a Chat ⇄ Terminal switch hands the same conversation between the two. Headless background tasks, renaming, stopping and resuming work as before.
 - **Task Manager** — every agent the app started, with status, account, model, context usage, cost, CPU and memory; plus the Claude Code / Codex processes running elsewhere (VS Code, the desktop apps, terminals), which you can end.
-- **Usage & Cost** — API-equivalent cost of every session on the machine, per day, per tool, per account and per model, with context usage per session. Any session (including ones from VS Code) can be resumed in the app.
+- **Usage & Cost** — API-equivalent cost of every session on the machine, per day, per tool, per account and per model, with context usage per session. Any session (including ones from VS Code) can be resumed in the app. Usage from your other computers joins in through a private GitHub repo (*Connect GitHub*) or an exported file; only per-session totals and titles travel, never conversations.
 - **Accounts** — two (or more) accounts per tool, switchable per agent, with each account's 5-hour and weekly plan usage. Accounts can run at the same time.
 - **Computer Use** — a skill that lets Claude Code and Codex see the screen and drive Windows apps with their own on-screen pointer, with a live view of what the agent is doing and a one-click (or Esc) take-back.
 

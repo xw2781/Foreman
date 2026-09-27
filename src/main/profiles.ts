@@ -97,6 +97,10 @@ export class ProfileService {
     return this.list().filter((p) => p.provider === provider);
   }
 
+  identity(id: string): ProfileIdentity | null {
+    return this.identities.get(id) ?? null;
+  }
+
   views(active: Record<Provider, string>): ProfileView[] {
     return this.list().map((profile) => ({
       ...profile,

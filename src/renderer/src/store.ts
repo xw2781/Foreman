@@ -8,6 +8,7 @@ import type {
   LaunchOptions,
   ProfileView,
   Toast,
+  GitHubSyncStatus,
   UpdateStatus,
   UsageReport
 } from '@shared/types';
@@ -31,6 +32,7 @@ interface AppState {
   usageProgress: number;
   computerUse: ComputerUseStatus | null;
   update: UpdateStatus | null;
+  github: GitHubSyncStatus | null;
   toasts: ToastItem[];
   launcher: Partial<LaunchOptions> | null;
   /** The details panel beside the agent, when the window is wide enough to dock it. */
@@ -60,6 +62,7 @@ export const useApp = create<AppState>((set, get) => ({
   usageProgress: 0,
   computerUse: null,
   update: null,
+  github: null,
   toasts: [],
   launcher: null,
   showDetails: true,

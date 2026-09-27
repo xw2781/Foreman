@@ -96,22 +96,74 @@ export function localDay(timestamp: string | number | null | undefined): string 
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
-export interface DayAccumulator {
-  usd: number;
+/** One model's share of a day; usd is null for a model with no list price. */
+export interface ModelDay {
+  usd: number | null;
   tokens: number;
   requests: number;
 }
 
-export function addToDay(byDay: Map<string, DayAccumulator>, day: string | null, usd: number | null, tokens: number) {
+export interface DayAccumulator {
+  usd: number;
+  tokens: number;
+  requests: number;
+  /** By model id; missing in files from Foreman builds before it was recorded. */
+  models?: Record<string, ModelDay>;
+}
+
+export function addToDay(byDay: Map<string, DayAccumulator>, day: string | null, usd: number | null, tokens: number, model: string) {
   if (!day) return;
   let entry = byDay.get(day);
   if (!entry) {
-    entry = { usd: 0, tokens: 0, requests: 0 };
+    entry = { usd: 0, tokens: 0, requests: 0, models: {} };
     byDay.set(day, entry);
   }
   entry.usd += usd ?? 0;
   entry.tokens += tokens;
   entry.requests += 1;
+  const models = (entry.models ??= {});
+  const row = (models[model] ??= { usd: usd === null ? null : 0, tokens: 0, requests: 0 });
+  if (usd !== null) row.usd = (row.usd ?? 0) + usd;
+  row.tokens += tokens;
+  row.requests += 1;
+}
+
+/** Adds one day into another, per model too. */
+export function mergeDay(target: DayAccumulator, day: DayAccumulator) {
+  target.usd += day.usd;
+  target.tokens += day.tokens;
+  target.requests += day.requests;
+  if (!day.models) return;
+  const models = (target.models ??= {});
+  for (const [model, entry] of Object.entries(day.models)) {
+    const row = (models[model] ??= { usd: entry.usd === null ? null : 0, tokens: 0, requests: 0 });
+    if (entry.usd !== null) row.usd = (row.usd ?? 0) + entry.usd;
+    row.tokens += entry.tokens;
+    row.requests += entry.requests;
+  }
+}
+
+/**
+ * A day's usage by model. Days recorded without the split (other computers on
+ * older builds) are divided in proportion to the session's per-model totals.
+ */
+export function modelsOfDay(day: DayAccumulator, sessionModels: Record<string, ModelDay>): Array<[string, ModelDay]> {
+  if (day.models && Object.keys(day.models).length > 0) return Object.entries(day.models);
+  const entries = Object.entries(sessionModels);
+  if (entries.length === 0) return [['unknown', { usd: day.usd, tokens: day.tokens, requests: day.requests }]];
+  const total = (pick: (m: ModelDay) => number) => entries.reduce((sum, [, m]) => sum + pick(m), 0);
+  const usdTotal = total((m) => m.usd ?? 0);
+  const tokenTotal = total((m) => m.tokens);
+  const requestTotal = total((m) => m.requests);
+  const share = (part: number, whole: number) => (whole > 0 ? part / whole : 1 / entries.length);
+  return entries.map(([model, m]) => [
+    model,
+    {
+      usd: m.usd === null ? null : day.usd * share(m.usd, usdTotal),
+      tokens: day.tokens * share(m.tokens, tokenTotal),
+      requests: day.requests * share(m.requests, requestTotal)
+    }
+  ]);
 }
 
 const TITLE_MAX = 60;

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { LimitWindow, ProfileLimits, TokenUsage } from '../../shared/types';
-import { LONG_CONTEXT_THRESHOLD, emptyUsage, recordRequest, type ModelAccumulator } from './pricing';
+import { LONG_CONTEXT_THRESHOLD, emptyUsage, modelKey, recordRequest, type ModelAccumulator } from './pricing';
 import {
   IncrementalLineReader,
   addToDay,
@@ -278,7 +278,7 @@ export class CodexRolloutParser {
     const longContext = (last?.inputTokens ?? 0) > LONG_CONTEXT_THRESHOLD;
     s.requests += 1;
     const usd = recordRequest(s.byModel, s.model, delta, longContext);
-    addToDay(s.byDay, localDay(timestamp), usd, delta.totalTokens);
+    addToDay(s.byDay, localDay(timestamp), usd, delta.totalTokens, modelKey(s.model));
   }
 }
 

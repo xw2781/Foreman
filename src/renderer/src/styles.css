@@ -527,6 +527,14 @@ button {
   gap: 6px;
   align-items: center;
 }
+/* Controls drop below the title instead of squeezing it. */
+.card-header.wrap {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+.card-header.wrap h2 {
+  white-space: nowrap;
+}
 .section {
   margin-top: 18px;
 }
@@ -1090,6 +1098,29 @@ table.table {
   align-items: center;
   gap: 6px;
 }
+.legend .legend-value {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.page-header .action-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Usage page filters: sized to their label, tinted while they narrow the page. */
+.sel.field.filter {
+  width: auto;
+}
+.sel.field.filter.on {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  background: var(--accent-soft);
+}
+.sel.field.filter.on .sel-icon {
+  color: var(--accent);
+}
 .tooltip {
   position: absolute;
   pointer-events: none;
@@ -1145,6 +1176,31 @@ table.table {
 .hbar-row .value {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+.hbar-row.with-action {
+  grid-template-columns: minmax(120px, 190px) 1fr 70px 26px;
+}
+
+/* GitHub device sign-in code and sync errors, above the Computers list. */
+.device-code {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+  line-height: 1.6;
+}
+.device-code .code {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.device-code.error {
+  color: var(--critical);
 }
 
 /* ---------------------------------------------------------------- dialogs */

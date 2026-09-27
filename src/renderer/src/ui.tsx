@@ -39,7 +39,7 @@ export function StatusPill({ status, detail }: { status: AgentStatus; detail?: s
   );
 }
 
-export function AccountChip({ label, color }: { label: string; color: string }) {
+export function AccountChip({ label, color }: { label: string; color: string | null }) {
   return (
     <span className="account-chip">
       <span className="swatch" style={{ background: colorVar(color) }} />

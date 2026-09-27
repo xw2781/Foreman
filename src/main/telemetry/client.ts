@@ -1,8 +1,26 @@
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
-import type { PricingStatus, ProfileLimits, Provider, SessionTelemetry, UsageReport } from '../../shared/types';
+import type {
+  PricingStatus,
+  ProfileLimits,
+  Provider,
+  SessionTelemetry,
+  UsageExportResult,
+  UsageImportResult,
+  UsageReport
+} from '../../shared/types';
 import type { EngineProfile, EngineSettings } from './engine';
+import type { MachineInfo } from './usageTransfer';
 import type { HistoryEntry } from '../chat/history';
+
+export interface TelemetryPaths {
+  cachePath: string;
+  pricingPath: string;
+  /** Other computers' usage, imported from files or synced from GitHub. */
+  importedPath: string;
+  machine: MachineInfo;
+  appVersion: string;
+}
 
 /** Promise-based handle on the telemetry worker thread. */
 export class TelemetryClient {
@@ -11,8 +29,8 @@ export class TelemetryClient {
   private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   onProgress: (scanned: number) => void = () => {};
 
-  constructor(outDir: string, cachePath: string, pricingPath: string) {
-    this.worker = new Worker(path.join(outDir, 'telemetryWorker.js'), { workerData: { cachePath, pricingPath } });
+  constructor(outDir: string, options: TelemetryPaths) {
+    this.worker = new Worker(path.join(outDir, 'telemetryWorker.js'), { workerData: options });
     this.worker.on('message', (message: any) => {
       if (message.event === 'progress') {
         this.onProgress(message.scanned);
@@ -77,6 +95,27 @@ export class TelemetryClient {
   /** A past conversation rebuilt from its session file. */
   chatHistory(provider: Provider, filePath: string) {
     return this.call<HistoryEntry[]>('chatHistory', provider, filePath);
+  }
+
+  /** This computer's whole usage history as a usage file, folded into its previous upload. */
+  localUsage(previous: string | null) {
+    return this.call<{ content: string; digest: string; sessions: number }>('localUsage', previous);
+  }
+
+  exportUsage(filePath: string) {
+    return this.call<UsageExportResult>('exportUsage', filePath);
+  }
+
+  importUsageFiles(filePaths: string[]) {
+    return this.call<UsageImportResult>('importUsageFiles', filePaths);
+  }
+
+  importUsage(contents: string[], names?: string[]) {
+    return this.call<UsageImportResult>('importUsage', contents, names);
+  }
+
+  forgetMachine(id: string) {
+    return this.call<void>('forgetMachine', id);
   }
 
   /** Re-reads pricing.json; the next usage report re-prices every session. */

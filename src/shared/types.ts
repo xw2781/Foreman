@@ -362,6 +362,24 @@ export interface UsageDay {
   date: string; // YYYY-MM-DD, local time
   byProvider: Record<Provider, number>;
   byProfile: Record<string, number>;
+  byMachine: Record<string, number>;
+  tokens: number;
+  requests: number;
+}
+
+/**
+ * Usage of one account's model on one computer on one day: the finest split the
+ * report keeps, so the Usage page can filter and regroup it any way.
+ */
+export interface UsageFact {
+  date: string;
+  provider: Provider;
+  profileId: string;
+  machineId: string;
+  /** Normalized model id (`unknown` when the session didn't name one). */
+  model: string;
+  /** Null when the model has no list price. */
+  usd: number | null;
   tokens: number;
   requests: number;
 }
@@ -370,10 +388,16 @@ export interface UsageSessionRow {
   provider: Provider;
   profileId: string;
   sessionId: string;
+  /** Empty for a session imported from another computer. */
   filePath: string;
+  /** The computer the session ran on; null for this one. */
+  machineId: string | null;
+  machineName: string | null;
   title: string | null;
   cwd: string | null;
   model: string | null;
+  /** Every model the session used. */
+  models: string[];
   startedAt: string | null;
   updatedAt: string | null;
   costUsd: number | null;
@@ -395,12 +419,60 @@ export interface UsageModelRow {
 export interface UsageReport {
   generatedAt: string;
   days: UsageDay[];
+  /** Every day in range by computer, account and model. */
+  facts: UsageFact[];
   sessions: UsageSessionRow[];
   models: UsageModelRow[];
   totals: { today: number; week: number; month: number; range: number };
   scanning: boolean;
   scannedFiles: number;
   pricingDate: string;
+  /** This computer first, then every computer whose usage was imported or synced. */
+  machines: UsageMachine[];
+  /** Accounts on other computers that match no account here (by email). */
+  remoteAccounts: UsageRemoteAccount[];
+}
+
+export interface UsageMachine {
+  id: string;
+  name: string;
+  local: boolean;
+  /** When the computer last read its session files. */
+  dataAt: string | null;
+}
+
+export interface UsageRemoteAccount {
+  /** `remote:…`, the key used in UsageDay.byProfile and UsageSessionRow.profileId. */
+  id: string;
+  provider: Provider;
+  label: string;
+}
+
+export interface UsageImportResult {
+  machines: number;
+  added: number;
+  updated: number;
+  /** Files that held only this computer's own usage. */
+  ownOnly: number;
+}
+
+export interface UsageExportResult {
+  file: string;
+  machines: number;
+  sessions: number;
+}
+
+export interface GitHubSyncStatus {
+  /** False when this build has no GitHub OAuth app client ID. */
+  available: boolean;
+  login: string | null;
+  /** owner/name of the private repo holding one usage file per computer. */
+  repo: string | null;
+  /** Device sign-in waiting for the user to enter the code on github.com. */
+  pending: { userCode: string; verificationUri: string; expiresAt: string } | null;
+  syncing: boolean;
+  lastSyncAt: string | null;
+  lastError: string | null;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,7 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, Notification, shell, screen } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, Notification, safeStorage, shell, screen } from 'electron';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
   AGENT_MODES,
@@ -22,7 +24,8 @@ import { ComputerUseService } from './computerUse';
 import { forgetCli, locateCli } from './cliLocator';
 import { logoutCommand } from './commands';
 import { UpdateService } from './updater';
-import { HOME, JsonStore, cleanEnv, exists, profilesRoot, run } from './util';
+import { GitHubSync } from './githubSync';
+import { HOME, JsonStore, cleanEnv, exists, profilesRoot, readJsonFile, run, writeJsonFileAtomic } from './util';
 
 app.setAppUserModelId('com.agenttaskcenter.app');
 if (process.env.ATC_CAPTURE_DIR) {
@@ -91,7 +94,26 @@ const profiles = new ProfileService(userData);
 // Editable model prices; the main process prices chat turns, the worker everything else.
 const pricingPath = path.join(userData, 'pricing.json');
 let pricing = loadPricingFile(pricingPath);
-const telemetry = new TelemetryClient(__dirname, path.join(userData, 'usage-cache.json'), pricingPath);
+const machine = machineIdentity();
+const telemetry = new TelemetryClient(__dirname, {
+  cachePath: path.join(userData, 'usage-cache.json'),
+  pricingPath,
+  importedPath: path.join(userData, 'usage-imported.json'),
+  machine,
+  appVersion: app.getVersion()
+});
+const githubSync = new GitHubSync(path.join(userData, 'github-sync.json'), {
+  fetch: (url, init) => net.fetch(url, init),
+  secrets: {
+    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (value) => safeStorage.encryptString(value).toString('base64'),
+    decrypt: (value) => safeStorage.decryptString(Buffer.from(value, 'base64'))
+  },
+  telemetry,
+  machineId: machine.id,
+  machineName: machine.name,
+  openExternal: (url) => void shell.openExternal(url)
+});
 const hooks = new HookServer(path.join(userData, 'agent-settings'));
 const processes = new ProcessMonitor();
 const computerUse = new ComputerUseService(exists(skillSource) ? skillSource : null);
@@ -123,15 +145,36 @@ profiles.onChanged = () => {
   configureTelemetry();
 };
 
+/** Tells this computer's usage apart from other computers' (imported or synced); kept for the life of the data folder. */
+function machineIdentity() {
+  const file = path.join(userData, 'machine.json');
+  let id = readJsonFile<{ id?: string }>(file)?.id;
+  if (!id) {
+    id = randomUUID();
+    writeJsonFileAtomic(file, { id });
+  }
+  return { id, name: os.hostname() };
+}
+
 function configureTelemetry() {
   const s = settings();
   return telemetry.configure(
-    profiles.list().map((p) => ({ id: p.id, provider: p.provider, configDir: p.configDir })),
+    profiles.list().map((p) => ({
+      id: p.id,
+      provider: p.provider,
+      configDir: p.configDir,
+      label: p.label,
+      email: profiles.identity(p.id)?.email ?? p.emailHint ?? null
+    })),
     { claudeContextWindow: s.claudeContextWindow, contextWindowOverrides: s.contextWindowOverrides, usageDays: s.usageDays }
   );
 }
 
 telemetry.onProgress = (scanned) => emit('usage-progress', scanned);
+githubSync.onChanged = (status) => emit('github', status);
+githubSync.onImported = () => {
+  telemetry.quickReport().then((report) => emit('usage', report)).catch(() => {});
+};
 agents.onData = (id, data, end) => emit('agent-data', { id, data, end });
 agents.onChat = (id, items, reset) => emit('chat', { id, items, reset });
 hooks.onStatusLine = (id, payload) => agents.handleStatusLine(id, payload);
@@ -360,6 +403,47 @@ function registerIpc() {
     const report = await telemetry.usageReport(Boolean(force));
     return report;
   });
+  handle('usage.export', async () => {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const result = await dialog.showSaveDialog(mainWindow!, {
+      title: 'Export usage',
+      defaultPath: path.join(app.getPath('documents'), `foreman-usage-${machine.name.replace(/[^\w.-]+/g, '-')}-${stamp}.json`),
+      filters: [{ name: 'Foreman usage', extensions: ['json'] }]
+    });
+    if (result.canceled || !result.filePath) return null;
+    return telemetry.exportUsage(result.filePath);
+  });
+  handle('usage.import', async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      title: 'Import usage',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Foreman usage', extensions: ['json'] }]
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const outcome = await telemetry.importUsageFiles(result.filePaths);
+    emit('usage', await telemetry.quickReport());
+    return outcome;
+  });
+  handle('usage.forgetMachine', async (id) => {
+    await telemetry.forgetMachine(id);
+    const report = await telemetry.quickReport();
+    emit('usage', report);
+    return report;
+  });
+  handle('github.status', () => githubSync.status());
+  handle('github.connect', () => githubSync.connect());
+  handle('github.cancel', () => {
+    githubSync.cancel();
+    return githubSync.status();
+  });
+  handle('github.disconnect', () => {
+    githubSync.disconnect();
+    return githubSync.status();
+  });
+  handle('github.sync', async () => {
+    await githubSync.sync();
+    return githubSync.status();
+  });
   handle('pricing.status', () => pricing);
   handle('pricing.edit', async () => {
     seedPricingFile(pricingPath);
@@ -440,6 +524,13 @@ function startLoops() {
     setTimeout(usageLoop, 90_000);
   };
   setTimeout(usageLoop, 3000);
+
+  // GitHub usage sync: shortly after start (the first scan has run by then), then every few hours.
+  const syncLoop = async () => {
+    if (githubSync.connected) await githubSync.sync().catch(() => {});
+    setTimeout(syncLoop, 4 * 60 * 60_000);
+  };
+  setTimeout(syncLoop, 60_000);
 
   // An agent or the user may edit pricing.json at any time; polling survives editors that replace the file.
   fs.watchFile(pricingPath, { interval: 2000 }, (current, previous) => {

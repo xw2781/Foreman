@@ -10,6 +10,7 @@ import type {
   ComputerUseStatus,
   EnvironmentInfo,
   ExternalAgentProcess,
+  GitHubSyncStatus,
   LaunchOptions,
   PricingStatus,
   NewProfileInput,
@@ -17,6 +18,8 @@ import type {
   Provider,
   Toast,
   UpdateStatus,
+  UsageExportResult,
+  UsageImportResult,
   UsageReport
 } from './types';
 
@@ -74,6 +77,18 @@ export interface InvokeMap {
   'processes.kill': (pid: number) => void;
 
   'usage.report': (force?: boolean) => UsageReport;
+  /** Asks where to save; null when cancelled. Carries this computer's whole history plus every imported computer's. */
+  'usage.export': () => UsageExportResult | null;
+  /** Asks for usage files and merges them; null when cancelled. */
+  'usage.import': () => UsageImportResult | null;
+  'usage.forgetMachine': (id: string) => UsageReport;
+
+  'github.status': () => GitHubSyncStatus;
+  /** Starts device sign-in and opens github.com/login/device; progress arrives as `github` events. */
+  'github.connect': () => GitHubSyncStatus;
+  'github.cancel': () => GitHubSyncStatus;
+  'github.disconnect': () => GitHubSyncStatus;
+  'github.sync': () => GitHubSyncStatus;
   'pricing.status': () => PricingStatus;
   /** Creates the editable pricing.json if needed and opens it. */
   'pricing.edit': () => PricingStatus;
@@ -109,6 +124,7 @@ export interface EventMap {
   settings: AppSettings;
   update: UpdateStatus;
   pricing: PricingStatus;
+  github: GitHubSyncStatus;
 }
 
 export type EventName = keyof EventMap;
@@ -122,13 +138,14 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'agents.rename', 'agents.resume', 'agents.buffer',
   'chat.items', 'chat.send', 'chat.interrupt', 'chat.respond', 'chat.configure', 'chat.commands', 'chat.queued',
   'processes.external', 'processes.kill',
-  'usage.report', 'pricing.status', 'pricing.edit',
+  'usage.report', 'usage.export', 'usage.import', 'usage.forgetMachine', 'pricing.status', 'pricing.edit',
+  'github.status', 'github.connect', 'github.cancel', 'github.disconnect', 'github.sync',
   'computerUse.status', 'computerUse.command', 'computerUse.setPolicy', 'computerUse.install', 'computerUse.image',
   'update.status', 'update.check', 'update.install'
 ];
 
 export const EVENT_NAMES: EventName[] = [
-  'agents', 'agent-data', 'chat', 'profiles', 'usage', 'usage-progress', 'computer-use', 'externals', 'navigate', 'toast', 'settings', 'update', 'pricing'
+  'agents', 'agent-data', 'chat', 'profiles', 'usage', 'usage-progress', 'computer-use', 'externals', 'navigate', 'toast', 'settings', 'update', 'pricing', 'github'
 ];
 
 /** Fire-and-forget channels (no reply), for the hot path of terminal I/O. */

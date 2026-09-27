@@ -1,11 +1,18 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type {
   ProfileLimits,
   Provider,
   SessionTelemetry,
   UsageDay,
+  UsageFact,
+  UsageExportResult,
+  UsageImportResult,
+  UsageMachine,
   UsageModelRow,
+  UsageRemoteAccount,
   UsageReport,
   UsageSessionRow
 } from '../../shared/types';
@@ -18,12 +25,32 @@ import {
   type ClaudeTranscriptState
 } from './claudeTranscript';
 import { CodexRolloutParser, codexTitle, type CodexRolloutState } from './codexRollout';
-import { localDay, object, nonNegative, parseTime, text, type DayAccumulator } from './jsonl';
+import { localDay, modelsOfDay, object, nonNegative, parseTime, text, type DayAccumulator, type ModelDay } from './jsonl';
+import {
+  mergeMachine,
+  parseUsageFile,
+  sessionKey,
+  sessionsFromSummaries,
+  usageFile,
+  type ExportedSession,
+  type MachineInfo,
+  type MachineUsage
+} from './usageTransfer';
 
 export interface EngineProfile {
   id: string;
   provider: Provider;
   configDir: string;
+  label?: string;
+  /** Matches an account on another computer to this one. */
+  email?: string | null;
+}
+
+export interface EngineOptions {
+  /** Usage of other computers, imported from files or synced. */
+  importedPath?: string | null;
+  machine?: MachineInfo;
+  appVersion?: string;
 }
 
 export interface EngineSettings {
@@ -59,7 +86,8 @@ export interface FileSummary {
 }
 
 const ACTIVE_WRITE_MS = 45_000;
-const CACHE_VERSION = 4;
+// 5: days split by model.
+const CACHE_VERSION = 5;
 
 type Parser = ClaudeTranscriptParser | CodexRolloutParser;
 
@@ -71,11 +99,19 @@ export class TelemetryEngine {
   private cacheDirty = false;
   private scanPromise: Promise<void> | null = null;
   private lastScanAt = 0;
+  private imported = new Map<string, MachineUsage>();
+  private importedPath: string | null;
+  private machine: MachineInfo;
+  private appVersion: string;
   scanning = false;
   scannedFiles = 0;
 
-  constructor(private cachePath: string | null, private onProgress: (scanned: number) => void = () => {}) {
+  constructor(private cachePath: string | null, private onProgress: (scanned: number) => void = () => {}, options: EngineOptions = {}) {
+    this.importedPath = options.importedPath ?? null;
+    this.machine = options.machine ?? { id: 'this-computer', name: os.hostname() };
+    this.appVersion = options.appVersion ?? '';
     this.loadCache();
+    this.loadImported();
   }
 
   configure(profiles: EngineProfile[], settings: Partial<EngineSettings>) {
@@ -399,10 +435,19 @@ export class TelemetryEngine {
     return known;
   }
 
-  private async scan() {
+  /** Reads every session file however old: exports carry the whole history, not just the chart's range. */
+  private async scanAll() {
+    while (this.scanning && this.scanPromise) await this.scanPromise.catch(() => {});
+    this.scanPromise = this.scan(0).finally(() => {
+      this.lastScanAt = Date.now();
+    });
+    await this.scanPromise;
+  }
+
+  private async scan(cutoffMs?: number) {
     this.scanning = true;
     this.scannedFiles = 0;
-    const cutoff = Date.now() - Math.max(1, this.settings.usageDays) * 86_400_000;
+    const cutoff = cutoffMs ?? Date.now() - Math.max(1, this.settings.usageDays) * 86_400_000;
     try {
       for (const profile of this.profiles) {
         const roots = profile.provider === 'claude'
@@ -513,6 +558,104 @@ export class TelemetryEngine {
     this.cacheDirty = true;
   }
 
+  // -------------------------------------------------------------------------
+  // Usage of other computers
+  // -------------------------------------------------------------------------
+
+  /** This computer's usage over its whole history, folded into `previous` (its last upload) so nothing it held is lost. */
+  async localUsage(previous: string | null): Promise<{ content: string; digest: string; sessions: number }> {
+    await this.scanAll();
+    const profileIds = new Set(this.profiles.map((p) => p.id));
+    let machine: MachineUsage = {
+      ...this.machine,
+      dataAt: new Date().toISOString(),
+      pricingDate: currentPricing().pricingDate,
+      accounts: this.profiles.map((p) => ({ id: p.id, provider: p.provider, label: p.label ?? p.id, email: p.email ?? null })),
+      sessions: sessionsFromSummaries(this.summaries.values(), profileIds)
+    };
+    if (previous) {
+      let older: MachineUsage | undefined;
+      try {
+        older = parseUsageFile(previous).machines.find((m) => m.id === this.machine.id);
+      } catch {
+        // A damaged upload is simply replaced.
+      }
+      if (older) machine = mergeMachine(older, machine).machine;
+    }
+    machine.sessions.sort((a, b) => sessionKey(a).localeCompare(sessionKey(b)));
+    const digest = crypto.createHash('sha256').update(JSON.stringify([machine.name, machine.accounts, machine.sessions])).digest('hex');
+    return { content: JSON.stringify(usageFile([machine], { ...this.machine, appVersion: this.appVersion })), digest, sessions: machine.sessions.length };
+  }
+
+  /** Writes this computer's usage and every imported computer's to one file that can be imported elsewhere. */
+  async exportUsage(filePath: string): Promise<UsageExportResult> {
+    const local = parseUsageFile((await this.localUsage(null)).content).machines;
+    const machines = [...local, ...[...this.imported.values()].filter((m) => m.id !== this.machine.id)];
+    await fs.promises.writeFile(filePath, JSON.stringify(usageFile(machines, { ...this.machine, appVersion: this.appVersion })), 'utf8');
+    return { file: filePath, machines: machines.length, sessions: machines.reduce((sum, m) => sum + m.sessions.length, 0) };
+  }
+
+  async importUsageFiles(filePaths: string[]): Promise<UsageImportResult> {
+    const contents: string[] = [];
+    for (const filePath of filePaths) {
+      try {
+        contents.push(await fs.promises.readFile(filePath, 'utf8'));
+      } catch (error) {
+        throw new Error(`Could not read ${path.basename(filePath)}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return this.importUsage(contents, filePaths.map((f) => path.basename(f)));
+  }
+
+  /** Merges usage files; this computer's own entries are skipped (its session files are the fresher source). */
+  importUsage(contents: string[], names: string[] = []): UsageImportResult {
+    const files = contents.map((content, i) => {
+      try {
+        return parseUsageFile(content);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(names[i] ? `${names[i]}: ${message}` : message);
+      }
+    });
+    const result: UsageImportResult = { machines: 0, added: 0, updated: 0, ownOnly: 0 };
+    const touched = new Set<string>();
+    for (const file of files) {
+      const others = file.machines.filter((m) => m.id !== this.machine.id);
+      if (others.length === 0) result.ownOnly += 1;
+      for (const incoming of others) {
+        const merged = mergeMachine(this.imported.get(incoming.id), incoming);
+        this.imported.set(incoming.id, merged.machine);
+        touched.add(incoming.id);
+        result.added += merged.added;
+        result.updated += merged.updated;
+      }
+    }
+    result.machines = touched.size;
+    if (touched.size > 0) this.saveImported();
+    return result;
+  }
+
+  forgetMachine(id: string) {
+    if (this.imported.delete(id)) this.saveImported();
+  }
+
+  private loadImported() {
+    if (!this.importedPath) return;
+    try {
+      for (const machine of parseUsageFile(fs.readFileSync(this.importedPath, 'utf8')).machines) this.imported.set(machine.id, machine);
+    } catch {
+      // Nothing imported yet.
+    }
+  }
+
+  private saveImported() {
+    if (!this.importedPath) return;
+    const tmp = `${this.importedPath}.tmp`;
+    fs.mkdirSync(path.dirname(this.importedPath), { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify(usageFile([...this.imported.values()], { ...this.machine, appVersion: this.appVersion })), 'utf8');
+    fs.renameSync(tmp, this.importedPath);
+  }
+
   private buildReport(): UsageReport {
     const now = Date.now();
     const rangeDays = Math.max(1, this.settings.usageDays);
@@ -522,8 +665,9 @@ export class TelemetryEngine {
       if (key) dayKeys.push(key);
     }
     const dayIndex = new Map<string, UsageDay>(
-      dayKeys.map((date) => [date, { date, byProvider: { claude: 0, codex: 0 }, byProfile: {}, tokens: 0, requests: 0 }])
+      dayKeys.map((date) => [date, { date, byProvider: { claude: 0, codex: 0 }, byProfile: {}, byMachine: {}, tokens: 0, requests: 0 }])
     );
+    const facts = new Map<string, UsageFact>();
     const sessions = new Map<string, UsageSessionRow>();
     const models = new Map<string, UsageModelRow>();
     const profileIds = new Set(this.profiles.map((p) => p.id));
@@ -539,8 +683,10 @@ export class TelemetryEngine {
         if (!bucket) continue;
         bucket.byProvider[summary.provider] += day.usd;
         bucket.byProfile[summary.profileId] = (bucket.byProfile[summary.profileId] ?? 0) + day.usd;
+        bucket.byMachine[this.machine.id] = (bucket.byMachine[this.machine.id] ?? 0) + day.usd;
         bucket.tokens += day.tokens;
         bucket.requests += day.requests;
+        addFacts(facts, date, summary.provider, summary.profileId, this.machine.id, day, summary.byModel);
         rangeTokens += day.tokens;
         rangeRequests += day.requests;
       }
@@ -568,9 +714,12 @@ export class TelemetryEngine {
           profileId: summary.profileId,
           sessionId: summary.sessionId,
           filePath: summary.filePath,
+          machineId: null,
+          machineName: null,
           title: summary.isSubagent ? null : summary.title,
           cwd: summary.cwd,
           model: summary.isSubagent ? null : summary.model,
+          models: Object.keys(summary.byModel),
           startedAt: summary.startedAt,
           updatedAt: summary.updatedAt ?? new Date(summary.mtimeMs).toISOString(),
           costUsd: sessionPriced ? sessionUsd : null,
@@ -585,6 +734,7 @@ export class TelemetryEngine {
         if (sessionPriced) row.costUsd = (row.costUsd ?? 0) + sessionUsd;
         row.tokens += summary.tokens;
         row.requests += summary.requests;
+        row.models = [...new Set([...row.models, ...Object.keys(summary.byModel)])];
         if (!summary.isSubagent) {
           row.title = summary.title;
           row.model = summary.model;
@@ -599,6 +749,8 @@ export class TelemetryEngine {
       }
     }
 
+    const remoteAccounts = this.addImported(dayIndex, facts, sessions, models, rangeDays, now);
+
     const days = [...dayIndex.values()];
     const sum = (list: UsageDay[]) => list.reduce((total, d) => total + d.byProvider.claude + d.byProvider.codex, 0);
     const sessionRows = [...sessions.values()]
@@ -608,6 +760,7 @@ export class TelemetryEngine {
     return {
       generatedAt: new Date(now).toISOString(),
       days,
+      facts: [...facts.values()],
       sessions: sessionRows,
       models: [...models.values()].sort((a, b) => (b.usd ?? 0) - (a.usd ?? 0)),
       totals: {
@@ -618,8 +771,109 @@ export class TelemetryEngine {
       },
       scanning: this.scanning,
       scannedFiles: this.scannedFiles,
-      pricingDate: currentPricing().pricingDate
+      pricingDate: currentPricing().pricingDate,
+      machines: [
+        { ...this.machine, local: true, dataAt: new Date(now).toISOString() },
+        ...[...this.imported.values()]
+          .filter((m) => m.id !== this.machine.id)
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((m): UsageMachine => ({ id: m.id, name: m.name, local: false, dataAt: m.dataAt || null }))
+      ],
+      remoteAccounts
     };
+  }
+
+  /**
+   * Adds other computers' sessions to the report. An account there counts as the
+   * account here with the same email; the rest are listed as remote accounts.
+   */
+  private addImported(
+    dayIndex: Map<string, UsageDay>,
+    facts: Map<string, UsageFact>,
+    sessions: Map<string, UsageSessionRow>,
+    models: Map<string, UsageModelRow>,
+    rangeDays: number,
+    now: number
+  ): UsageRemoteAccount[] {
+    const localByEmail = new Map<string, string>();
+    for (const profile of this.profiles) {
+      if (profile.email) localByEmail.set(`${profile.provider}:${profile.email.toLowerCase()}`, profile.id);
+    }
+    const remote = new Map<string, UsageRemoteAccount>();
+    for (const machine of this.imported.values()) {
+      if (machine.id === this.machine.id) continue;
+      const accounts = new Map(machine.accounts.map((a) => [a.id, a]));
+      for (const session of machine.sessions) {
+        const inRange = Object.keys(session.byDay).some((date) => dayIndex.has(date));
+        if (!inRange && now - parseTime(session.updatedAt) > 86_400_000 * rangeDays) continue;
+        const account = accounts.get(session.accountId);
+        const email = account?.email?.toLowerCase() ?? null;
+        let profileId = email ? localByEmail.get(`${session.provider}:${email}`) : undefined;
+        if (!profileId) {
+          profileId = email ? `remote:${session.provider}:${email}` : `remote:${session.provider}:${machine.id}:${session.accountId}`;
+          if (!remote.has(profileId)) {
+            remote.set(profileId, { id: profileId, provider: session.provider, label: email ?? `${account?.label ?? session.accountId} · ${machine.name}` });
+          }
+        }
+        this.addImportedSession(machine, session, profileId, dayIndex, facts, sessions, models);
+      }
+    }
+    return [...remote.values()];
+  }
+
+  private addImportedSession(
+    machine: MachineUsage,
+    session: ExportedSession,
+    profileId: string,
+    dayIndex: Map<string, UsageDay>,
+    facts: Map<string, UsageFact>,
+    sessions: Map<string, UsageSessionRow>,
+    models: Map<string, UsageModelRow>
+  ) {
+    for (const [date, day] of Object.entries(session.byDay)) {
+      const bucket = dayIndex.get(date);
+      if (!bucket) continue;
+      bucket.byProvider[session.provider] += day.usd;
+      bucket.byProfile[profileId] = (bucket.byProfile[profileId] ?? 0) + day.usd;
+      bucket.byMachine[machine.id] = (bucket.byMachine[machine.id] ?? 0) + day.usd;
+      bucket.tokens += day.tokens;
+      bucket.requests += day.requests;
+      addFacts(facts, date, session.provider, profileId, machine.id, day, session.byModel);
+    }
+    let usd = 0;
+    let priced = false;
+    for (const [model, entry] of Object.entries(session.byModel)) {
+      const key = `${session.provider}:${model}`;
+      const row: UsageModelRow = models.get(key) ?? { provider: session.provider, model, usd: null, tokens: 0, requests: 0 };
+      row.tokens += entry.tokens;
+      row.requests += entry.requests;
+      if (entry.usd !== null) {
+        row.usd = (row.usd ?? 0) + entry.usd;
+        usd += entry.usd;
+        priced = true;
+      }
+      models.set(key, row);
+    }
+    sessions.set(`${machine.id}:${session.provider}:${session.accountId}:${session.sessionId}`, {
+      provider: session.provider,
+      profileId,
+      sessionId: session.sessionId,
+      filePath: '',
+      machineId: machine.id,
+      machineName: machine.name,
+      title: session.title,
+      cwd: session.cwd,
+      model: session.model,
+      models: Object.keys(session.byModel),
+      startedAt: session.startedAt,
+      updatedAt: session.updatedAt,
+      costUsd: priced ? usd : null,
+      tokens: session.tokens,
+      requests: session.requests,
+      contextPercent: null,
+      compactions: 0,
+      active: false
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -677,6 +931,28 @@ function mergeModels(target: Map<string, ModelAccumulator>, source: Map<string, 
     existing.usd += entry.usd;
     existing.priced = existing.priced && entry.priced;
     existing.requests += entry.requests;
+  }
+}
+
+function addFacts(
+  facts: Map<string, UsageFact>,
+  date: string,
+  provider: Provider,
+  profileId: string,
+  machineId: string,
+  day: DayAccumulator,
+  sessionModels: Record<string, ModelDay>
+) {
+  for (const [model, entry] of modelsOfDay(day, sessionModels)) {
+    const key = `${date}|${provider}|${profileId}|${machineId}|${model}`;
+    let fact = facts.get(key);
+    if (!fact) {
+      fact = { date, provider, profileId, machineId, model, usd: entry.usd === null ? null : 0, tokens: 0, requests: 0 };
+      facts.set(key, fact);
+    }
+    if (entry.usd !== null) fact.usd = (fact.usd ?? 0) + entry.usd;
+    fact.tokens += entry.tokens;
+    fact.requests += entry.requests;
   }
 }
 
