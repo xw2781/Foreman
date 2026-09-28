@@ -20,6 +20,10 @@ Run the installer (per-user, no admin rights). The app finds the CLIs automatica
 
 ## Accounts and switching
 
+For a new PC, open **Settings → Command-line tools → Install for Foreman** for Claude Code and Codex. Foreman downloads the official native Windows packages from npm, verifies their SHA-512 integrity, checks the executable version, and stores them under `%LOCALAPPDATA%\Foreman\tools`. Users do not need Node.js, npm, administrator rights, or VS Code extensions. Downloads require internet access.
+
+**Update managed CLI** installs the latest stable package for new sessions; running sessions keep their existing executable. **Roll back** selects the previous managed version when available. Explicit paths in Settings override managed installations. Account credentials and transcripts remain in each account's config folder, separate from executable versions. This setup supports Windows x64 and ARM64; only x64 is currently covered by the packaged Foreman build.
+
 Each account is its own config folder, which the app passes to the CLI:
 
 | Tool | Variable | Primary account | Added accounts |
@@ -36,6 +40,9 @@ Each account is its own config folder, which the app passes to the CLI:
 Plan usage comes from what each CLI last reported: Codex writes it into its session logs; Claude's comes from sessions started in the app (via the status line) and from Claude Code's own cache. A window whose reset time has passed shows as "Reset since last report".
 
 ## How status and cost are measured
+
+- **Session-log usage** excludes parent history replayed into forked Codex sessions. Its dollar figures remain API-equivalent estimates, not subscription bills. Older local caches are rebuilt automatically; corrected session accounting supersedes older counts during usage sync.
+- Migrated Codex transcripts can give inherited history and genuine child work the same timestamp. Foreman uses locally recorded turn creation IDs to recognize new child work, retains its usage deltas, and excludes the inherited counter baseline. No scaling or official totals enter this calculation. Day boundaries still follow local time; incomplete or migrated transcripts can differ from account-wide official totals.
 
 - **Claude Code** agents get per-session HTTP hooks through `claude --settings <file>` (merged with your settings, nothing of yours is modified): prompt submitted, tool running, permission prompt, turn finished. With *Capture Claude Code's status line* on, the status-line JSON also reaches the app for the exact context-window size, Claude Code's own cost, and plan limits; your own status-line command still runs and is what you see.
 - **Codex** agents: status from the session rollout (`task_started` / `task_complete`) and the terminal's approval prompts.

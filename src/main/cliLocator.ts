@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CliInfo, Provider } from '../shared/types';
 import { HOME, cleanEnv, exists, run } from './util';
+import { managedCli } from './cliInstall';
 
 interface Candidate {
   path: string;
@@ -41,22 +42,44 @@ function whereAll(name: string): string[] {
   return found;
 }
 
+/** Include custom extension roots exposed by an editor's bundled CLI on PATH. */
+export function extensionRoots(env: NodeJS.ProcessEnv = process.env, home = HOME): string[] {
+  const roots = new Set([path.join(home, '.vscode', 'extensions')]);
+  if (env.VSCODE_EXTENSIONS) roots.add(env.VSCODE_EXTENSIONS);
+  if (env.VSCODE_PORTABLE) roots.add(path.join(env.VSCODE_PORTABLE, 'extensions'));
+  for (const entry of (env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+    let dir = path.resolve(entry.replace(/^"|"$/g, ''));
+    while (path.dirname(dir) !== dir) {
+      if (path.basename(dir).toLowerCase() === 'extensions') {
+        roots.add(dir);
+        break;
+      }
+      dir = path.dirname(dir);
+    }
+  }
+  return [...roots];
+}
+
 function candidates(provider: Provider): Candidate[] {
   const list: Candidate[] = [];
   const local = process.env.LOCALAPPDATA ?? path.join(HOME, 'AppData', 'Local');
   const roaming = process.env.APPDATA ?? path.join(HOME, 'AppData', 'Roaming');
-  const vscodeExt = path.join(HOME, '.vscode', 'extensions');
+  const vscodeRoots = extensionRoots();
   for (const onPath of whereAll(provider)) list.push({ path: onPath, source: 'PATH' });
   if (provider === 'claude') {
     list.push({ path: path.join(HOME, '.local', 'bin', 'claude.exe'), source: 'native installer' });
-    const ext = newestMatching(vscodeExt, 'anthropic.claude-code-', ['resources', 'native-binary', 'claude.exe']);
-    if (ext) list.push({ path: ext, source: 'VS Code extension' });
+    for (const root of vscodeRoots) {
+      const ext = newestMatching(root, 'anthropic.claude-code-', ['resources', 'native-binary', 'claude.exe']);
+      if (ext) list.push({ path: ext, source: 'VS Code extension' });
+    }
     list.push({ path: path.join(roaming, 'npm', 'claude.cmd'), source: 'npm global' });
   } else {
     const desktop = newestMatching(path.join(local, 'OpenAI', 'Codex', 'bin'), '', ['codex.exe']);
     if (desktop) list.push({ path: desktop, source: 'Codex desktop app' });
-    const ext = newestMatching(vscodeExt, 'openai.chatgpt-', ['bin', 'windows-x86_64', 'codex.exe']);
-    if (ext) list.push({ path: ext, source: 'VS Code extension' });
+    for (const root of vscodeRoots) {
+      const ext = newestMatching(root, 'openai.chatgpt-', ['bin', 'windows-x86_64', 'codex.exe']);
+      if (ext) list.push({ path: ext, source: 'VS Code extension' });
+    }
     list.push({ path: path.join(roaming, 'npm', 'codex.cmd'), source: 'npm global' });
   }
   return list;
@@ -96,7 +119,8 @@ export async function locateCli(provider: Provider, configured: string, maxAgeMs
     // PATH is the user's explicit choice; otherwise the most recently updated copy.
     const onPath = exes.find((c) => c.source === 'PATH');
     const newest = [...exes].sort((a, b) => mtime(b.path) - mtime(a.path))[0];
-    chosen = onPath ?? newest ?? all[0] ?? null;
+    const managed = managedCli(provider);
+    chosen = managed ? { path: managed, source: 'Foreman managed' } : onPath ?? newest ?? all[0] ?? null;
   }
   if (!chosen) {
     const info: CliInfo = {

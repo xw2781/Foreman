@@ -44,6 +44,15 @@ export function SettingsView() {
   const [overrideModel, setOverrideModel] = useState('');
   const [overrideSize, setOverrideSize] = useState('');
   const [pricing, setPricing] = useState<PricingStatus | null>(null);
+  const [installing, setInstalling] = useState<string | null>(null);
+  const manageCli = async (provider: 'claude' | 'codex', operation: 'cli.install' | 'cli.rollback') => {
+    setInstalling(provider);
+    try {
+      useApp.setState({ env: await call(operation, provider) });
+      toast('success', `${PROVIDER_LABEL[provider]} is ready for new sessions.`);
+    } catch (error) { toast('error', errorMessage(error)); }
+    finally { setInstalling(null); }
+  };
 
   useEffect(() => {
     call('pricing.status').then(setPricing, () => {});
@@ -94,6 +103,7 @@ export function SettingsView() {
         </div>
       </div>
       <div className="card settings-list">
+        <div className="card-pad muted">Install tools for Foreman on this PC. Downloads are verified and updates apply to new sessions. Account sign-ins and transcripts stay in their separate folders.</div>
         {PROVIDERS.map((provider) => {
           const cli = env?.clis.find((c) => c.provider === provider);
           return (
@@ -112,6 +122,10 @@ export function SettingsView() {
                 )
               }
             >
+              <button className="btn sm primary" disabled={!!installing} onClick={() => manageCli(provider, 'cli.install')}>
+                <Download size={13} /> {installing === provider ? 'Setting up…' : cli?.source === 'Foreman managed' ? 'Update managed CLI' : 'Install for Foreman'}
+              </button>
+              {cli?.source === 'Foreman managed' ? <button className="btn sm" disabled={!!installing} onClick={() => manageCli(provider, 'cli.rollback')}>Roll back</button> : null}
               {settings.cliPath[provider] ? (
                 <button className="btn sm" onClick={async () => { await update({ cliPath: { ...settings.cliPath, [provider]: '' } }); await refreshClis(); }}>
                   Use auto-detect

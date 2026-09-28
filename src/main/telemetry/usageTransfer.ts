@@ -21,6 +21,8 @@ export interface ExportedAccount {
 }
 
 export interface ExportedSession {
+  /** Higher versions replace older accounting even when corrected totals decrease. */
+  accountingVersion?: number;
   provider: Provider;
   accountId: string;
   sessionId: string;
@@ -56,11 +58,12 @@ export interface UsageFile {
 export function sessionsFromSummaries(summaries: Iterable<FileSummary>, profileIds: Set<string>): ExportedSession[] {
   const sessions = new Map<string, ExportedSession>();
   for (const summary of summaries) {
-    if (!profileIds.has(summary.profileId) || summary.requests === 0) continue;
+    if (!profileIds.has(summary.profileId) || (summary.requests === 0 && summary.provider !== 'codex')) continue;
     const key = `${summary.profileId}:${summary.sessionId}`;
     let session = sessions.get(key);
     if (!session) {
       session = {
+        accountingVersion: 2,
         provider: summary.provider,
         accountId: summary.profileId,
         sessionId: summary.sessionId,
@@ -103,6 +106,7 @@ export function sessionKey(session: ExportedSession) {
 
 /** The later reading of a session wins; sessions only grow, so more requests break a tie. */
 function newer(a: ExportedSession, b: ExportedSession) {
+  if ((a.accountingVersion ?? 0) !== (b.accountingVersion ?? 0)) return (a.accountingVersion ?? 0) > (b.accountingVersion ?? 0);
   const at = parseTime(a.updatedAt);
   const bt = parseTime(b.updatedAt);
   return at !== bt ? at > bt : a.requests >= b.requests;
@@ -122,7 +126,7 @@ export function mergeMachine(target: MachineUsage | undefined, incoming: Machine
     const existing = sessions.get(key);
     if (!existing) added += 1;
     else if (!newer(session, existing)) continue;
-    else if (session.requests !== existing.requests) updated += 1;
+    else if (JSON.stringify(session) !== JSON.stringify(existing)) updated += 1;
     sessions.set(key, session);
   }
   const incomingIsNewer = parseTime(incoming.dataAt) >= parseTime(target.dataAt);
@@ -231,6 +235,7 @@ function cleanSession(value: unknown): ExportedSession | null {
   }
   return {
     provider: sessionProvider,
+    accountingVersion: nonNegative(raw.accountingVersion),
     accountId,
     sessionId,
     title: text(raw.title),

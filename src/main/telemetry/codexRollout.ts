@@ -133,9 +133,20 @@ function sourceName(value: unknown): string | null {
   return Object.keys(obj)[0] ?? null;
 }
 
+/** UUIDv7's first 48 bits record creation time, even in migrated rollouts
+ * whose envelope timestamps were rewritten. Synthetic `rollout-N` ids do not. */
+function turnCreatedAt(id: unknown): number | null {
+  if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) return null;
+  return Number.parseInt(id.replaceAll('-', '').slice(0, 12), 16);
+}
+
 export class CodexRolloutParser {
   private reader: IncrementalLineReader;
   private previousTotal: TokenUsage | null = null;
+  private forkReplayAt: string | null = null;
+  private forked = false;
+  private forkCreatedAt: number | null = null;
+  private ownTurnStarted = false;
   private compactionWindowIds = new Set<string>();
   private compactionEvents = 0;
   private compactionSnapshots = 0;
@@ -155,6 +166,10 @@ export class CodexRolloutParser {
     if (!continuous) {
       this.state = initialState(this.filePath);
       this.previousTotal = null;
+      this.forkReplayAt = null;
+      this.forked = false;
+      this.forkCreatedAt = null;
+      this.ownTurnStarted = false;
       this.compactionWindowIds.clear();
       this.compactionEvents = 0;
       this.compactionSnapshots = 0;
@@ -183,6 +198,9 @@ export class CodexRolloutParser {
     const payload = object(record.payload) ?? {};
     switch (record.type) {
       case 'session_meta':
+        this.forked = Boolean(text(payload.forked_from_id));
+        this.forkReplayAt = this.forked ? timestamp : null;
+        this.forkCreatedAt = this.forked ? turnCreatedAt(payload.id) : null;
         s.sessionId = text(payload.id) ?? text(payload.session_id) ?? s.sessionId;
         s.startedAt = text(payload.timestamp) ?? s.startedAt;
         s.cwd = text(payload.cwd) ?? s.cwd;
@@ -220,6 +238,11 @@ export class CodexRolloutParser {
     const s = this.state;
     switch (payload.type) {
       case 'task_started':
+        // Migrated paginated rollouts can stamp the child's entire completed
+        // turn with the same time as session_meta. A newly created turn is
+        // evidence of child work; an older inherited turn or synthetic id isn't.
+        const createdAt = turnCreatedAt(payload.turn_id);
+        if (this.forkCreatedAt !== null && createdAt !== null && createdAt >= this.forkCreatedAt) this.ownTurnStarted = true;
         s.taskActive = true;
         s.contextWindow = nonNegative(payload.model_context_window) || s.contextWindow;
         return;
@@ -268,13 +291,21 @@ export class CodexRolloutParser {
     const total = normalizeCodexUsage(info.total_token_usage);
     if (last) s.lastUsage = last;
     if (!total) return;
-    s.totalUsage = total;
+    // Forks replay parent history with the new rollout's creation timestamp.
+    // Establish the inherited counter baseline, without charging that history again.
+    if (!this.ownTurnStarted && this.forkReplayAt && timestamp && timestamp <= this.forkReplayAt) {
+      this.previousTotal = total;
+      s.totalUsage ??= emptyUsage();
+      return;
+    }
     // Cost is priced per usage delta so a request past the long-context
     // threshold is charged at the long-context rate and the rest are not.
     // A total that went backwards (a reset) contributes its last request.
-    const delta = subtractUsage(total, this.previousTotal) ?? last;
+    const delta = this.forked && !this.previousTotal ? last : subtractUsage(total, this.previousTotal) ?? last;
     this.previousTotal = total;
     if (!delta || delta.totalTokens <= 0) return;
+    s.totalUsage ??= emptyUsage();
+    for (const key of Object.keys(s.totalUsage) as Array<keyof TokenUsage>) s.totalUsage[key] += delta[key];
     const longContext = (last?.inputTokens ?? 0) > LONG_CONTEXT_THRESHOLD;
     s.requests += 1;
     const usd = recordRequest(s.byModel, s.model, delta, longContext);

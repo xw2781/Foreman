@@ -6,6 +6,7 @@ import { useApp } from '../store';
 import { ago, colorVar, initials } from '../format';
 import { LimitMeters, Modal, ProviderIcon, Select, Switch, confirmDialog } from '../ui';
 import { effortOptions, modelOptions } from './LaunchDialog';
+import { defaultModel } from '@shared/models';
 
 const SLOTS = ['slot-3', 'slot-4', 'slot-5', 'slot-6', 'slot-7', 'slot-8'];
 
@@ -151,10 +152,10 @@ function AccountDefaults({ profile }: { profile: ProfileView }) {
         size="sm"
         prefix="Model"
         aria-label="Default model"
-        value={profile.defaultModel ?? ''}
+        value={profile.defaultModel || defaultModel(profile.provider, profile.cliDefaults)}
         options={modelOptions(profile.provider, profile.cliDefaults, profile.defaultModel ?? '')}
         custom={{ placeholder: 'Other model id…' }}
-        onChange={(defaultModel) => save({ defaultModel })}
+        onChange={(model) => save({ defaultModel: model === defaultModel(profile.provider, profile.cliDefaults) ? '' : model })}
       />
       <Select
         size="sm"
@@ -312,6 +313,7 @@ function AccountCard({ profile }: { profile: ProfileView }) {
 
 export function AccountsView() {
   const profiles = useApp((s) => s.profiles);
+  const env = useApp((s) => s.env);
   const [adding, setAdding] = useState<Provider | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const refresh = async () => {
@@ -342,6 +344,12 @@ export function AccountsView() {
                 <UserPlus size={13} /> Add account
               </button>
             </div>
+            {!env?.clis.find((cli) => cli.provider === provider && cli.path && !cli.error) ? (
+              <div className="card card-pad" style={{ marginBottom: 12 }}>
+                <p>Install {PROVIDER_LABEL[provider]} before signing in or starting agents.</p>
+                <button className="btn primary sm" onClick={() => useApp.getState().setView('settings')}>Set up tools</button>
+              </div>
+            ) : null}
             {profiles
               .filter((p) => p.provider === provider)
               .map((p) => (

@@ -27,6 +27,8 @@ import type {
 export interface InvokeMap {
   'env.get': () => EnvironmentInfo;
   'env.refreshClis': () => EnvironmentInfo;
+  'cli.install': (provider: Provider) => EnvironmentInfo;
+  'cli.rollback': (provider: Provider) => EnvironmentInfo;
   'settings.get': () => AppSettings;
   'settings.update': (patch: Partial<AppSettings>) => AppSettings;
   'dialog.pickDirectory': (defaultPath?: string) => string | null;
@@ -130,7 +132,7 @@ export interface EventMap {
 export type EventName = keyof EventMap;
 
 export const INVOKE_CHANNELS: InvokeChannel[] = [
-  'env.get', 'env.refreshClis', 'settings.get', 'settings.update', 'dialog.pickDirectory', 'dialog.pickFile',
+  'env.get', 'env.refreshClis', 'cli.install', 'cli.rollback', 'settings.get', 'settings.update', 'dialog.pickDirectory', 'dialog.pickFile',
   'shell.openPath', 'shell.showItem', 'shell.openExternal',
   'profiles.list', 'profiles.create', 'profiles.update', 'profiles.remove', 'profiles.setActive', 'profiles.refresh',
   'profiles.login', 'profiles.logout', 'profiles.setGlobalDefault', 'profiles.shareConfig', 'profiles.openShell',

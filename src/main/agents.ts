@@ -26,6 +26,8 @@ import { ClaudeChat, claudeChatArgs } from './chat/claudeChat';
 import { CodexChat } from './chat/codexChat';
 import { LineSplitter, type ChatDriver, type ChatHost } from './chat/driver';
 import { locateCli, spawnSpec } from './cliLocator';
+import { defaultModel } from '../shared/models';
+import { cliDefaults } from './profiles';
 import { ClaudeStreamFormatter, describeToolInput } from './streamFormat';
 import type { HookEvent, HookServer } from './hookServer';
 import type { ProfileService } from './profiles';
@@ -168,6 +170,7 @@ export class AgentManager {
     // A new agent takes the account's defaults where the launch doesn't choose; a continued one keeps its own.
     if (!reuseId && AGENT_MODES.includes(options.mode)) {
       options = { ...options, model: options.model || profile.defaultModel || undefined, effort: options.effort || profile.defaultEffort || undefined };
+      if (!options.model && !options.resumeSessionId) options.model = defaultModel(profile.provider, cliDefaults(profile));
     }
     if (!exists(options.cwd)) throw new Error(`Folder not found: ${options.cwd}`);
     if (options.mode === 'task' && !options.prompt?.trim()) throw new Error('A background task needs a prompt.');
@@ -263,6 +266,8 @@ export class AgentManager {
     });
 
     const env = this.deps.profiles.envFor(profile, cleanEnv());
+    env.PATH = `${path.dirname(cli.path)}${path.delimiter}${env.PATH ?? ''}`;
+    if (profile.provider === 'claude' && cli.source === 'Foreman managed') env.DISABLE_AUTOUPDATER = '1';
     env.ATC_AGENT_ID = id;
     env.ATC_AGENT_NAME = `${PROVIDER_LABEL[profile.provider]} · ${profile.label}`;
     env.COLORTERM = 'truecolor';
@@ -354,6 +359,9 @@ export class AgentManager {
     };
     const session = this.createSession(info, { provider: profile.provider, profileId, cwd, mode: 'shell' }, profile, { titleLocked: true });
     const env = this.deps.profiles.envFor(profile, cleanEnv());
+    const cli = await locateCli(profile.provider, this.deps.settings().cliPath[profile.provider]);
+    if (cli.path) env.PATH = `${path.dirname(cli.path)}${path.delimiter}${env.PATH ?? ''}`;
+    if (profile.provider === 'claude' && cli.source === 'Foreman managed') env.DISABLE_AUTOUPDATER = '1';
     env.ATC_AGENT_ID = id;
     env.ATC_AGENT_NAME = `Shell · ${profile.label}`;
     this.sessions.set(id, session);

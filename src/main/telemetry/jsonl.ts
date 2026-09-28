@@ -20,7 +20,9 @@ export class IncrementalLineReader {
     if (stat.size < this.offset) {
       this.offset = 0;
       this.pending = Buffer.alloc(0);
-      continuous = false;
+      // Let the parser reset before delivering replacement records. Otherwise
+      // it consumes them into stale state, then clears them after we've advanced.
+      return false;
     }
     if (stat.size === this.offset) return continuous;
 

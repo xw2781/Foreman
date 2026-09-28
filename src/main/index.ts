@@ -22,12 +22,17 @@ import { ProcessMonitor, killTree } from './processMonitor';
 import { AgentManager } from './agents';
 import { ComputerUseService } from './computerUse';
 import { forgetCli, locateCli } from './cliLocator';
+import { installCli, rollbackCli } from './cliInstall';
 import { logoutCommand } from './commands';
 import { UpdateService } from './updater';
 import { GitHubSync } from './githubSync';
 import { HOME, JsonStore, cleanEnv, exists, profilesRoot, readJsonFile, run, writeJsonFileAtomic } from './util';
 
 app.setAppUserModelId('com.agenttaskcenter.app');
+// Corporate HTTPS proxies can negotiate HTTP/2 that Chromium rejects with
+// ERR_HTTP2_INADEQUATE_TRANSPORT_SECURITY. Use HTTP/1.1 for Electron requests;
+// HTTPS and normal certificate verification remain enabled.
+app.commandLine.appendSwitch('disable-http2');
 if (process.env.ATC_CAPTURE_DIR) {
   // Off-screen capture runs while the display may be asleep: keep painting anyway.
   app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
@@ -266,6 +271,17 @@ async function environment(): Promise<EnvironmentInfo> {
 }
 
 function registerIpc() {
+  for (const operation of ['cli.install', 'cli.rollback'] as const) {
+    handle(operation, async (provider) => {
+      if (!PROVIDERS.includes(provider)) throw new Error('Unknown tool.');
+      if (operation === 'cli.install') await installCli(provider, (url, init) => net.fetch(url instanceof URL ? url.toString() : url, init));
+      else await rollbackCli(provider);
+      settingsStore.update({ cliPath: { ...settings().cliPath, [provider]: '' } });
+      forgetCli(provider);
+      emit('settings', settings());
+      return environment();
+    });
+  }
   handle('env.get', () => environment());
   handle('env.refreshClis', () => {
     forgetCli();
@@ -333,7 +349,7 @@ function registerIpc() {
     return views();
   });
   handle('profiles.refresh', async () => {
-    await profiles.refresh();
+    await profiles.refresh(undefined, true);
     return views();
   });
   handle('profiles.login', (id) => {

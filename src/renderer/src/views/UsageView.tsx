@@ -635,6 +635,7 @@ export function UsageView() {
         </div>
       </div>
 
+      <div className="section-title"><h2>Usage from session logs</h2><span className="sub">Local and imported records · API-equivalent cost estimates</span></div>
       <div className="tiles">
         <div className="tile">
           <span className="tile-label">Today</span>
@@ -662,7 +663,7 @@ export function UsageView() {
           <span className="tile-foot">{usd(range / Math.max(1, days.length))} per day on average</span>
         </div>
         <div className="tile">
-          <span className="tile-label">Tokens</span>
+          <span className="tile-label">Tokens in session logs</span>
           <span className="tile-value">{compact(rangeTokens)}</span>
           <span className="tile-foot">{compact(rangeRequests)} requests in range</span>
         </div>

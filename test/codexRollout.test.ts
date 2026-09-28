@@ -29,6 +29,77 @@ function tokenCount(total: { input: number; cached: number; output: number }, la
 }
 
 describe('Codex rollout parser', () => {
+  it('recovers a migrated child turn even when every record has the fork timestamp', () => {
+    const parser = new CodexRolloutParser('migrated-child.jsonl');
+    const stamp = '2026-07-25T14:56:05.457Z';
+    const childId = '019f99c6-b6d0-7032-92e1-c9d3ac2d3241';
+    const turnId = '019f99c6-b9b8-7872-9e92-9342922e008c';
+    parser.consume(JSON.stringify({ timestamp: stamp, type: 'session_meta', payload: { id: childId, forked_from_id: 'parent', history_mode: 'paginated' } }));
+    parser.consume(JSON.stringify({ timestamp: stamp, type: 'event_msg', payload: { type: 'task_started', turn_id: turnId } }));
+    // Real counters from a migrated July 25 child: only last request belongs
+    // to the child on the first observation, not the 124M inherited baseline.
+    parser.consume(tokenCount({ input: 123946900, cached: 120568064, output: 370912 }, { input: 27942, cached: 13056, output: 185 }, stamp));
+    const next = tokenCount({ input: 123977667, cached: 120595456, output: 370979 }, { input: 30767, cached: 27392, output: 67 }, stamp);
+    parser.consume(next);
+    parser.consume(next); // duplicate status notification
+    expect(parser.state.requests).toBe(2);
+    expect(parser.state.totalUsage?.totalTokens).toBe(28127 + 30834);
+    expect([...parser.state.byDay.values()].reduce((sum, day) => sum + day.tokens, 0)).toBe(58961);
+  });
+
+  it('skips inherited and synthetic turns before the child begins its own migrated turn', () => {
+    const parser = new CodexRolloutParser('mixed-history.jsonl');
+    const stamp = '2026-07-25T16:38:06.341Z';
+    const childId = '019f9a24-1c78-7da2-aadc-e637e7739404';
+    const start = (turn_id: string) => parser.consume(JSON.stringify({ timestamp: stamp, type: 'event_msg', payload: { type: 'task_started', turn_id } }));
+    parser.consume(JSON.stringify({ timestamp: stamp, type: 'session_meta', payload: { id: childId, forked_from_id: 'parent' } }));
+    start('019f9a1b-bf42-7460-bb53-1961ab149967'); // older parent's turn
+    parser.consume(tokenCount({ input: 1000000, cached: 0, output: 100 }, { input: 10000, cached: 0, output: 10 }, stamp));
+    start('rollout-4'); // synthesized history, not evidence of new child work
+    parser.consume(tokenCount({ input: 1100000, cached: 0, output: 200 }, { input: 100000, cached: 0, output: 100 }, stamp));
+    expect(parser.state.requests).toBe(0);
+    start('019f9a24-1f94-7a82-9be6-c18876a0e79e');
+    parser.consume(tokenCount({ input: 1120000, cached: 0, output: 400 }, { input: 20000, cached: 0, output: 200 }, stamp));
+    expect(parser.state.totalUsage?.totalTokens).toBe(20200);
+    expect(parser.state.requests).toBe(1);
+  });
+
+  it('excludes a fork baseline and replayed requests, including incremental updates', async () => {
+    const file = path.join(dir, 'fork.jsonl');
+    const stamp = '2026-07-25T16:38:06.341Z';
+    const baseline = { input: 159_921_065, cached: 155_784_960, output: 475_967 };
+    const replayed = { input: baseline.input + 10_000, cached: baseline.cached + 8_000, output: baseline.output + 100 };
+    const request = { input: 20_000, cached: 15_000, output: 200 };
+    fs.writeFileSync(file, [
+      JSON.stringify({ timestamp: stamp, type: 'session_meta', payload: { id: ID, forked_from_id: 'parent', source: { subagent: { thread_spawn: { parent_thread_id: 'parent' } } } } }),
+      JSON.stringify({ timestamp: stamp, type: 'turn_context', payload: { model: 'gpt-6-astra' } }),
+      tokenCount(baseline, { input: 0, cached: 0, output: 0 }, stamp),
+      tokenCount(replayed, { input: 10_000, cached: 8_000, output: 100 }, stamp)
+    ].join('\n') + '\n');
+    const parser = new CodexRolloutParser(file);
+    expect((await parser.update()).requests).toBe(0);
+    expect(parser.state.totalUsage?.totalTokens).toBe(0);
+    const next = { input: replayed.input + request.input, cached: replayed.cached + request.cached, output: replayed.output + request.output };
+    fs.appendFileSync(file, tokenCount(next, request, '2026-07-25T16:39:00Z') + '\n' + tokenCount(next, request, '2026-07-25T16:39:01Z') + '\n');
+    const state = await parser.update();
+    expect(state.requests).toBe(1);
+    expect(state.totalUsage?.totalTokens).toBe(20_200);
+    expect([...state.byDay.values()].reduce((sum, day) => sum + day.tokens, 0)).toBe(20_200);
+    expect(state.byModel.get('gpt-6-astra')?.usage.totalTokens).toBe(20_200);
+    // File replacement must clear the inherited baseline as well.
+    fs.writeFileSync(file, tokenCount(request, request, '2026-07-25T17:00:00Z') + '\n');
+    expect((await parser.update()).totalUsage?.totalTokens).toBe(20_200);
+  });
+
+  it('counts fresh subagent usage and counter resets without losing previous usage', () => {
+    const parser = new CodexRolloutParser('fresh.jsonl');
+    parser.consume(JSON.stringify({ timestamp: '2026-07-25T12:00:00Z', type: 'session_meta', payload: { source: { subagent: {} } } }));
+    parser.consume(tokenCount({ input: 100, cached: 0, output: 10 }, { input: 100, cached: 0, output: 10 }, '2026-07-25T12:00:01Z'));
+    parser.consume(tokenCount({ input: 20, cached: 0, output: 2 }, { input: 20, cached: 0, output: 2 }, '2026-07-25T12:00:02Z'));
+    expect(parser.state.totalUsage?.totalTokens).toBe(132);
+    expect(parser.state.requests).toBe(2);
+  });
+
   it('prices each usage delta, applying the long-context rate only where it applies', async () => {
     const file = path.join(dir, `rollout-2026-09-23T10-00-00-${ID}.jsonl`);
     const lines = [

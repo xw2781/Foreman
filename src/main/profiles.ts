@@ -212,7 +212,7 @@ export class ProfileService {
   // Identity and plan limits
   // -------------------------------------------------------------------------
 
-  async refresh(ids?: string[]) {
+  async refresh(ids?: string[], force = Boolean(ids)) {
     const targets = ids ? this.list().filter((p) => ids.includes(p.id)) : this.list();
     await Promise.all([
       this.readGlobalDefaults(),
@@ -224,7 +224,7 @@ export class ProfileService {
           this.tiers.delete(profile.id);
         }
         try {
-          await this.refreshLimits(profile, Boolean(ids));
+          await this.refreshLimits(profile, force);
         } catch {
           // Limits are best-effort.
         }

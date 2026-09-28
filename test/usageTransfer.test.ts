@@ -130,6 +130,18 @@ describe('usage from other computers', () => {
     expect(() => parseUsageFile('nope')).toThrow('invalid JSON');
     expect(() => parseUsageFile(JSON.stringify({ format: 'foreman-usage', version: 99 }))).toThrow('newer Foreman');
   });
+
+  it('replaces inflated exported counts after an accounting correction and never restores old counts', () => {
+    const session: ExportedSession = { provider: 'codex', accountId: 'a', sessionId: 'fork', title: null, cwd: null, model: null, startedAt: null, updatedAt: '2026-07-25T18:00:00Z', tokens: 160_000_000, requests: 300, byDay: {}, byModel: {} };
+    const old: MachineUsage = { id: 'm', name: 'M', dataAt: '2026-09-26T00:00:00Z', pricingDate: '', accounts: [], sessions: [session] };
+    const fixed: MachineUsage = { ...old, dataAt: '2026-09-27T00:00:00Z', sessions: [{ ...session, accountingVersion: 1, tokens: 20_200, requests: 1 }] };
+    const merged = mergeMachine(old, fixed);
+    expect(merged.updated).toBe(1);
+    expect(merged.machine.sessions[0].tokens).toBe(20_200);
+    expect(mergeMachine(merged.machine, old).machine.sessions[0].tokens).toBe(20_200);
+    const roundTrip = parseUsageFile(JSON.stringify({ format: 'foreman-usage', version: 1, machines: [merged.machine] }));
+    expect(roundTrip.machines[0].sessions[0].accountingVersion).toBe(1);
+  });
 });
 
 /** Just enough of the GitHub REST API for the sync: a contents directory of blobs. */

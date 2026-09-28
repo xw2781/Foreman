@@ -86,8 +86,8 @@ export interface FileSummary {
 }
 
 const ACTIVE_WRITE_MS = 45_000;
-// 5: days split by model.
-const CACHE_VERSION = 5;
+// 7: retain child turns whose timestamps were flattened during rollout migration.
+const CACHE_VERSION = 7;
 
 type Parser = ClaudeTranscriptParser | CodexRolloutParser;
 

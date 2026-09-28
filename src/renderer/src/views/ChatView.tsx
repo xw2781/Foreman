@@ -1,4 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { defaultModel } from '@shared/models';
 import {
   ArrowDown,
   ArrowUp,
@@ -930,7 +931,7 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
 
   const configure = (patch: ChatSettingsPatch) => call('chat.configure', agent.id, patch).catch((error) => toast('error', errorMessage(error)));
   const profile = useApp((s) => s.profiles.find((p) => p.id === agent.profileId));
-  const currentModel = agent.model ?? '';
+  const currentModel = agent.model || profile?.defaultModel || defaultModel(agent.provider, profile?.cliDefaults);
   // What the session runs at: the level chosen here or at launch, else the CLI's configured default.
   const currentEffort = agent.effort || profile?.cliDefaults.effort || '';
 

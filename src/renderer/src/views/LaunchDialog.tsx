@@ -5,23 +5,16 @@ import { call, errorMessage } from '../api';
 import { useApp } from '../store';
 import { colorVar, limitSummary, modelLabel } from '../format';
 import { Modal, ProviderIcon, Select, type SelectOption } from '../ui';
+import { defaultModel, modelChoices } from '@shared/models';
 
 /** Newest first; Claude's family aliases (always the latest of each) follow its dated ids. */
-export const MODELS: Record<Provider, string[]> = {
-  claude: ['claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5', 'claude-haiku-4-5', 'opus', 'opus[1m]', 'fable', 'sonnet', 'haiku'],
-  codex: ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']
-};
+export { MODELS } from '@shared/models';
 
 /** "Default · gpt-6-astra": what the CLI picks when nothing is chosen, from its own config. */
 export function defaultLabel(configured: string | null | undefined) {
   return configured ? `Default · ${configured}` : 'CLI default';
 }
 
-/** Version numbers in a model id, for newest-first order: claude-opus-4-8 → [4, 8], gpt-5.6-sol → [5, 6]. */
-function modelVersion(id: string): number[] {
-  const match = /(\d+)(?:[.-](\d{1,2}))?(?![\d])/.exec(id.replace(/-\d{8}/, ''));
-  return match ? [Number(match[1]), Number(match[2] ?? 0)] : [0, 0];
-}
 
 /**
  * Model choices by name, newest first. When the account's CLI config limits
@@ -29,14 +22,7 @@ function modelVersion(id: string): number[] {
  * (e.g. the id a running session resolved to) is kept when unlisted.
  */
 export function modelOptions(provider: Provider, defaults: CliDefaults | null | undefined, current = ''): SelectOption[] {
-  const listed = defaults?.models?.length
-    ? [...defaults.models].sort((a, b) => {
-        const [x, y] = [modelVersion(a), modelVersion(b)];
-        return y[0] - x[0] || y[1] - x[1];
-      })
-    : MODELS[provider];
-  const models = [...(current && !listed.includes(current) ? [current] : []), ...listed];
-  return [{ value: '', label: defaultLabel(modelLabel(defaults?.model)) }, ...models.map((m) => ({ value: m, label: modelLabel(m) }))];
+  return modelChoices(provider, defaults, current).map((m) => ({ value: m, label: modelLabel(m) }));
 }
 
 /** "high" → "High": effort values stay lower case for the CLIs, labels don't. */
@@ -118,10 +104,10 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
 
   // The account's default model and effort fill the fields until the user picks their own.
   useEffect(() => {
-    if (!modelChosen.current) setModel(profile?.defaultModel ?? '');
+    if (!modelChosen.current) setModel(profile?.defaultModel || defaultModel(provider, profile?.cliDefaults));
     if (!effortChosen.current) setEffort(profile?.defaultEffort ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.id, profile?.defaultModel, profile?.defaultEffort]);
+  }, [profile?.id, profile?.defaultModel, profile?.defaultEffort, profile?.cliDefaults, provider]);
   const modelFromAccount = Boolean(profile?.defaultModel) && model === profile?.defaultModel;
   const effortFromAccount = Boolean(profile?.defaultEffort) && effort === profile?.defaultEffort;
   const modelSummary = [modelLabel(model.trim()), effort ? `${effortLabel(effort)} effort` : ''].filter(Boolean).join(', ');
@@ -313,9 +299,9 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
             <div className="field">
               <label>Model</label>
               <Select
-                value={model}
+                value={model || defaultModel(provider, profile?.cliDefaults)}
                 aria-label="Model"
-                options={modelOptions(provider, profile?.cliDefaults)}
+                options={modelOptions(provider, profile?.cliDefaults, model)}
                 custom={{ placeholder: 'Other model id…' }}
                 onChange={(next) => {
                   modelChosen.current = true;

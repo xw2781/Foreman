@@ -144,7 +144,7 @@ export function modelLabel(id: string | null | undefined): string {
   const claude = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(base);
   const gpt = /^gpt-(\d+(?:\.\d+)?)(?:-([a-z0-9-]+))?$/.exec(base);
   if (claude && MODEL_FAMILIES.includes(claude[1])) name = `${word(claude[1])} ${claude[2]}${claude[3] ? `.${claude[3]}` : ''}`;
-  else if (MODEL_FAMILIES.includes(base)) name = `${word(base)} (latest)`;
+  else if (MODEL_FAMILIES.includes(base)) name = word(base);
   else if (gpt) name = `GPT-${gpt[1]}${gpt[2] ? ` ${gpt[2].split('-').map(word).join(' ')}` : ''}`;
   if (!name) return raw;
   return longContext ? `${name} · 1M` : name;

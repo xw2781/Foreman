@@ -7,7 +7,7 @@ describe('model names', () => {
     expect(modelLabel('claude-opus-5-5[1m]')).toBe('Opus 5.5 · 1M');
     expect(modelLabel('claude-haiku-4-5-20251001')).toBe('Haiku 4.5');
     expect(modelLabel('claude-sonnet-5')).toBe('Sonnet 5');
-    expect(modelLabel('opus[1m]')).toBe('Opus (latest) · 1M');
+    expect(modelLabel('opus[1m]')).toBe('Opus · 1M');
   });
 
   it('names GPT models and leaves unknown ids alone', () => {
