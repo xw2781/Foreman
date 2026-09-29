@@ -536,6 +536,14 @@ export interface AppSettings {
   claudeStatusLine: boolean;
   /** What Enter does in a chat while the agent is working; Ctrl+Enter does the other. */
   chatSendMode: ChatSendMode;
+  /** Give new agents Foreman's built-in browser (an MCP server of browser tools). */
+  browserEnabled: boolean;
+  /** Agents use the browser tools without asking each time. */
+  browserAutoApprove: boolean;
+  /** One agent profile (cookies, logins) shared by every agent, or a fresh one per agent. */
+  browserProfile: BrowserProfileMode;
+  /** Show the browser beside the conversation when its agent starts using it. */
+  browserAutoOpen: boolean;
 }
 
 export interface CliInfo {
@@ -569,4 +577,84 @@ export interface UpdateStatus {
 export interface Toast {
   kind: 'info' | 'success' | 'error';
   message: string;
+}
+
+// ---------------------------------------------------------------------------
+// Agent browser
+// ---------------------------------------------------------------------------
+
+export type BrowserProfileMode = 'shared' | 'per-agent';
+
+export interface BrowserTabInfo {
+  id: string;
+  title: string;
+  url: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  crashed: boolean;
+}
+
+export interface BrowserActionEntry {
+  id: number;
+  at: string;
+  source: 'agent' | 'user';
+  text: string;
+  ok: boolean;
+}
+
+export interface BrowserDialogInfo {
+  type: 'alert' | 'confirm' | 'prompt';
+  message: string;
+  /** What the page got back: OK, Cancel, or the prompt text. */
+  answer: string;
+}
+
+export interface BrowserDownload {
+  id: string;
+  name: string;
+  path: string;
+  state: 'progressing' | 'completed' | 'cancelled' | 'interrupted';
+  receivedBytes: number;
+  totalBytes: number;
+}
+
+/** One agent's browser, as the UI shows it. */
+export interface BrowserState {
+  agentId: string;
+  tabs: BrowserTabInfo[];
+  activeTabId: string | null;
+  /** The person has taken over: the agent's browser tools refuse until handed back. */
+  paused: boolean;
+  /** A browser tool call is running. */
+  busy: boolean;
+  viewport: { width: number; height: number };
+  /** Newest last. */
+  actions: BrowserActionEntry[];
+  /** Where the agent last pointed, in page pixels; `at` is a timestamp (ms). */
+  pointer: { x: number; y: number; at: number } | null;
+  /** The last dialog a page showed (answered at once, so nothing waits on it). */
+  dialog: BrowserDialogInfo | null;
+  /** A page asked for files and is waiting for the agent to choose them. */
+  fileChooser: boolean;
+  downloads: BrowserDownload[];
+  profile: BrowserProfileMode;
+}
+
+/** Input from the person, in page pixels, forwarded into the active tab. */
+export type BrowserInput =
+  | { kind: 'mouse'; type: 'mousePressed' | 'mouseReleased' | 'mouseMoved'; x: number; y: number; button: 'left' | 'middle' | 'right' | 'none'; clickCount: number; modifiers: number }
+  | { kind: 'wheel'; x: number; y: number; deltaX: number; deltaY: number; modifiers: number }
+  | { kind: 'key'; type: 'keyDown' | 'keyUp'; key: string; code: string; keyCode: number; modifiers: number; text: string }
+  | { kind: 'text'; text: string };
+
+export type BrowserCommand = 'back' | 'forward' | 'reload' | 'stop' | 'newTab' | 'closeTab' | 'selectTab' | 'devtools' | 'pause' | 'resume' | 'close';
+
+export interface BrowserFrame {
+  agentId: string;
+  tabId: string;
+  width: number;
+  height: number;
+  /** JPEG. */
+  data: Uint8Array;
 }

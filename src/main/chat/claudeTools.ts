@@ -3,6 +3,7 @@
 import type { ChatEntry, ChatFileChange, ChatToolStatus } from '../../shared/types';
 import { describeToolInput } from '../streamFormat';
 import { clipText } from './log';
+import { browserToolDetail, browserToolTitle } from './browserTools';
 
 const DIFF_LINE_LIMIT = 600;
 
@@ -82,7 +83,11 @@ export function claudeToolDetail(tool: string, input: Record<string, any> | null
     return `${done}/${input.todos.length} done`;
   }
   if (tool === 'Skill' && typeof input.skill === 'string') return input.skill;
-  if (tool.startsWith('mcp__')) return describeToolInput(tool, input) || null;
+  if (tool.startsWith('mcp__')) {
+    const [, server, name] = tool.split('__');
+    if (browserToolTitle(server, name)) return browserToolDetail(name, input);
+    return describeToolInput(tool, input) || null;
+  }
   return describeToolInput(tool, input) || null;
 }
 
@@ -105,7 +110,7 @@ export function claudeToolTitle(tool: string): string {
   if (TITLES[tool]) return TITLES[tool];
   if (tool.startsWith('mcp__')) {
     const [, server, name] = tool.split('__');
-    return `${server ?? 'mcp'} · ${name ?? tool}`;
+    return browserToolTitle(server, name) ?? `${server ?? 'mcp'} · ${name ?? tool}`;
   }
   return tool;
 }

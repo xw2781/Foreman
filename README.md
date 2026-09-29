@@ -6,6 +6,7 @@ A Windows desktop app for running **Claude Code** and **Codex** side by side:
 - **Task Manager** — every agent the app started, with status, account, model, context usage, cost, CPU and memory; plus the Claude Code / Codex processes running elsewhere (VS Code, the desktop apps, terminals), which you can end.
 - **Usage & Cost** — API-equivalent cost of every session on the machine, per day, per tool, per account and per model, with context usage per session. Any session (including ones from VS Code) can be resumed in the app. Usage from your other computers joins in through a private GitHub repo (*Connect GitHub*) or an exported file; only per-session totals and titles travel, never conversations.
 - **Accounts** — two (or more) accounts per tool, switchable per agent, with each account's 5-hour and weekly plan usage. Accounts can run at the same time.
+- **Agent browser** — a Chromium browser built into Foreman that Claude Code and Codex agents drive through browser tools. It runs off-screen with its own cookies and logins, so an agent can test a local dev server or fill in a form without touching your screen, mouse, keyboard or browsers; you watch it live beside the conversation and can take control at any time.
 - **Computer Use** — a skill that lets Claude Code and Codex see the screen and drive Windows apps with their own on-screen pointer, with a live view of what the agent is doing and a one-click (or Esc) take-back.
 
 Nothing is sent anywhere: the app reads local session files and talks to the CLIs on your machine.
@@ -51,6 +52,16 @@ Plan usage comes from what each CLI last reported: Codex writes it into its sess
 ## Computer use
 
 `resources/skills/computer-use` is a skill (`SKILL.md` + PowerShell/C# helper) that any Claude Code or Codex account can use; install it per account on the Computer Use page. It extends the ArcRho agent screen control tool with window-targeted screenshots, UI Automation trees with element indexes, clicks by element or image coordinates, typing, key chords, scrolling, and an app allow/deny policy. While an agent drives the screen, amber edges, a second pointer and a panel appear; press **Esc** or **Release** (or *Take back control* in the app) to stop it. See the skill's `docs/` for details.
+
+## Agent browser
+
+New agents (chat, terminal and background tasks, both tools) get an MCP server of browser tools, `foreman_browser`: navigate, read the page as an outline with element refs, click, type, press keys, choose options, scroll, drag, screenshots, run JavaScript, wait for text, tabs, console messages, file uploads and downloads. Claude Code receives it with `--mcp-config`, Codex with `-c mcp_servers.foreman_browser.*`; nothing in your own configuration changes. The server listens on 127.0.0.1 with a secret URL for each agent, so agents can reach only their own browser.
+
+- **Separate from you.** Each tab is an off-screen Chromium page. Its profile (`persist:foreman-agent-browser`, or one per agent) is apart from your browsers and from Foreman itself. Pages can't open native windows: `alert`/`confirm`/`prompt` are answered at once and reported to the agent, file choosers go to the agent (or ask you, if you clicked), downloads are saved to `<userData>/browser-downloads/<agent>`, links to other programs (`mailto:`, app protocols) are blocked, and camera, microphone, location and notification requests are refused. Tabs are muted.
+- **Watching.** The **Browser** button beside an agent (the globe) shows its active tab live, with tabs, an address bar, back/forward/reload, DevTools, where the agent last clicked, and an activity log of each step and download. It opens by itself when an agent starts browsing (Settings → Agent browser). You can use the page with your own mouse and keyboard; **Take control** pauses the agent's browser tools until you hand it back.
+- **Settings → Agent browser**: turn it off for new agents, ask before each browser step, choose a shared or a per-agent profile, and clear the agent browsing data.
+
+It is not your Chrome: extensions aren't available and some sites refuse embedded browsers (Google sign-in among them). The agent can still read and write your files as before; the browser separates the web session, not the computer.
 
 ## Development
 

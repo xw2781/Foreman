@@ -19,6 +19,19 @@ export function splitArgs(value: string | undefined): string[] {
   return args;
 }
 
+const CODEX_SUBCOMMANDS = new Set(['app-server', 'exec', 'resume']);
+
+/**
+ * Adds the browser options to a command line. Codex reads `-c` overrides only after its
+ * subcommand (`codex exec -c …`); Claude Code's go first, because `--mcp-config` and
+ * `--allowedTools` take several values and must be followed by another option, not the prompt.
+ */
+export function withBrowserArgs(args: string[], browser: string[]): string[] {
+  if (!browser.length) return args;
+  if (CODEX_SUBCOMMANDS.has(args[0])) return [args[0], ...browser, ...args.slice(1)];
+  return [...browser, ...args];
+}
+
 export function claudeCommand(
   options: LaunchOptions,
   sessionId: string | null,

@@ -20,7 +20,7 @@ import {
   type LaunchOptions,
   type Profile
 } from '../shared/types';
-import { claudeCommand, codexCommand, loginCommand, splitArgs } from './commands';
+import { claudeCommand, codexCommand, loginCommand, splitArgs, withBrowserArgs } from './commands';
 import { ChatLog, clipText } from './chat/log';
 import { ClaudeChat, claudeChatArgs } from './chat/claudeChat';
 import { CodexChat } from './chat/codexChat';
@@ -95,6 +95,8 @@ export interface AgentManagerDeps {
   settings: () => AppSettings;
   userDataDir: string;
   appVersion: string;
+  /** Arguments that give an agent Foreman's browser (none when it is off). */
+  browserArgs?: (agentId: string, provider: Profile['provider']) => string[];
 }
 
 function newRunId() {
@@ -114,6 +116,8 @@ export class AgentManager {
   onChat: (id: string, items: ChatItem[], reset: boolean) => void = () => {};
   onChanged: (agents: AgentInfo[]) => void = () => {};
   onAttention: (info: AgentInfo, reason: 'needs-input' | 'turn-complete' | 'task-complete' | 'failed') => void = () => {};
+  /** Agents taken off the list (their browsers can go). */
+  onRemoved: (ids: string[]) => void = () => {};
 
   constructor(private deps: AgentManagerDeps) {
     this.history = new JsonStore(path.join(deps.userDataDir, 'agents.json'), { agents: [] });
@@ -219,6 +223,8 @@ export class AgentManager {
     } else {
       ({ args, headless } = codexCommand(options, profile, settings.codexNoDaemonForIsolated));
     }
+
+    if (AGENT_MODES.includes(options.mode)) args = withBrowserArgs(args, this.deps.browserArgs?.(id, profile.provider) ?? []);
 
     const title = options.title?.trim()
       || previous?.title
@@ -883,14 +889,18 @@ export class AgentManager {
     this.sessions.delete(id);
     this.history.replace({ agents: this.history.data.agents.filter((a) => a.id !== id) });
     this.emitChanged();
+    this.onRemoved([id]);
   }
 
   clearFinished() {
+    const before = this.list().map((a) => a.id);
     for (const [id, session] of this.sessions) {
       if (session.info.endedAt) this.sessions.delete(id);
     }
     this.history.replace({ agents: [] });
     this.emitChanged();
+    const kept = new Set(this.list().map((a) => a.id));
+    this.onRemoved(before.filter((id) => !kept.has(id)));
   }
 
   rename(id: string, title: string) {

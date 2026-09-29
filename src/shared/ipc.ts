@@ -2,6 +2,9 @@ import type {
   AgentInfo,
   AgentMode,
   AppSettings,
+  BrowserCommand,
+  BrowserFrame,
+  BrowserState,
   ChatAnswer,
   ChatCommand,
   ChatItem,
@@ -105,6 +108,16 @@ export interface InvokeMap {
   'update.check': () => UpdateStatus;
   /** Quits (asking first if agents are running), installs the downloaded update and restarts. */
   'update.install': () => void;
+
+  'browser.list': () => BrowserState[];
+  /** Opens the agent's browser (creating it if needed), optionally at a URL. */
+  'browser.open': (agentId: string, url?: string) => BrowserState;
+  'browser.navigate': (agentId: string, url: string) => void;
+  'browser.command': (agentId: string, command: BrowserCommand, tabId?: string) => void;
+  /** Streams the agent's active tab as `browser-frame` events; null stops. */
+  'browser.watch': (agentId: string | null) => void;
+  /** Clears cookies, storage and cache of every agent browser profile. */
+  'browser.clearData': () => void;
 }
 
 export type InvokeChannel = keyof InvokeMap;
@@ -127,6 +140,10 @@ export interface EventMap {
   update: UpdateStatus;
   pricing: PricingStatus;
   github: GitHubSyncStatus;
+  /** A null state: the agent's browser was closed. */
+  browser: { agentId: string; state: BrowserState | null };
+  'browser-frame': BrowserFrame;
+  'browser-cursor': { agentId: string; cursor: string };
 }
 
 export type EventName = keyof EventMap;
@@ -143,15 +160,16 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'usage.report', 'usage.export', 'usage.import', 'usage.forgetMachine', 'pricing.status', 'pricing.edit',
   'github.status', 'github.connect', 'github.cancel', 'github.disconnect', 'github.sync',
   'computerUse.status', 'computerUse.command', 'computerUse.setPolicy', 'computerUse.install', 'computerUse.image',
-  'update.status', 'update.check', 'update.install'
+  'update.status', 'update.check', 'update.install',
+  'browser.list', 'browser.open', 'browser.navigate', 'browser.command', 'browser.watch', 'browser.clearData'
 ];
 
 export const EVENT_NAMES: EventName[] = [
-  'agents', 'agent-data', 'chat', 'profiles', 'usage', 'usage-progress', 'computer-use', 'externals', 'navigate', 'toast', 'settings', 'update', 'pricing', 'github'
+  'agents', 'agent-data', 'chat', 'profiles', 'usage', 'usage-progress', 'computer-use', 'externals', 'navigate', 'toast', 'settings', 'update', 'pricing', 'github', 'browser', 'browser-frame', 'browser-cursor'
 ];
 
 /** Fire-and-forget channels (no reply), for the hot path of terminal I/O. */
-export const SEND_CHANNELS = ['agents.write', 'agents.resize'] as const;
+export const SEND_CHANNELS = ['agents.write', 'agents.resize', 'browser.input'] as const;
 
 /** The theme settings, read synchronously at page load so the first paint already uses them. */
 export type ThemePrefs = Pick<AppSettings, 'theme' | 'lightPalette'>;

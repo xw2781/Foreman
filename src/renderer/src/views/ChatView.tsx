@@ -86,6 +86,7 @@ function toolIcon(item: Item<'tool'>) {
   if (t === 'task' || t === 'agent') return <Bot size={size} />;
   if (t === 'todowrite') return <ListChecks size={size} />;
   if (t === 'view_image') return <Image size={size} />;
+  if (t.startsWith('mcp__foreman_browser__') || t.startsWith('foreman_browser.')) return <Globe size={size} />;
   if (t.startsWith('mcp__') || t.includes('.')) return <Plug size={size} />;
   return <Wrench size={size} />;
 }

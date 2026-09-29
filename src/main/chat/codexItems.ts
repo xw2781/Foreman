@@ -5,6 +5,7 @@
 // driver (main process) and history loading (telemetry worker).
 import type { ChatEntry, ChatFileChange, ChatToolStatus } from '../../shared/types';
 import { clipText } from './log';
+import { browserToolDetail, browserToolTitle } from './browserTools';
 
 function pick(item: Record<string, any>, ...keys: string[]): any {
   for (const key of keys) if (item[key] !== undefined && item[key] !== null) return item[key];
@@ -181,8 +182,8 @@ export function codexItemEntry(raw: any): ChatEntry | null {
         kind: 'tool',
         id,
         tool: `${raw.server ?? 'mcp'}.${raw.tool ?? ''}`,
-        title: `${raw.server ?? 'mcp'} · ${raw.tool ?? 'tool'}`,
-        detail: typeof raw.arguments?.title === 'string' ? raw.arguments.title : null,
+        title: browserToolTitle(raw.server, raw.tool) ?? `${raw.server ?? 'mcp'} · ${raw.tool ?? 'tool'}`,
+        detail: browserToolTitle(raw.server, raw.tool) ? browserToolDetail(raw.tool, raw.arguments) : typeof raw.arguments?.title === 'string' ? raw.arguments.title : null,
         input: stringify(raw.arguments),
         output: mcpOutput(raw),
         status: toolStatus(raw.status, raw.error ? 1 : undefined),

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   FolderOpen,
+  Globe,
   History,
   MessagesSquare,
   MousePointer2,
@@ -18,6 +19,7 @@ import {
 import { create } from 'zustand';
 import { AGENT_MODES, CONVERSATION_MODES, LIVE_STATUSES, PROVIDER_LABEL, type AgentInfo, type AgentMode } from '@shared/types';
 import { ChatView } from './ChatView';
+import { BrowserPanel } from './BrowserPanel';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
 import { ago, compact, duration, folderName, modelLabel, percent, shortPath, usd } from '../format';
@@ -104,6 +106,7 @@ function DisplayToggle({ agent, display }: { agent: AgentInfo; display: Display 
 
 function AgentListItem({ agent, selected, onSelect }: { agent: AgentInfo; selected: boolean; onSelect: () => void }) {
   const t = agent.telemetry;
+  const browser = useApp((s) => s.browsers[agent.id]);
   const detail =
     agent.status === 'needs-input'
       ? agent.statusDetail ?? 'Waiting for your input'
@@ -150,6 +153,7 @@ function AgentListItem({ agent, selected, onSelect }: { agent: AgentInfo; select
       <div className="ai-meta">
         <StatusPill status={agent.status} />
         {agent.usesScreen ? <MousePointer2 size={12} color="var(--warning)" /> : null}
+        {browser ? <Globe size={12} color={browser.busy ? 'var(--accent-strong)' : 'var(--text-muted)'} aria-label="Has a browser open" /> : null}
         <span className="ellipsis">{agent.mode === 'task' ? 'task' : CONVERSATION_MODES.includes(agent.mode) ? agent.profileLabel : agent.mode}</span>
         {t?.cost.totalUsd != null ? <span style={{ marginLeft: 'auto' }} className="num">{usd(t.cost.reportedUsd ?? t.cost.totalUsd)}</span> : null}
       </div>
@@ -178,7 +182,9 @@ function TerminalHost({ agent }: { agent: AgentInfo }) {
 const DOCK_DETAILS = '(min-width: 1420px)';
 
 function useDetails() {
-  const docked = useMediaQuery(DOCK_DETAILS);
+  // With the browser beside the conversation there's no room to dock them as well: they open over it.
+  const browserOpen = useApp((s) => (s.selectedAgentId ? s.browserShown[s.selectedAgentId] === true : false));
+  const docked = useMediaQuery(DOCK_DETAILS) && !browserOpen;
   const showDetails = useApp((s) => s.showDetails);
   const overlay = useApp((s) => s.detailsOverlay);
   const toggle = () => (docked ? useApp.getState().toggleDetails() : useApp.setState({ detailsOverlay: !overlay }));
@@ -260,6 +266,7 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
         <button className="btn ghost icon" data-fit="1" title="Open folder" onClick={() => call('shell.openPath', agent.cwd)}>
           <FolderOpen size={15} />
         </button>
+        {AGENT_MODES.includes(agent.mode) ? <BrowserToggle agent={agent} /> : null}
         {/* A chat stops from its composer; terminal agents have no composer. */}
         {live && display !== 'chat' ? (
           <button className="btn danger sm" onClick={() => stopAgent(agent)}>
@@ -279,6 +286,80 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
           {details.visible ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
         </button>
       </div>
+    </div>
+  );
+}
+
+function BrowserToggle({ agent }: { agent: AgentInfo }) {
+  const shown = useApp((s) => s.browserShown[agent.id] === true);
+  const browser = useApp((s) => s.browsers[agent.id]);
+  const toggle = () => {
+    const state = useApp.getState();
+    useApp.setState({ browserShown: { ...state.browserShown, [agent.id]: !shown }, browserExpanded: shown ? false : state.browserExpanded });
+  };
+  return (
+    <button
+      className={`btn ghost icon ${shown ? 'on' : ''}`}
+      title={shown ? 'Hide the browser' : browser ? "Show the agent's browser" : "Open the agent's browser (it has its own cookies and logins)"}
+      aria-pressed={shown}
+      onClick={toggle}
+    >
+      <Globe size={15} color={browser?.busy ? 'var(--accent-strong)' : undefined} />
+    </button>
+  );
+}
+
+/** The conversation beside the agent's browser, with a divider to drag; in a narrow panel the browser takes it all. */
+function AgentWork({ agent, children }: { agent: AgentInfo; children: React.ReactNode }) {
+  const shown = useApp((s) => s.browserShown[agent.id] === true) && AGENT_MODES.includes(agent.mode);
+  const state = useApp((s) => s.browsers[agent.id] ?? null);
+  const expanded = useApp((s) => s.browserExpanded);
+  const box = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  const [share, setShare] = useState(() => {
+    const saved = Number(localStorage.getItem('browserShare'));
+    return saved > 0.2 && saved < 0.8 ? saved : 0.5;
+  });
+  useEffect(() => {
+    const element = box.current;
+    if (!element) return;
+    const observer = new ResizeObserver(() => setWidth(element.clientWidth));
+    observer.observe(element);
+    setWidth(element.clientWidth);
+    return () => observer.disconnect();
+  }, []);
+  const narrow = width > 0 && width < 760;
+  const full = shown && (expanded || narrow);
+  const drag = (event: React.PointerEvent) => {
+    const element = box.current;
+    if (!element) return;
+    event.preventDefault();
+    const bounds = element.getBoundingClientRect();
+    const move = (e: PointerEvent) => {
+      const next = Math.min(0.75, Math.max(0.25, (bounds.right - e.clientX) / bounds.width));
+      setShare(next);
+      localStorage.setItem('browserShare', String(next));
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      document.body.classList.remove('dragging-split');
+    };
+    document.body.classList.add('dragging-split');
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  return (
+    <div className="agent-work" ref={box}>
+      <div className="agent-main" hidden={full}>
+        {children}
+      </div>
+      {shown && !full ? <div className="split-handle" role="separator" aria-orientation="vertical" title="Drag to resize" onPointerDown={drag} /> : null}
+      {shown ? (
+        <div className="agent-browser" style={full ? { flex: 1 } : { width: `${share * 100}%` }}>
+          <BrowserPanel agent={agent} state={state} expanded={full} onExpand={narrow ? undefined : () => useApp.setState({ browserExpanded: !expanded })} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -526,6 +607,7 @@ export function AgentsView() {
               </button>
             </div>
           ) : null}
+          <AgentWork agent={selected}>
           {display === 'chat' ? (
             <ChatView key={selected.id} agent={selected} />
           ) : selected.attached && selected.mode !== 'chat' ? (
@@ -547,6 +629,7 @@ export function AgentsView() {
               </Empty>
             </div>
           )}
+          </AgentWork>
         </section>
       ) : (
         <section className="term-panel" style={{ display: 'grid', placeItems: 'center' }}>

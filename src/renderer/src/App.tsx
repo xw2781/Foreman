@@ -55,6 +55,7 @@ function useBootstrap() {
         call('usage.report').then((usage) => set({ usage })).catch(() => {});
         call('update.status').then((update) => set({ update })).catch(() => {});
         call('github.status').then((github) => set({ github })).catch(() => {});
+        call('browser.list').then((list) => set({ browsers: Object.fromEntries(list.map((b) => [b.agentId, b])) })).catch(() => {});
       } catch (error) {
         store().toast('error', errorMessage(error));
       }
@@ -81,6 +82,15 @@ function useBootstrap() {
       listen('settings', (settings) => set({ settings })),
       listen('update', (update) => set({ update })),
       listen('github', (github) => set({ github })),
+      listen('browser', ({ agentId, state }) => {
+        const { browsers, browserShown, settings } = store();
+        const next = { ...browsers };
+        if (state) next[agentId] = state;
+        else delete next[agentId];
+        // A browser the agent just opened shows beside it, unless the person already chose.
+        const opened = state && !browsers[agentId] && browserShown[agentId] === undefined && settings?.browserAutoOpen !== false;
+        set({ browsers: next, ...(opened ? { browserShown: { ...browserShown, [agentId]: true } } : {}) });
+      }),
       listen('toast', (t) => store().toast(t.kind, t.message)),
       listen('navigate', ({ view, agentId }) => {
         set({ view: view as View });

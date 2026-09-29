@@ -26,6 +26,9 @@ import { installCli, rollbackCli } from './cliInstall';
 import { logoutCommand } from './commands';
 import { UpdateService } from './updater';
 import { GitHubSync } from './githubSync';
+import { BrowserService } from './browser/browserService';
+import { BrowserMcpServer } from './browser/mcpServer';
+import { callTool } from './browser/tools';
 import { HOME, JsonStore, cleanEnv, exists, profilesRoot, readJsonFile, run, writeJsonFileAtomic } from './util';
 
 app.setAppUserModelId('com.agenttaskcenter.app');
@@ -81,7 +84,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   codexNoDaemonForIsolated: true,
   shellForTerminals: 'powershell.exe',
   claudeStatusLine: true,
-  chatSendMode: 'steer'
+  chatSendMode: 'steer',
+  browserEnabled: true,
+  browserAutoApprove: true,
+  browserProfile: 'shared',
+  browserAutoOpen: true
 };
 
 const settingsStore = new JsonStore<AppSettings>(path.join(userData, 'settings.json'), DEFAULT_SETTINGS);
@@ -122,7 +129,27 @@ const githubSync = new GitHubSync(path.join(userData, 'github-sync.json'), {
 const hooks = new HookServer(path.join(userData, 'agent-settings'));
 const processes = new ProcessMonitor();
 const computerUse = new ComputerUseService(exists(skillSource) ? skillSource : null);
-const agents = new AgentManager({ profiles, telemetry, hooks, processes, settings, userDataDir: userData, appVersion: app.getVersion() });
+const browsers = new BrowserService({
+  mainWindow: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null),
+  settings,
+  emit: (event, payload) => emit(event, payload),
+  downloadsDir: path.join(userData, 'browser-downloads')
+});
+const browserMcp = new BrowserMcpServer((agentId, name, args) => callTool(browsers, agentId, name, args), path.join(userData, 'agent-mcp'), app.getVersion());
+const agents = new AgentManager({
+  profiles,
+  telemetry,
+  hooks,
+  processes,
+  settings,
+  userDataDir: userData,
+  appVersion: app.getVersion(),
+  browserArgs: (agentId, provider) => {
+    const s = settings();
+    if (!s.browserEnabled || !browserMcp.running) return [];
+    return provider === 'claude' ? browserMcp.claudeArgs(agentId, s.browserAutoApprove) : browserMcp.codexArgs(agentId, s.browserAutoApprove);
+  }
+});
 const updates = new UpdateService();
 
 let mainWindow: BrowserWindow | null = null;
@@ -193,6 +220,12 @@ agents.onRememberCwd = (cwd) => {
   emit('settings', settings());
 };
 agents.onAttention = (info, reason) => notifyAttention(info, reason);
+agents.onRemoved = (ids) => {
+  for (const id of ids) {
+    browsers.close(id).catch(() => {});
+    browserMcp.removeConfig(id);
+  }
+};
 if (process.env.ATC_CAPTURE_DIR) {
   const hookLog = path.join(process.env.ATC_CAPTURE_DIR, 'hooks.log');
   agents.onHookEvent = (event) => {
@@ -485,6 +518,22 @@ function registerIpc() {
     return `data:image/png;base64,${fs.readFileSync(resolved).toString('base64')}`;
   });
 
+  handle('browser.list', () => browsers.list());
+  handle('browser.open', (agentId, url) => {
+    if (!agents.get(agentId)) throw new Error('No such agent.');
+    return browsers.open(agentId, url);
+  });
+  handle('browser.navigate', (agentId, url) => browsers.navigate(agentId, url));
+  handle('browser.command', (agentId, command, tabId) => browsers.command(agentId, command, tabId));
+  handle('browser.watch', (agentId) => browsers.watch(agentId));
+  handle('browser.clearData', async () => {
+    await browsers.clearData();
+    toast('success', 'Cleared the agent browser: cookies, logins, storage and cache.');
+  });
+  ipcMain.on('browser.input', (event, agentId: string, input) => {
+    if (event.sender === mainWindow?.webContents) browsers.input(agentId, input);
+  });
+
   handle('update.status', () => updates.status());
   handle('update.check', () => updates.check());
   handle('update.install', async () => {
@@ -740,6 +789,12 @@ app.whenReady().then(async () => {
     // Without hooks, Claude status falls back to transcript telemetry.
     console.error('Hook server failed to start', error);
   }
+  try {
+    await browserMcp.start();
+  } catch (error) {
+    // Agents then start without the browser tools.
+    console.error('Browser tool server failed to start', error);
+  }
   await configureTelemetry();
   registerIpc();
   createWindow();
@@ -766,6 +821,8 @@ app.on('will-quit', (event) => {
       processes.dispose();
       updates.dispose();
       hooks.stop();
+      browserMcp.stop();
+      browsers.closeAll();
       await telemetry.dispose();
     } finally {
       app.exit(0);
@@ -773,4 +830,5 @@ app.on('will-quit', (event) => {
   })();
 });
 
+// Agent browser tabs are hidden windows: the app ends with its main window, not the last window.
 app.on('window-all-closed', () => app.quit());

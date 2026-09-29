@@ -214,6 +214,42 @@ export function SettingsView() {
       </div>
 
       <div className="section-title">
+        <h2>Agent browser</h2>
+      </div>
+      <div className="card settings-list">
+        <Setting
+          title="Give agents Foreman's browser"
+          description="New Claude Code and Codex agents get browser tools for a Chromium browser inside Foreman. It runs off-screen with its own cookies and logins, apart from your browsers, so it never takes your screen, mouse or keyboard. Watch it (and take over) with the Browser button beside an agent."
+        >
+          <Switch on={settings.browserEnabled} onChange={(v) => update({ browserEnabled: v })} />
+        </Setting>
+        <Setting title="Let agents use it without asking" description="Otherwise each browser step asks for approval like any other tool. Applies to agents started after the change.">
+          <Switch on={settings.browserAutoApprove} onChange={(v) => update({ browserAutoApprove: v })} />
+        </Setting>
+        <Setting
+          title="Browser profile"
+          description="Shared: every agent uses one agent profile, so a site you sign in to there stays signed in for all agents. Separate: each agent starts signed out, and its data is cleared when the agent is removed."
+        >
+          <Segmented
+            value={settings.browserProfile}
+            onChange={(browserProfile) => update({ browserProfile })}
+            options={[
+              { value: 'shared', label: 'Shared' },
+              { value: 'per-agent', label: 'Separate per agent' }
+            ]}
+          />
+        </Setting>
+        <Setting title="Show the browser when an agent starts using it" description="Opens it beside the conversation; you can close it at any time.">
+          <Switch on={settings.browserAutoOpen} onChange={(v) => update({ browserAutoOpen: v })} />
+        </Setting>
+        <Setting title="Agent browsing data" description="Cookies, logins, site storage and cache of the agent browser. Your own browsers are never touched.">
+          <button className="btn sm" onClick={() => call('browser.clearData').catch((error) => toast('error', errorMessage(error)))}>
+            Clear browsing data
+          </button>
+        </Setting>
+      </div>
+
+      <div className="section-title">
         <h2>Notifications & safety</h2>
       </div>
       <div className="card settings-list">

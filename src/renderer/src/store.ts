@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type {
   AgentInfo,
   AppSettings,
+  BrowserState,
   ComputerUseStatus,
   EnvironmentInfo,
   ExternalAgentProcess,
@@ -39,6 +40,12 @@ interface AppState {
   showDetails: boolean;
   /** The details panel over the agent, in a window too narrow to dock it. */
   detailsOverlay: boolean;
+  /** Each agent's browser, while it is open. */
+  browsers: Record<string, BrowserState>;
+  /** Whether the browser shows beside each agent (unset: not decided yet, so it opens when the agent starts browsing). */
+  browserShown: Record<string, boolean>;
+  /** The browser fills the agent panel, hiding the conversation. */
+  browserExpanded: boolean;
   setView: (view: View) => void;
   selectAgent: (id: string | null) => void;
   openLauncher: (preset?: Partial<LaunchOptions>) => void;
@@ -67,6 +74,9 @@ export const useApp = create<AppState>((set, get) => ({
   launcher: null,
   showDetails: true,
   detailsOverlay: false,
+  browsers: {},
+  browserShown: {},
+  browserExpanded: false,
   setView: (view) => set({ view }),
   selectAgent: (id) => set({ selectedAgentId: id }),
   openLauncher: (preset = {}) => set({ launcher: preset }),
