@@ -19,6 +19,7 @@ import {
 import { create } from 'zustand';
 import { AGENT_MODES, CONVERSATION_MODES, LIVE_STATUSES, PROVIDER_LABEL, type AgentInfo, type AgentMode } from '@shared/types';
 import { ChatView } from './ChatView';
+import { PromptCacheBadge } from '../PromptCacheBadge';
 import { BrowserPanel } from './BrowserPanel';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
@@ -160,6 +161,7 @@ function AgentListItem({ agent, selected, onSelect }: { agent: AgentInfo; select
       <div className="ai-detail" title={detail}>
         {detail}
       </div>
+      {AGENT_MODES.includes(agent.mode) ? <div style={{ gridColumn: 2 }}><PromptCacheBadge agent={agent} /></div> : null}
       {t && t.contextPercent !== null && agent.mode !== 'shell' ? (
         <div style={{ gridColumn: 2 }}>
           <MiniMeter value={t.contextPercent} title={`Context ${compact(t.contextUsedTokens)} / ${compact(t.contextWindow)}`} />

@@ -1,5 +1,21 @@
 /* Foreman design system. Tokens first; components read roles only. */
 
+.prompt-cache {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 5px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
+}
+.prompt-cache.warm { color: var(--good); background: var(--good-soft); }
+.prompt-cache.expired { color: var(--serious); }
+.prompt-cache:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
 :root {
   color-scheme: dark;
   --font-ui: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, sans-serif;

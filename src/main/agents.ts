@@ -1,4 +1,6 @@
+import type { ChatImage, ChatMessage } from '../shared/types';
 import crypto from 'node:crypto';
+import { validateChatImages } from '../shared/chatImages';
 import path from 'node:path';
 import { spawn as spawnChild, type ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
@@ -27,7 +29,6 @@ import { CodexChat } from './chat/codexChat';
 import { LineSplitter, type ChatDriver, type ChatHost } from './chat/driver';
 import { locateCli, spawnSpec } from './cliLocator';
 import { defaultModel } from '../shared/models';
-import { cliDefaults } from './profiles';
 import { ClaudeStreamFormatter, describeToolInput } from './streamFormat';
 import type { HookEvent, HookServer } from './hookServer';
 import type { ProfileService } from './profiles';
@@ -168,13 +169,13 @@ export class AgentManager {
    * Starts an agent. With `reuseId`, a finished agent is continued in place:
    * same id and list entry, a new process (resume, chat/terminal hand-off).
    */
-  async launch(options: LaunchOptions, reuseId?: string): Promise<AgentInfo> {
+  async launch(options: LaunchOptions, reuseId?: string, images?: ChatImage[]): Promise<AgentInfo> {
     const profile = this.deps.profiles.require(options.profileId);
     if (profile.provider !== options.provider) throw new Error('That account belongs to a different tool.');
     // A new agent takes the account's defaults where the launch doesn't choose; a continued one keeps its own.
     if (!reuseId && AGENT_MODES.includes(options.mode)) {
       options = { ...options, model: options.model || profile.defaultModel || undefined, effort: options.effort || profile.defaultEffort || undefined };
-      if (!options.model && !options.resumeSessionId) options.model = defaultModel(profile.provider, cliDefaults(profile));
+      if (!options.model && !options.resumeSessionId) options.model = defaultModel(profile.provider, this.deps.profiles.cliDefaults(profile));
     }
     if (!exists(options.cwd)) throw new Error(`Folder not found: ${options.cwd}`);
     if (options.mode === 'task' && !options.prompt?.trim()) throw new Error('A background task needs a prompt.');
@@ -254,6 +255,7 @@ export class AgentManager {
       transcriptPath: options.resumeSessionId ? previous?.transcriptPath ?? null : null,
       lastActivityAt: now,
       lastOutputAt: null,
+      lastModelActivityAt: options.resumeSessionId ? previous?.lastModelActivityAt ?? (previous?.telemetry?.requests ? previous.telemetry.updatedAt : null) : null,
       commandLine: [cli.path, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' '),
       telemetry: null,
       resources: null,
@@ -280,7 +282,7 @@ export class AgentManager {
     this.sessions.set(id, session);
 
     try {
-      if (options.mode === 'chat') this.startChat(session, cli.path, args, env);
+      if (options.mode === 'chat') this.startChat(session, cli.path, args, env, images);
       else if (headless) this.startHeadless(session, cli.path, args, env);
       else this.startTerminal(session, cli.path, args, env);
     } catch (error) {
@@ -431,7 +433,7 @@ export class AgentManager {
   }
 
   /** Chat mode: the CLI's structured protocol over pipes, rendered by the app's chat view. */
-  private startChat(session: Session, file: string, args: string[], env: Record<string, string>) {
+  private startChat(session: Session, file: string, args: string[], env: Record<string, string>, images?: ChatImage[]) {
     const spec = spawnSpec(file, args);
     const child = typeof spec.args === 'string'
       ? spawnChild(spec.file, [spec.args], { cwd: session.info.cwd, env, windowsHide: true, windowsVerbatimArguments: true })
@@ -479,7 +481,7 @@ export class AgentManager {
       driver.dispose?.('The process exited');
       this.handleExit(session, code ?? 1);
     });
-    driver.start(options.prompt).catch((error: Error) => {
+    driver.start(options.prompt, images).catch((error: Error) => {
       if (session.info.endedAt) return;
       session.failure = `Couldn't start ${PROVIDER_LABEL[session.profile.provider]}: ${error.message}`;
       try {
@@ -516,6 +518,8 @@ export class AgentManager {
         this.markChanged(info.id);
       },
       turnComplete: () => {
+        info.lastModelActivityAt = new Date().toISOString();
+        this.markChanged(info.id);
         this.refreshTelemetry(session).catch(() => {});
         this.syncTitle(session);
       },
@@ -540,7 +544,7 @@ export class AgentManager {
     const next = this.queuedItems(session)[0];
     if (!next) return;
     chat.moveToEnd(next.id);
-    driver.send(next.text, next.id);
+    driver.send(next.text, next.id, next.images);
     session.info.lastActivityAt = new Date().toISOString();
   }
 
@@ -584,8 +588,23 @@ export class AgentManager {
 
   async chatItems(id: string): Promise<ChatItem[]> {
     const session = this.sessions.get(id);
-    if (session?.chat) return session.chat.list();
     const info = this.get(id);
+    // Reprice saved conversations when opened, even when their process is gone.
+    // Their persisted telemetry may predate a newly added model rate.
+    const file = info?.transcriptPath ?? info?.telemetry?.filePath;
+    if (info?.endedAt && file) {
+      try {
+        const telemetry = await this.deps.telemetry.sessionTelemetry(info.provider, info.profileId, file);
+        if (telemetry && this.get(id) === info) {
+          info.telemetry = telemetry;
+          this.history.replace({ agents: this.history.data.agents.map((agent) => agent.id === id ? { ...info } : agent) });
+          this.markChanged(id);
+        }
+      } catch {
+        // Keep the saved estimate if the original transcript is unavailable.
+      }
+    }
+    if (session?.chat) return session.chat.list();
     if (!info || !CONVERSATION_MODES.includes(info.mode)) return [];
     const profile = this.deps.profiles.list().find((p) => p.id === info.profileId);
     if (!profile) return [];
@@ -598,22 +617,23 @@ export class AgentManager {
    * While the agent works the message steers the running turn, or waits in
    * the queue for it to end (commands always wait: they're turns of their own).
    */
-  async chatSend(id: string, text: string, mode: ChatSendMode = 'steer'): Promise<AgentInfo> {
-    if (!text.trim()) throw new Error('Type a message first.');
+  async chatSend(id: string, text: string, mode: ChatSendMode = 'steer', images: ChatImage[] = []): Promise<AgentInfo> {
+    validateChatImages(images);
+    if (!text.trim() && !images.length) throw new Error('Type a message or attach an image first.');
     const session = this.sessions.get(id);
     if (session && !session.info.endedAt) {
       const { driver, chat } = session;
       if (!driver || !chat) throw new Error('This agent runs in the terminal; type your message there.');
       if (driver.busy && (mode === 'queue' || !driver.canSteer(text))) {
-        chat.upsert({ kind: 'user', id: crypto.randomUUID(), text, delivery: 'queued' });
+        chat.upsert({ kind: 'user', id: crypto.randomUUID(), text, images, delivery: 'queued' });
         this.scheduleChatFlush();
-      } else driver.send(text);
+      } else driver.send(text, undefined, images);
       session.info.lastActivityAt = new Date().toISOString();
       return session.info;
     }
     const info = this.get(id);
     if (!info) throw new Error('Unknown agent');
-    return this.continueAgent(info, 'chat', text);
+    return this.continueAgent(info, 'chat', text, images);
   }
 
   async chatCommands(id: string): Promise<ChatCommand[]> {
@@ -638,29 +658,29 @@ export class AgentManager {
       if (action === 'remove') return session.info;
       // A conversation that has ended is resumed with it.
       try {
-        return await this.chatSend(id, item.text);
+        return await this.chatSend(id, item.text, 'steer', item.images);
       } catch (error) {
-        chat.upsert({ kind: 'user', id: itemId, text: item.text, delivery: 'queued' });
+        chat.upsert({ kind: 'user', id: itemId, text: item.text, images: item.images, delivery: 'queued' });
         this.scheduleChatFlush();
         throw error;
       }
     }
     if (driver.busy && !driver.canSteer(item.text)) throw new Error(`${PROVIDER_LABEL[session.profile.provider]} can't take this in mid-turn; it's sent when the turn ends.`);
     chat.moveToEnd(itemId);
-    driver.send(item.text, itemId);
+    driver.send(item.text, itemId, item.images);
     session.info.lastActivityAt = new Date().toISOString();
     return session.info;
   }
 
-  /** Stops the running turn. As in both CLIs' own apps, the queued messages come back (their texts) for editing. */
-  chatInterrupt(id: string): string[] {
+  /** Stops the running turn. As in both CLIs' own apps, the queued messages come back with attachments for editing. */
+  chatInterrupt(id: string): ChatMessage[] {
     const session = this.sessions.get(id);
     if (!session) return [];
     const queued = this.queuedItems(session);
     for (const item of queued) session.chat!.remove(item.id);
     if (queued.length) this.scheduleChatFlush();
     session.driver?.interrupt();
-    return queued.map((i) => i.text);
+    return queued.map(({ text, images }) => ({ text, images }));
   }
 
   chatRespond(id: string, itemId: string, answer: ChatAnswer) {
@@ -698,7 +718,7 @@ export class AgentManager {
   }
 
   /** Relaunches a finished agent's conversation in place, as a chat or in the terminal. */
-  private continueAgent(info: AgentInfo, mode: AgentMode, prompt?: string): Promise<AgentInfo> {
+  private continueAgent(info: AgentInfo, mode: AgentMode, prompt?: string, images?: ChatImage[]): Promise<AgentInfo> {
     const sessionId = info.telemetry?.sessionId ?? info.sessionId;
     // Only a conversation the CLI actually saved can be resumed; an empty one starts over.
     const resumable = Boolean(sessionId && (info.transcriptPath || info.telemetry));
@@ -717,7 +737,8 @@ export class AgentManager {
         resumeSessionId: resumable ? sessionId! : undefined,
         prompt
       },
-      info.id
+      info.id,
+      images
     );
   }
 
@@ -992,6 +1013,9 @@ export class AgentManager {
     info.lastActivityAt = new Date().toISOString();
     this.markChanged(info.id);
     if (status === 'needs-input' && previous !== 'needs-input') this.onAttention(info, 'needs-input');
+    if (info.mode === 'interactive' && status === 'idle' && (previous === 'working' || previous === 'needs-input')) {
+      info.lastModelActivityAt = info.lastActivityAt;
+    }
     if (status === 'idle' && previous === 'working' && CONVERSATION_MODES.includes(info.mode)) this.onAttention(info, 'turn-complete');
   }
 

@@ -14,11 +14,13 @@ import {
 } from '../shared/types';
 import type { EventMap, EventName, InvokeChannel, InvokeMap, ThemePrefs } from '../shared/ipc';
 import { ProfileService } from './profiles';
+import { discoverModels } from './modelCatalog';
 import { PlanUsageClient } from './planUsage';
 import { TelemetryClient } from './telemetry/client';
 import { loadPricingFile, seedPricingFile } from './telemetry/pricingFile';
 import { HookServer } from './hookServer';
 import { ProcessMonitor, killTree } from './processMonitor';
+import { resolveChatFile } from './chat/fileLinks';
 import { AgentManager } from './agents';
 import { ComputerUseService } from './computerUse';
 import { forgetCli, locateCli } from './cliLocator';
@@ -170,6 +172,10 @@ function toast(kind: 'info' | 'success' | 'error', message: string) {
 profiles.runningCounter = (id) => agents.runningCount(id);
 profiles.skillChecker = (profile) => computerUse.isInstalled(profile);
 profiles.codexLimitsLoader = (profile) => telemetry.codexLimits({ id: profile.id, provider: profile.provider, configDir: profile.configDir });
+profiles.modelsLoader = async (profile) => {
+  const cli = await locateCli(profile.provider, settings().cliPath[profile.provider]);
+  return cli.path ? discoverModels(profile.provider, cli.path, profiles.envFor(profile, cleanEnv())) : [];
+};
 const planUsage = new PlanUsageClient((url, init) => net.fetch(url, init));
 profiles.liveLimitsLoader = (profile, force) => planUsage.load(profile, force);
 profiles.onChanged = () => {
@@ -426,7 +432,24 @@ function registerIpc() {
   handle('agents.resume', (id, mode) => agents.resume(id, mode));
   handle('agents.buffer', (id) => agents.buffer(id));
   handle('chat.items', (id) => agents.chatItems(id));
-  handle('chat.send', (id, text, mode) => agents.chatSend(id, text, mode));
+  handle('chat.file', async (id, href, action) => {
+    const agent = agents.get(id);
+    if (!agent) throw new Error('This conversation is no longer available.');
+    if (action !== 'open' && action !== 'show') throw new Error('Unknown file action.');
+    const target = resolveChatFile(href, agent.cwd, os.homedir());
+    try {
+      await fs.promises.stat(target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error(`File not found: ${target}. Ask the agent for its full local path.`);
+      throw new Error(`Cannot access: ${target}. ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (action === 'show') shell.showItemInFolder(target);
+    else {
+      const error = await shell.openPath(target);
+      if (error) throw new Error(`Could not open ${target}: ${error}. Try Show in folder.`);
+    }
+  });
+  handle('chat.send', (id, text, mode, images) => agents.chatSend(id, text, mode, images));
   handle('chat.queued', (id, itemId, action) => agents.chatQueued(id, itemId, action));
   handle('chat.interrupt', (id) => agents.chatInterrupt(id));
   handle('chat.respond', (id, itemId, answer) => agents.chatRespond(id, itemId, answer));

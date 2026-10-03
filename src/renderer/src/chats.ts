@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ChatCommand, ChatItem, ChatSendMode } from '@shared/types';
+import type { ChatImage, ChatCommand, ChatItem, ChatSendMode } from '@shared/types';
 import { call, errorMessage, listen } from './api';
 
 interface ChatState {
@@ -53,11 +53,14 @@ export async function loadChat(id: string) {
 }
 
 export function forgetChat(id: string) {
+  imageDrafts.delete(id);
   const { [id]: _removed, ...rest } = useChats.getState().chats;
   useChats.setState({ chats: rest });
 }
 
 /** Each agent's last known slash commands and skills, so the menu opens with them while a fresh list loads. */
+export const imageDrafts = new Map<string, ChatImage[]>();
+
 export const commandLists = new Map<string, ChatCommand[]>();
 
 export async function loadCommands(id: string): Promise<ChatCommand[]> {

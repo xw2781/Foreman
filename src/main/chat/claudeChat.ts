@@ -1,3 +1,4 @@
+import type { ChatImage } from '../../shared/types';
 // Claude Code's SDK protocol: `claude --input-format stream-json
 // --output-format stream-json --permission-prompt-tool stdio`. User messages
 // and control requests go in on stdin; conversation events, streaming deltas
@@ -96,19 +97,22 @@ export class ClaudeChat implements ChatDriver {
   /** `permission`: the mode asked for at launch, to notice when the CLI starts in another. */
   constructor(private host: ChatHost, private write: (message: object) => void, private permission?: string) {}
 
-  async start(prompt?: string) {
+  async start(prompt?: string, images?: ChatImage[]) {
     // As the SDK does; the reply lists the session's slash commands and skills.
     this.initialized = this.ask({ subtype: 'initialize' });
     // The CLI says nothing else until the first message arrives.
     this.host.status('idle', null);
-    if (prompt?.trim()) this.send(prompt);
+    if (prompt?.trim() || images?.length) this.send(prompt ?? '', undefined, images);
   }
 
-  send(text: string, itemId: string = randomUUID()) {
+  send(text: string, itemId: string = randomUUID(), images: ChatImage[] = []) {
     // While a turn runs the CLI folds the message in after the current step (its "next" priority).
     const steer = this.busy;
-    this.host.log.upsert(steer ? { kind: 'user', id: itemId, text, delivery: 'steering' } : { kind: 'user', id: itemId, text });
-    this.write({ type: 'user', uuid: itemId, session_id: '', message: { role: 'user', content: [{ type: 'text', text }] }, parent_tool_use_id: null });
+    this.host.log.upsert(steer ? { kind: 'user', id: itemId, text, images, delivery: 'steering' } : { kind: 'user', id: itemId, text, images });
+    this.write({ type: 'user', uuid: itemId, session_id: '', message: { role: 'user', content: [...(text ? [{ type: 'text', text }] : []), ...images.map((image) => {
+      const [header, data] = image.dataUrl.split(',');
+      return { type: 'image', source: { type: 'base64', media_type: header.slice(5, -7), data } };
+    })] }, parent_tool_use_id: null });
     if (steer) this.steering.add(itemId);
     else {
       this.busy = true;

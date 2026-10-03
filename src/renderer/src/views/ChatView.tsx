@@ -1,4 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { ChatImage, ChatMessage } from '@shared/types';
+import { IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_CHAT_IMAGES, validateChatImages } from '@shared/chatImages';
 import { defaultModel } from '@shared/models';
 import {
   ArrowDown,
@@ -47,12 +49,14 @@ import {
 } from '@shared/types';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
-import { commandLists, drafts, loadChat, loadCommands, sendModes, useChats } from '../chats';
+import { commandLists, drafts, imageDrafts, loadChat, loadCommands, sendModes, useChats } from '../chats';
 import { commandToken, rankCommands } from '../commands';
 import { CopyButton, Markdown } from '../markdown';
 import { folderName, percent, usd } from '../format';
 import { ProviderIcon, Select, useFit } from '../ui';
 import { PERMISSIONS, effortOptions, modelOptions } from './LaunchDialog';
+import { ImageAttachments } from '../ImageAttachments';
+import { PromptCacheBadge } from '../PromptCacheBadge';
 import '../chat.css';
 
 type Item<K extends ChatItem['kind']> = Extract<ChatItem, { kind: K }>;
@@ -398,7 +402,7 @@ function ApprovalCard({ item, agent }: { item: Item<'approval'>; agent: AgentInf
       {item.body ? (
         item.bodyKind === 'markdown' ? (
           <div className="approval-plan">
-            <Markdown text={item.body} />
+            <Markdown text={item.body} agentId={agent.id} />
           </div>
         ) : (
           <pre className={`approval-body selectable ${item.bodyKind === 'command' ? 'command' : ''}`}>{item.body}</pre>
@@ -455,7 +459,7 @@ function Notice({ item }: { item: Item<'notice'> }) {
   );
 }
 
-/** A message sent into a running turn, marked as such so it doesn't read as a new prompt. */
+/** A message sent into a running turn, marked as such so it does not read as a new prompt. */
 function SteerMessage({ item }: { item: Item<'user'> }) {
   const waiting = item.delivery === 'steering';
   return (
@@ -464,7 +468,7 @@ function SteerMessage({ item }: { item: Item<'user'> }) {
         {waiting ? <LoaderCircle size={11} className="spin" /> : <Navigation size={11} />}
         <span>{waiting ? 'Steering · waiting for the next step' : 'Steered mid-turn'}</span>
       </div>
-      <div className="bubble selectable">{item.text}</div>
+      <div className="bubble selectable"><ImageAttachments images={item.images} />{item.text}</div>
     </div>
   );
 }
@@ -493,7 +497,7 @@ function renderEntries(items: ChatItem[], agent: AgentInfo, activeTail: boolean,
             <SteerMessage key={item.id} item={item} />
           ) : (
             <div key={item.id} className="msg-user">
-              <div className="bubble selectable">{item.text}</div>
+              <div className="bubble selectable"><ImageAttachments images={item.images} />{item.text}</div>
             </div>
           )
         );
@@ -501,7 +505,7 @@ function renderEntries(items: ChatItem[], agent: AgentInfo, activeTail: boolean,
       case 'assistant':
         nodes.push(
           <div key={item.id} className={`msg-assistant ${item.streaming ? 'streaming' : ''}`}>
-            <Markdown text={item.text} />
+            <Markdown text={item.text} agentId={agent.id} />
           </div>
         );
         break;
@@ -737,7 +741,7 @@ function ContextCard({ telemetry: t }: { telemetry: Telemetry }) {
 const OTHER_MODE: Record<ChatSendMode, ChatSendMode> = { steer: 'queue', queue: 'steer' };
 
 /** Messages waiting for the running turn to end, above the composer. */
-function QueueTray({ agent, items, busy, onEdit }: { agent: AgentInfo; items: Array<Item<'user'>>; busy: boolean; onEdit: (text: string) => void }) {
+function QueueTray({ agent, items, busy, onEdit }: { agent: AgentInfo; items: Array<Item<'user'>>; busy: boolean; onEdit: (message: ChatMessage) => void }) {
   const toast = useApp((s) => s.toast);
   const name = PROVIDER_LABEL[agent.provider];
   const act = (item: Item<'user'>, action: 'send' | 'remove') => call('chat.queued', agent.id, item.id, action);
@@ -752,7 +756,7 @@ function QueueTray({ agent, items, busy, onEdit }: { agent: AgentInfo; items: Ar
       </div>
       {items.map((item) => (
         <div key={item.id} className="queue-item">
-          <span className="queue-text selectable">{item.text}</span>
+          <span className="queue-text selectable"><ImageAttachments images={item.images} />{item.text}</span>
           <button
             type="button"
             className="btn ghost sm icon"
@@ -762,7 +766,7 @@ function QueueTray({ agent, items, busy, onEdit }: { agent: AgentInfo; items: Ar
           >
             {busy ? <Navigation size={13} /> : <ArrowUp size={14} />}
           </button>
-          <button type="button" className="btn ghost sm icon" title="Edit: take it off the queue, back into the message box" aria-label="Edit" onClick={() => run(act(item, 'remove').then(() => onEdit(item.text)))}>
+          <button type="button" className="btn ghost sm icon" title="Edit: take it off the queue, back into the message box" aria-label="Edit" onClick={() => run(act(item, 'remove').then(() => onEdit(item)))}>
             <Pencil size={13} />
           </button>
           <button type="button" className="btn ghost sm icon" title="Remove from the queue" aria-label="Remove" onClick={() => run(act(item, 'remove'))}>
@@ -778,6 +782,11 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
   const toast = useApp((s) => s.toast);
   const [text, setText] = useState(() => drafts.get(agent.id) ?? '');
   const [sending, setSending] = useState(false);
+  const [images, setImages] = useState<ChatImage[]>(() => imageDrafts.get(agent.id) ?? []);
+  const [reading, setReading] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const currentAgent = useRef(agent.id);
+  currentAgent.current = agent.id;
   const ref = useRef<HTMLTextAreaElement>(null);
   const live = !agent.endedAt;
   const working = live && (agent.status === 'working' || agent.status === 'starting');
@@ -808,6 +817,7 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
 
   useEffect(() => {
     setText(drafts.get(agent.id) ?? '');
+    setImages(imageDrafts.get(agent.id) ?? []);
     setModeOverride(sendModes.get(agent.id));
     setBrowsing(false);
     setDismissed(null);
@@ -894,15 +904,49 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
     else drafts.delete(agent.id);
   };
 
+  const updateImages = (next: ChatImage[]) => {
+    if (next.length) imageDrafts.set(agent.id, next);
+    else imageDrafts.delete(agent.id);
+    if (currentAgent.current === agent.id) setImages(next);
+  };
+
+  const attach = async (files: File[]) => {
+    if (!files.length || reading || sending) return;
+    setReading(true);
+    try {
+      if (files.length + (imageDrafts.get(agent.id)?.length ?? 0) > MAX_CHAT_IMAGES) throw new Error('Attach up to 5 images per message.');
+      const added = await Promise.all(files.map(async (file): Promise<ChatImage> => {
+        if (!IMAGE_TYPES.includes(file.type)) throw new Error('Attach a PNG, JPEG, GIF, or WebP image.');
+        if (file.size > MAX_IMAGE_BYTES) throw new Error('Each image must be 5 MB or smaller.');
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+          reader.readAsDataURL(file);
+        });
+        return { name: file.name || 'Pasted image', dataUrl };
+      }));
+      const next = [...(imageDrafts.get(agent.id) ?? []), ...added];
+      validateChatImages(next);
+      updateImages(next);
+    } catch (error) { toast('error', errorMessage(error)); }
+    finally { setReading(false); }
+  };
+
   const send = async (value = text, how: ChatSendMode = mode) => {
     const message = value.trim();
-    if (!message || sending) return;
+    if ((!message && !images.length) || sending || reading) return;
+    const attached = images;
     setSending(true);
     update('');
+    updateImages([]);
     try {
-      await call('chat.send', agent.id, message, how);
+      await call('chat.send', agent.id, message, how, attached);
     } catch (error) {
-      update(message);
+      const restored = [message, drafts.get(agent.id) ?? ''].filter(Boolean).join('\n\n');
+      drafts.set(agent.id, restored);
+      if (currentAgent.current === agent.id) setText(restored);
+      updateImages([...attached, ...(imageDrafts.get(agent.id) ?? [])]);
       toast('error', errorMessage(error));
     } finally {
       setSending(false);
@@ -918,9 +962,10 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
   };
 
   /** Puts `texts` ahead of what's being written. */
-  const restore = (texts: string[]) => {
-    if (!texts.length) return;
-    update([...texts, drafts.get(agent.id) ?? ''].filter((t) => t.trim()).join('\n\n'));
+  const restore = (messages: ChatMessage[]) => {
+    if (!messages.length) return;
+    updateImages([...messages.flatMap((m) => m.images ?? []), ...(imageDrafts.get(agent.id) ?? [])]);
+    update([...messages.map((m) => m.text), drafts.get(agent.id) ?? ''].filter((t) => t.trim()).join('\n\n'));
     ref.current?.focus();
   };
 
@@ -939,7 +984,12 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
   return (
     <div className="composer">
       {queued.length ? <QueueTray agent={agent} items={queued} busy={midTurn} onEdit={(queuedText) => restore([queuedText])} /> : null}
-      <div className="composer-box">
+      <div className="composer-box" onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={(e) => {
+        e.preventDefault();
+        void attach(Array.from(e.dataTransfer.files));
+      }}>
+        <input ref={fileInput} type="file" accept={IMAGE_TYPES.join(',')} multiple hidden onChange={(e) => { void attach(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
+        <ImageAttachments images={images} onRemove={(index) => updateImages(images.filter((_, i) => i !== index))} />
         {menuOpen ? <CommandMenu commands={shown} loading={loadingCommands || !commands} active={active} onHover={setActive} onChoose={complete} /> : null}
         <textarea
           ref={ref}
@@ -961,6 +1011,10 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
             setCaret(e.target.selectionStart);
             setBrowsing(false);
           }}
+          onPaste={(e) => {
+            const files = Array.from(e.clipboardData.files);
+            if (files.length) { e.preventDefault(); void attach(files); }
+          }}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
           onBlur={() => {
             setBrowsing(false);
@@ -981,6 +1035,9 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
           }}
         />
         <div className="composer-bar">
+          <button type="button" className="composer-commands" title="Attach images (or paste / drop)" aria-label="Attach images" disabled={reading || sending} onClick={() => fileInput.current?.click()}>
+            {reading ? <LoaderCircle size={14} className="spin" /> : <Image size={14} />}
+          </button>
           <button
             type="button"
             className={`composer-commands ${browsing ? 'on' : ''}`}
@@ -994,6 +1051,7 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
           >
             <SquareSlash size={14} />
           </button>
+          <PromptCacheBadge agent={agent} />
           <Select
             variant="ghost"
             size="sm"
@@ -1048,7 +1106,7 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
                 <span>{percent(t.contextPercent)}</span>
               </span>
             ) : null}
-            {working && !text.trim() ? (
+            {working && !text.trim() && !images.length && !reading ? (
               <button type="button" className="send-btn stop" title="Stop (Esc)" onClick={stop}>
                 <Square size={12} fill="currentColor" />
               </button>
@@ -1057,7 +1115,7 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
                 type="button"
                 className="send-btn"
                 title={midTurn ? `${mode === 'steer' ? 'Steer the running turn' : 'Queue for when this turn ends'} (Enter) · Ctrl+Enter to ${OTHER_MODE[mode]}` : 'Send (Enter)'}
-                disabled={!text.trim() || sending}
+                disabled={(!text.trim() && !images.length) || sending || reading}
                 onClick={() => send()}
               >
                 {sending ? <LoaderCircle size={15} className="spin" /> : midTurn && mode === 'steer' ? <Navigation size={15} /> : midTurn ? <ListEnd size={16} /> : <ArrowUp size={16} />}

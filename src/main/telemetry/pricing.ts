@@ -19,6 +19,7 @@ export interface Rate {
   cacheWriteLong: number | null;
   output: number;
   longContext: boolean;
+  longContextOutputMultiplier: number;
   contextWindow: number | null;
 }
 
@@ -55,6 +56,7 @@ function parseRate(entry: any): Rate | string {
     cacheWriteLong: optional('cacheWriteLong', claude ? input * 2 : null),
     output,
     longContext: entry.longContext === true,
+    longContextOutputMultiplier: price(entry.longContextOutputMultiplier) ?? 2,
     contextWindow: optional('contextWindow', claude ? 1_000_000 : null)
   };
 }
@@ -189,16 +191,17 @@ export function billableTokens(usage: TokenUsage) {
 export function priceUsage(rate: Rate, usage: TokenUsage, longContext = false): number {
   const t = billableTokens(usage);
   const multiplier = longContext && rate.longContext ? 2 : 1;
+  const outputMultiplier = longContext && rate.longContext ? rate.longContextOutputMultiplier : 1;
   const cachedRate = rate.cachedInput ?? rate.input;
   const writeRate = rate.cacheWrite ?? rate.input;
   const writeLongRate = rate.cacheWriteLong ?? writeRate;
   const usd =
-    t.uncachedInput * rate.input +
+    (t.uncachedInput * rate.input +
     t.cachedInput * cachedRate +
     t.cacheWriteInput * writeRate +
-    t.cacheWriteLongInput * writeLongRate +
-    t.output * rate.output;
-  return (usd / PER_MILLION) * multiplier;
+    t.cacheWriteLongInput * writeLongRate) * multiplier +
+    t.output * rate.output * outputMultiplier;
+  return usd / PER_MILLION;
 }
 
 export interface ModelAccumulator {

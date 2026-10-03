@@ -30,6 +30,8 @@ function fakeHost() {
   return { host, log, statuses, sessions, requeued, turns: () => turns };
 }
 
+const image = { name: 'pixel.png', dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aGD8AAAAASUVORK5CYII=' };
+
 const kinds = (items: ChatItem[]) => items.map((i) => i.kind);
 
 describe('chat log', () => {
@@ -57,6 +59,22 @@ describe('chat log', () => {
 });
 
 describe('Claude chat protocol', () => {
+  it('sends images with text and as image-only mid-turn messages', () => {
+    const { host, log } = fakeHost();
+    const sent: any[] = [];
+    const chat = new ClaudeChat(host, (m) => sent.push(m));
+    chat.send('Explain this', 'image-1', [image]);
+    expect(sent.at(-1).message.content).toEqual([
+      { type: 'text', text: 'Explain this' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: image.dataUrl.split(',')[1] } }
+    ]);
+    chat.send('', 'image-2', [image]);
+    expect(sent.at(-1).message.content).toHaveLength(1);
+    expect(log.get('image-2')).toMatchObject({ text: '', images: [image], delivery: 'steering' });
+    const history = claudeHistory([JSON.stringify(sent.at(-1))]);
+    expect(history[0].entry).toMatchObject({ kind: 'user', text: '', images: [{ dataUrl: image.dataUrl }] });
+  });
+
   it('builds the SDK command line', () => {
     expect(claudeChatArgs({ sessionId: 's-1', model: 'opus', permission: 'plan' })).toEqual([
       '--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json', '--include-partial-messages',
@@ -378,6 +396,34 @@ describe('Codex chat protocol', () => {
   }
 
   const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+  it('sends image-only turns, preserves echoed images, and requeues images when a steer is late', async () => {
+    const { chat, sent, log, notify } = await running();
+    chat.send('', 'image-1', [image]);
+    expect(sent.at(-1)).toMatchObject({ method: 'turn/start', params: { input: [{ type: 'image', url: image.dataUrl }] } });
+    chat.receive(JSON.stringify({ id: sent.at(-1).id, result: { turn: { id: 'turn-1', status: 'inProgress' } } }));
+    notify('item/completed', { item: { type: 'userMessage', id: 'server-id', clientId: 'image-1', content: [{ type: 'image', url: image.dataUrl }] } });
+    expect(log.get('image-1')).toMatchObject({ text: '', images: [image] });
+    chat.send('Another view', 'image-2', [image]);
+    await settle();
+    const steer = sent.at(-1);
+    expect(steer).toMatchObject({ method: 'turn/steer', params: { input: [{ type: 'text', text: 'Another view' }, { type: 'image', url: image.dataUrl }] } });
+    notify('turn/completed', { turn: { id: 'turn-1', status: 'completed' } });
+    chat.receive(JSON.stringify({ id: steer.id, error: { code: -32600, message: 'Turn ended' } }));
+    await settle();
+    expect(log.get('image-2')).toMatchObject({ images: [image], delivery: 'queued' });
+  });
+
+  it('keeps images sent before initialization', async () => {
+    const { chat, sent, ready } = started();
+    chat.send('', 'early-image', [image]);
+    chat.receive(JSON.stringify({ id: 1, result: {} }));
+    await Promise.resolve();
+    await Promise.resolve();
+    chat.receive(JSON.stringify({ id: sent[2].id, result: { thread: { id: 'th-1', path: null }, model: 'm' } }));
+    await ready;
+    expect(sent.at(-1)).toMatchObject({ method: 'turn/start', params: { input: [{ type: 'image', url: image.dataUrl }] } });
+  });
 
   it('initializes, starts a thread and runs a turn', async () => {
     const { chat, log, sent, sessions, statuses, ready } = started();

@@ -24,6 +24,22 @@ describe('model ids', () => {
 });
 
 describe('pricing', () => {
+  it('prices Sonnet 5.5 input, cache reads, both cache writes, and output', () => {
+    const rate = rateForModel('claude-sonnet-5-5-20260928[1m]')!;
+    expect(rate).toMatchObject({ input: 2, cachedInput: 0.2, cacheWrite: 2.5, cacheWriteLong: 4, output: 10 });
+    const byModel = new Map<string, ModelAccumulator>();
+    const cost = recordRequest(byModel, rate.model, usage({ inputTokens: 4_000_000, cachedInputTokens: 1_000_000, cacheWriteInputTokens: 2_000_000, cacheWriteLongInputTokens: 1_000_000, outputTokens: 1_000_000 }));
+    expect(cost).toBeCloseTo(18.7, 6);
+    expect(costFromModels(byModel).unpricedModels).toEqual([]);
+  });
+
+  it('prices GPT-6.1 Sol and uses separate input/output long-context multipliers', () => {
+    const rate = rateForModel('gpt-6.1-sol-2026-09-29')!;
+    const tokens = usage({ inputTokens: 3_000_000, cachedInputTokens: 1_000_000, cacheWriteInputTokens: 1_000_000, outputTokens: 1_000_000 });
+    expect(priceUsage(rate, tokens)).toBeCloseTo(14.6, 6);
+    expect(priceUsage(rate, tokens, true)).toBeCloseTo(24.2, 6);
+    expect(priceUsage(rateForModel('gpt-6-astra')!, usage({ outputTokens: 1_000_000 }), true)).toBe(75);
+  });
   it("matches Claude Code's own cost for a real Opus 5.5 session", () => {
     // modelUsage from a real cost-state transcript record: Claude Code reported $4.6846498.
     // Claude Code writes 1-hour cache entries, so every cache write is the 2x rate.

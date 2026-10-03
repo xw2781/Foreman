@@ -1,3 +1,4 @@
+import type { ChatImage } from '../../shared/types';
 import type { ChatAnswer, ChatCommand, ChatSettingsPatch, ProfileLimits } from '../../shared/types';
 import type { ChatLog } from './log';
 
@@ -17,7 +18,7 @@ export interface ChatHost {
 /** One CLI's structured protocol, driven over the child's stdin/stdout. */
 export interface ChatDriver {
   /** Begins the session; sends `prompt` as the first message when given. */
-  start(prompt?: string): Promise<void>;
+  start(prompt?: string, images?: ChatImage[]): Promise<void>;
   /** One line of the child's stdout. */
   receive(line: string): void;
   /**
@@ -25,7 +26,7 @@ export interface ChatDriver {
    * `busy`. `itemId` names the chat item to use (a queued message's); it's a
    * UUID, as Claude Code wants for its message ids.
    */
-  send(text: string, itemId?: string): void;
+  send(text: string, itemId?: string, images?: ChatImage[]): void;
   /** Whether `text` can go into the running turn (commands can't; they wait for it to end). */
   canSteer(text: string): boolean;
   interrupt(): void;

@@ -3,6 +3,7 @@
 // items PascalCase with snake_case fields ("CommandExecution",
 // aggregated_output). One normalizer reads both. Pure: shared by the live
 // driver (main process) and history loading (telemetry worker).
+import { contentImages } from '../../shared/chatImages';
 import type { ChatEntry, ChatFileChange, ChatToolStatus } from '../../shared/types';
 import { clipText } from './log';
 import { browserToolDetail, browserToolTitle } from './browserTools';
@@ -50,7 +51,7 @@ function textParts(content: unknown): string {
     .map((part: any) => {
       const type = String(part?.type ?? '').toLowerCase();
       if (typeof part?.text === 'string') return part.text;
-      if (type.includes('image')) return '[image]';
+      if (type.includes('image')) return contentImages([part]).length ? '' : '[image]';
       if (type === 'mention' || type === 'skill') return part.name ? `@${part.name}` : '';
       return '';
     })
@@ -129,7 +130,8 @@ export function codexItemEntry(raw: any): ChatEntry | null {
   switch (type) {
     case 'userMessage': {
       const text = textParts(raw.content);
-      return text ? { kind: 'user', id: String(pick(raw, 'clientId', 'client_id') ?? id), text } : null;
+      const images = contentImages(raw.content);
+      return text || images.length ? { kind: 'user', id: String(pick(raw, 'clientId', 'client_id') ?? id), text, ...(images.length ? { images } : {}) } : null;
     }
     case 'agentMessage': {
       const text = typeof raw.text === 'string' ? raw.text : textParts(raw.content);

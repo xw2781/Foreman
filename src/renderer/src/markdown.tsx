@@ -1,8 +1,10 @@
-import { memo, useState, type ReactNode } from 'react';
+import { memo, useMemo, useState, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Check, Copy } from 'lucide-react';
-import { call } from './api';
+import { Check, Copy, FolderOpen } from 'lucide-react';
+import { call, errorMessage } from './api';
+import { useApp } from './store';
+import { chatLinkKind } from '@shared/chatLinks';
 
 function textOf(node: ReactNode): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -30,20 +32,36 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
   );
 }
 
-const components: Components = {
-  // Links open in the user's browser, never inside the app.
-  a: ({ href, children }) => (
-    <a
-      href={href}
-      title={href}
-      onClick={(event) => {
-        event.preventDefault();
-        if (href && /^https?:\/\//i.test(href)) call('shell.openExternal', href);
-      }}
-    >
+function ChatLink({ href = '', children, agentId }: { href?: string; children: ReactNode; agentId?: string }) {
+  const toast = useApp((state) => state.toast);
+  const kind = chatLinkKind(href);
+  const [busy, setBusy] = useState(false);
+  const act = async (action: 'open' | 'show') => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (kind === 'web') await call('shell.openExternal', href.startsWith('//') ? `https:${href}` : href);
+      else if (kind === 'file' && agentId) await call('chat.file', agentId, href, action);
+      else throw new Error(href.startsWith('sandbox:')
+        ? 'This link points to a sandbox download, not a file on this computer. Ask the agent to save the file locally and share its full path.'
+        : 'This link cannot be opened here. Ask the agent for a local file path or a web URL.');
+    } catch (error) { toast('error', errorMessage(error)); }
+    finally { setBusy(false); }
+  };
+  const local = kind === 'file';
+  return <>
+    <a href={kind === 'web' ? href : undefined} role="link" tabIndex={0}
+      className={local ? 'md-file-link' : undefined}
+      title={local ? `Open file: ${href}` : href || 'Unavailable link'} aria-disabled={busy}
+      onClick={(event) => { event.preventDefault(); void act('open'); }}
+      onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void act('open'); } }}>
       {children}
     </a>
-  ),
+    {local && agentId ? <button type="button" className="md-file-reveal" title={`Show in folder: ${href}`} aria-label={`Show ${textOf(children) || href} in folder`} disabled={busy} onClick={() => void act('show')}><FolderOpen size={13} /></button> : null}
+  </>;
+}
+
+const components: Components = {
   pre: ({ children }) => {
     const code = (children as any)?.props;
     const language = /language-([\w-]+)/.exec(code?.className ?? '')?.[1] ?? '';
@@ -71,10 +89,11 @@ const components: Components = {
 const plugins = [remarkGfm];
 
 /** Assistant text. Memoized: a streaming reply re-renders only the message that changed. */
-export const Markdown = memo(function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({ text, agentId }: { text: string; agentId?: string }) {
+  const renderers = useMemo<Components>(() => ({ ...components, a: ({ href, children }) => <ChatLink href={href} agentId={agentId}>{children}</ChatLink> }), [agentId]);
   return (
     <div className="md selectable">
-      <ReactMarkdown remarkPlugins={plugins} components={components}>
+      <ReactMarkdown remarkPlugins={plugins} components={renderers} urlTransform={(url, key, node) => node.tagName === 'a' && key === 'href' ? url : ''}>
         {text}
       </ReactMarkdown>
     </div>

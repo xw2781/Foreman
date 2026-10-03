@@ -1,3 +1,4 @@
+import type { ChatImage } from '../../shared/types';
 // Codex's app-server protocol (`codex app-server`, the one Codex's own IDE
 // extension and desktop app use): newline-delimited JSON-RPC over stdio.
 // We call initialize → thread/start|resume → turn/start; the server streams
@@ -71,7 +72,7 @@ export class CodexChat implements ChatDriver {
   /** Reviews and compactions don't take mid-turn input. */
   private steerable = true;
   /** Messages sent before the thread existed. */
-  private early: Array<{ id: string; text: string }> = [];
+  private early: Array<{ id: string; text: string; images: ChatImage[] }> = [];
   private overrides: Record<string, unknown> = {};
   /** The thread's model when none is chosen, and the one in use now (for pricing). */
   private defaultModel: string | null = null;
@@ -87,7 +88,7 @@ export class CodexChat implements ChatDriver {
 
   constructor(private host: ChatHost, private write: (message: object) => void, private options: CodexChatOptions) {}
 
-  async start(prompt?: string) {
+  async start(prompt?: string, images?: ChatImage[]) {
     this.initialized = this.call('initialize', { clientInfo: { name: 'foreman', title: 'Foreman', version: this.options.appVersion }, capabilities: null });
     await this.initialized;
     this.write({ method: 'initialized' });
@@ -111,24 +112,24 @@ export class CodexChat implements ChatDriver {
     this.host.status('idle', null);
     // Known skills turn `$name` mentions into skill inputs.
     this.loadSkills();
-    if (prompt?.trim()) this.send(prompt);
+    if (prompt?.trim() || images?.length) this.send(prompt ?? '', undefined, images);
     for (const message of this.early.splice(0)) {
-      if (this.busy) this.steer(message.id, message.text);
-      else this.dispatch(message.id, message.text);
+      if (this.busy) this.steer(message.id, message.text, message.images);
+      else this.dispatch(message.id, message.text, message.images);
     }
   }
 
-  send(text: string, itemId: string = randomUUID()) {
-    const command = COMMAND.exec(text.trim());
+  send(text: string, itemId: string = randomUUID(), images: ChatImage[] = []) {
+    const command = images.length ? null : COMMAND.exec(text.trim());
     if (command && this.busy) throw new Error(`Codex is working; /${command[1]} can run once this turn ends.`);
     if (this.busy) {
-      this.steer(itemId, text);
+      this.steer(itemId, text, images);
       return;
     }
-    this.host.log.upsert({ kind: 'user', id: itemId, text });
+    this.host.log.upsert({ kind: 'user', id: itemId, text, images });
     this.host.changed();
-    if (!this.threadId) this.early.push({ id: itemId, text });
-    else this.dispatch(itemId, text);
+    if (!this.threadId) this.early.push({ id: itemId, text, images });
+    else this.dispatch(itemId, text, images);
   }
 
   canSteer(text: string) {
@@ -136,13 +137,13 @@ export class CodexChat implements ChatDriver {
   }
 
   /** Mid-turn messages steer the running turn, as in Codex's own apps. */
-  private async steer(id: string, text: string) {
-    this.host.log.upsert({ kind: 'user', id, text, delivery: 'steering' });
+  private async steer(id: string, text: string, images: ChatImage[]) {
+    this.host.log.upsert({ kind: 'user', id, text, images, delivery: 'steering' });
     this.host.changed();
     try {
       const turnId = this.turnId ?? (await this.turnStarting);
       if (!turnId || !this.threadId || !this.steerable) throw new Error('No turn to steer');
-      await this.call('turn/steer', { threadId: this.threadId, clientUserMessageId: id, input: this.input(text), expectedTurnId: turnId });
+      await this.call('turn/steer', { threadId: this.threadId, clientUserMessageId: id, input: this.input(text, images), expectedTurnId: turnId });
       this.host.log.update(id, 'user', (item) => (item.delivery === 'steering' ? { delivery: 'steered' } : {}));
     } catch {
       // The turn ended first, or it's one that takes no input: the message waits for the next.
@@ -152,8 +153,8 @@ export class CodexChat implements ChatDriver {
   }
 
   /** A new turn: the message, or the command it names. */
-  private dispatch(id: string, text: string) {
-    const command = COMMAND.exec(text.trim());
+  private dispatch(id: string, text: string, images: ChatImage[]) {
+    const command = images.length ? null : COMMAND.exec(text.trim());
     this.steerable = !command;
     if (command?.[1] === 'compact') {
       this.begin('Compacting', this.call('thread/compact/start', { threadId: this.threadId }));
@@ -164,7 +165,7 @@ export class CodexChat implements ChatDriver {
     } else {
       const overrides = this.overrides;
       this.overrides = {};
-      this.begin('Thinking', this.call('turn/start', { threadId: this.threadId, clientUserMessageId: id, input: this.input(text), ...overrides }));
+      this.begin('Thinking', this.call('turn/start', { threadId: this.threadId, clientUserMessageId: id, input: this.input(text, images), ...overrides }));
     }
   }
 
@@ -186,9 +187,9 @@ export class CodexChat implements ChatDriver {
       });
   }
 
-  private input(text: string) {
+  private input(text: string, images: ChatImage[]) {
     const skills = mentionedSkills(text, this.knownSkills).map((s) => ({ type: 'skill', name: s.name, path: s.path }));
-    return [{ type: 'text', text, text_elements: [] }, ...skills];
+    return [...(text ? [{ type: 'text', text, text_elements: [] }] : []), ...images.map((image) => ({ type: 'image', url: image.dataUrl })), ...skills];
   }
 
   private loadSkills(): Promise<CodexSkill[]> {
@@ -340,6 +341,7 @@ export class CodexChat implements ChatDriver {
           this.host.log.upsert({ ...entry, streaming: method === 'item/started' });
         } else if (entry.kind === 'user') {
           // One of ours coming back: a steer shows up here once Codex takes it in.
+          if (existing?.kind === 'user' && existing.images?.length) entry.images = existing.images;
           const delivery = existing?.kind === 'user' ? existing.delivery : undefined;
           this.host.log.upsert(delivery ? { ...entry, delivery: delivery === 'steering' ? 'steered' : delivery } : entry);
         } else {

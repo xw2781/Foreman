@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { ModelCatalog, type CatalogModel } from './modelCatalog';
 import type {
   CliDefaults,
   LimitWindow,
@@ -50,6 +51,7 @@ export interface ProfileServiceEvents {
 
 export class ProfileService {
   private store: JsonStore<ProfilesFile>;
+  private modelCatalog: ModelCatalog;
   private identities = new Map<string, ProfileIdentity>();
   private limits = new Map<string, ProfileLimits>();
   /** Display name of each account's plan, read with its identity. */
@@ -57,12 +59,14 @@ export class ProfileService {
   private globalDefaults: Record<Provider, string | null> = { claude: null, codex: null };
   onChanged: () => void = () => {};
   codexLimitsLoader: (profile: Profile) => Promise<ProfileLimits | null> = async () => null;
+  modelsLoader: (profile: Profile) => Promise<CatalogModel[]> = async () => [];
   /** Live plan usage from the tool's servers; undefined when it wasn't asked this time (throttled). */
   liveLimitsLoader: (profile: Profile, force: boolean) => Promise<ProfileLimits | null | undefined> = async () => null;
   runningCounter: (profileId: string) => number = () => 0;
   skillChecker: (profile: Profile) => boolean = () => false;
 
   constructor(userDataDir: string) {
+    this.modelCatalog = new ModelCatalog(userDataDir);
     this.store = new JsonStore<ProfilesFile>(path.join(userDataDir, 'profiles.json'), { profiles: [] });
     this.ensureBuiltins();
   }
@@ -107,12 +111,21 @@ export class ProfileService {
       identity: this.identities.get(profile.id) ?? null,
       limits: this.limits.get(profile.id) ?? null,
       planTier: this.planTier(profile),
-      cliDefaults: cliDefaults(profile),
+      cliDefaults: this.cliDefaults(profile),
       isActive: active[profile.provider] === profile.id,
       isGlobalDefault: this.isGlobalDefault(profile),
       skillInstalled: this.skillChecker(profile),
       runningAgents: this.runningCounter(profile.id)
     }));
+  }
+
+  cliDefaults(profile: Profile): CliDefaults {
+    const configured = cliDefaults(profile);
+    return { ...configured, discoveredModels: this.modelCatalog.get(this.catalogKey(profile)) ?? undefined };
+  }
+
+  private catalogKey(profile: Profile): string {
+    return JSON.stringify([profile.provider, profile.id, profile.configDir]);
   }
 
   /**
@@ -216,6 +229,7 @@ export class ProfileService {
     const targets = ids ? this.list().filter((p) => ids.includes(p.id)) : this.list();
     await Promise.all([
       this.readGlobalDefaults(),
+      ...targets.map((profile) => this.modelCatalog.refresh(this.catalogKey(profile), force, () => this.modelsLoader(profile))),
       ...targets.map(async (profile) => {
         try {
           this.identities.set(profile.id, profile.provider === 'claude' ? this.claudeIdentity(profile) : this.codexIdentity(profile));

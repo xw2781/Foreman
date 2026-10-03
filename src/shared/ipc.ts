@@ -1,3 +1,4 @@
+import type { ChatImage, ChatMessage } from './types';
 import type {
   AgentInfo,
   AgentMode,
@@ -65,13 +66,15 @@ export interface InvokeMap {
   'agents.resume': (id: string, mode?: AgentMode) => AgentInfo;
   'agents.buffer': (id: string) => { data: string; end: number };
 
+  /** Opens a linked file or reveals it in its folder, relative to this agent's cwd. */
+  'chat.file': (id: string, href: string, action: 'open' | 'show') => void;
   'chat.items': (id: string) => ChatItem[];
   /** Sends a message; a finished chat is resumed with it. While the agent works, `mode` says whether it steers the turn or waits for it to end. */
-  'chat.send': (id: string, text: string, mode: ChatSendMode) => AgentInfo;
+  'chat.send': (id: string, text: string, mode: ChatSendMode, images?: ChatImage[]) => AgentInfo;
   /** A queued message: `send` it now (into the running turn, if there is one) or `remove` it. */
   'chat.queued': (id: string, itemId: string, action: 'send' | 'remove') => AgentInfo;
-  /** Stops the running turn; returns the queued messages' texts, which are taken off the queue for editing. */
-  'chat.interrupt': (id: string) => string[];
+  /** Stops the running turn; returns the queued messages, which are taken off the queue for editing. */
+  'chat.interrupt': (id: string) => ChatMessage[];
   'chat.respond': (id: string, itemId: string, answer: ChatAnswer) => void;
   'chat.configure': (id: string, patch: ChatSettingsPatch) => void;
   /** The slash commands and skills the session accepts (the last known ones once it has ended). */
@@ -155,7 +158,7 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'profiles.login', 'profiles.logout', 'profiles.setGlobalDefault', 'profiles.shareConfig', 'profiles.openShell',
   'agents.list', 'agents.launch', 'agents.write', 'agents.resize', 'agents.stop', 'agents.remove', 'agents.clearFinished',
   'agents.rename', 'agents.resume', 'agents.buffer',
-  'chat.items', 'chat.send', 'chat.interrupt', 'chat.respond', 'chat.configure', 'chat.commands', 'chat.queued',
+  'chat.file', 'chat.items', 'chat.send', 'chat.interrupt', 'chat.respond', 'chat.configure', 'chat.commands', 'chat.queued',
   'processes.external', 'processes.kill',
   'usage.report', 'usage.export', 'usage.import', 'usage.forgetMachine', 'pricing.status', 'pricing.edit',
   'github.status', 'github.connect', 'github.cancel', 'github.disconnect', 'github.sync',

@@ -33,6 +33,7 @@ Each account is its own config folder, which the app passes to the CLI:
 | Codex | `CODEX_HOME` | `~/.codex` (variable removed) | `~/.agent-task-center/profiles/<id>` |
 
 - **Add account** creates the folder, optionally shares settings with the primary (copies `settings.json`/`CLAUDE.md` or `config.toml`/`AGENTS.md`; links `skills`, `agents`, `commands`, `prompts`, `rules` as directory junctions), then opens a sign-in terminal (`claude auth login` / `codex login`). Choose the other account in the browser.
+- **Model choices** refresh from each account's installed CLI at startup and hourly. Accounts refresh also forces a model refresh. Discovery uses Claude's initialization metadata and Codex's `model/list`, without sending a prompt. The last successful list is cached across restarts; the bundled list is used until discovery succeeds. Claude's `availableModels` setting still takes precedence. Keep the CLIs updated: Foreman can only discover models they report.
 - **Use for new agents** (also in the title bar) picks which account the next agent starts with. Running agents keep theirs.
 - **Make default for other apps** sets the user-level `CLAUDE_CONFIG_DIR` / `CODEX_HOME` so VS Code, the desktop apps and new terminals use that account after they restart. For the primary account it removes the variable.
 - **Terminal as this account** opens a PowerShell whose environment points at the account.
@@ -47,7 +48,7 @@ Plan usage comes from what each CLI last reported: Codex writes it into its sess
 
 - **Claude Code** agents get per-session HTTP hooks through `claude --settings <file>` (merged with your settings, nothing of yours is modified): prompt submitted, tool running, permission prompt, turn finished. With *Capture Claude Code's status line* on, the status-line JSON also reaches the app for the exact context-window size, Claude Code's own cost, and plan limits; your own status-line command still runs and is what you see.
 - **Codex** agents: status from the session rollout (`task_started` / `task_complete`) and the terminal's approval prompts.
-- **Cost** prices every request at public API list rates (Anthropic and OpenAI Standard tier; dated in the Usage view), including cache reads/writes, per-model rates within a session, subagent transcripts, and OpenAI's 2x rate for requests over 272K input tokens. For Claude sessions that recorded one, Claude Code's own estimate is shown alongside. Subscription plans are billed differently — treat these as the API-equivalent value of what you used.
+- **Cost** prices every request at public API list rates (Anthropic and OpenAI Standard tier; dated in the Usage view), including cache reads/writes, per-model rates within a session, subagent transcripts, and OpenAI's per-model long-context rates for requests over 272K input tokens. For Claude sessions that recorded one, Claude Code's own estimate is shown alongside. Subscription plans are billed differently — treat these as the API-equivalent value of what you used.
 
 ## Computer use
 

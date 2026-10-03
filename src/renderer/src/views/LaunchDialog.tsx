@@ -17,12 +17,19 @@ export function defaultLabel(configured: string | null | undefined) {
 
 
 /**
- * Model choices by name, newest first. When the account's CLI config limits
+ * Live CLI choices in provider order, otherwise newest first. When the account's CLI config limits
  * the models (Claude's availableModels) only those are offered; `current`
  * (e.g. the id a running session resolved to) is kept when unlisted.
  */
 export function modelOptions(provider: Provider, defaults: CliDefaults | null | undefined, current = ''): SelectOption[] {
-  return modelChoices(provider, defaults, current).map((m) => ({ value: m, label: modelLabel(m) }));
+  return modelChoices(provider, defaults, current).map((m) => {
+    const discovered = defaults?.discoveredModels?.find((model) => model.id === m);
+    const resolved = discovered?.resolvedModel;
+    const label = resolved
+      ? `${m === 'default' ? 'Default · ' : ''}${modelLabel(resolved + (m.endsWith('[1m]') && !resolved.endsWith('[1m]') ? '[1m]' : ''))}`
+      : discovered?.label || modelLabel(m);
+    return { value: m, label };
+  });
 }
 
 /** "high" → "High": effort values stay lower case for the CLIs, labels don't. */

@@ -1,5 +1,6 @@
 // Past conversations from the CLIs' own session files, for chats resumed or
 // viewed after the process is gone. Runs in the telemetry worker.
+import { contentImages } from '../../shared/chatImages';
 import type { ChatEntry } from '../../shared/types';
 import { claudeToolEntry, isSyntheticUserText, slashCommandText, toolResultText } from './claudeTools';
 import { codexItemEntry } from './codexItems';
@@ -79,7 +80,7 @@ export function claudeHistory(lines: Iterable<string>, limit = HISTORY_LIMIT): H
       else if (Array.isArray(content)) {
         for (const block of content) {
           if (block?.type === 'text' && typeof block.text === 'string') push(block.text);
-          else if (block?.type === 'image') texts.push('[image]');
+          else if (block?.type === 'image' && !contentImages([block]).length) texts.push('[image]');
           else if (block?.type === 'tool_result') {
             const id = String(block.tool_use_id ?? '');
             const tool = out.get(id);
@@ -90,7 +91,8 @@ export function claudeHistory(lines: Iterable<string>, limit = HISTORY_LIMIT): H
         }
       }
       const text = texts.join('\n').trim();
-      if (text) out.put({ kind: 'user', id: `user-${uuid}`, text }, at);
+      const images = contentImages(content);
+      if (text || images.length) out.put({ kind: 'user', id: `user-${uuid}`, text, ...(images.length ? { images } : {}) }, at);
       continue;
     }
     if (record.type === 'assistant') {

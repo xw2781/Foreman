@@ -75,8 +75,9 @@ export interface ProfileView extends Profile {
 export interface CliDefaults {
   model: string | null;
   effort: string | null;
-  /** Claude Code's `availableModels` allowlist: other models are refused (it falls back to the default). */
+  /** Claude Code's configured `availableModels` allowlist takes precedence over discovery. */
   models: string[] | null;
+  discoveredModels?: Array<{ id: string; label: string; resolvedModel?: string }>;
 }
 
 export interface NewProfileInput {
@@ -206,6 +207,8 @@ export interface AgentInfo {
   transcriptPath: string | null;
   lastActivityAt: string;
   lastOutputAt: string | null;
+  /** Last completed model turn, retained across resumes for the prompt-cache estimate. */
+  lastModelActivityAt?: string | null;
   commandLine: string;
   telemetry: SessionTelemetry | null;
   resources: AgentResources | null;
@@ -272,8 +275,18 @@ export type ChatSendMode = 'steer' | 'queue';
 export type ChatDelivery = 'queued' | 'steering' | 'steered';
 
 /** One entry of a conversation, as the chat view renders it. Both CLIs' protocols are normalized to this. */
+export interface ChatImage {
+  name: string;
+  dataUrl: string;
+}
+
+export interface ChatMessage {
+  text: string;
+  images?: ChatImage[];
+}
+
 export type ChatEntry =
-  | { kind: 'user'; id: string; text: string; delivery?: ChatDelivery }
+  | { kind: 'user'; id: string; text: string; images?: ChatImage[]; delivery?: ChatDelivery }
   | { kind: 'assistant'; id: string; text: string; streaming: boolean }
   | { kind: 'reasoning'; id: string; text: string; streaming: boolean }
   | {
