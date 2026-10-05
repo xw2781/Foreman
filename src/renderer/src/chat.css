@@ -74,6 +74,7 @@
   margin-top: 6px;
 }
 .msg-user .bubble {
+  font-size: var(--chat-font-size, 13.5px);
   max-width: min(78%, 640px);
   background: var(--surface-3);
   border-radius: 16px 16px 4px 16px;
@@ -120,7 +121,7 @@
 /* markdown */
 .md {
   overflow-wrap: anywhere;
-  font-size: 13.5px;
+  font-size: var(--chat-font-size, 13.5px);
 }
 .md > :first-child {
   margin-top: 0;
@@ -149,14 +150,14 @@
   line-height: 1.3;
 }
 .md h1 {
-  font-size: 18px;
+  font-size: 1.3333em;
 }
 .md h2 {
-  font-size: 16px;
+  font-size: 1.1852em;
 }
 .md h3,
 .md h4 {
-  font-size: 14px;
+  font-size: 1.037em;
 }
 .md a {
   color: var(--accent-strong);
@@ -168,7 +169,7 @@
 }
 .md code {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 0.8889em;
   background: var(--surface-3);
   border-radius: 5px;
   padding: 1px 5px;
@@ -208,7 +209,7 @@
 .md-code pre code {
   background: none;
   padding: 0;
-  font-size: 12px;
+  font-size: calc(var(--chat-font-size, 13.5px) * 0.8889);
   line-height: 1.5;
 }
 .md-table {
@@ -217,7 +218,7 @@
 }
 .md table {
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: 0.9259em;
 }
 .md th,
 .md td {
@@ -765,6 +766,23 @@
   background: var(--surface-3);
   color: var(--text-primary);
 }
+.composer-commands.recording {
+  background: var(--critical-soft);
+  color: var(--critical);
+  animation: voice-pulse 1.4s ease-in-out infinite;
+}
+.voice-status {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+@keyframes voice-pulse {
+  50% { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer-commands.recording { animation: none; }
+}
 
 /* slash commands and skills, above the composer */
 .command-menu {
@@ -842,20 +860,36 @@
   font-size: 12px;
   color: var(--text-muted);
 }
-.composer textarea {
+.composer .composer-input {
   border: 0;
   outline: 0;
   resize: none;
   background: transparent;
   line-height: 1.5;
-  font-size: 13.5px;
+  font-size: var(--chat-font-size, 13.5px);
   min-height: 22px;
   max-height: 35vh;
   padding: 2px 0;
 }
-.composer textarea::placeholder {
+.composer .composer-input::placeholder {
   color: var(--text-muted);
 }
+.annotation-selection {
+  position: fixed;
+  z-index: 300;
+  background: var(--surface-2);
+  box-shadow: var(--shadow);
+}
+.annotation-tray { display: grid; gap: 8px; min-width: 0; }
+.annotation-cards { display: grid; gap: 8px; max-height: 230px; overflow-y: auto; }
+.annotation-card { background: var(--surface-3); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+.annotation-card-heading { display: flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: 11.5px; }
+.annotation-card-heading > span { flex: 1; }
+.annotation-card blockquote { margin: 4px 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 110px; overflow-y: auto; font-size: var(--chat-font-size, 13.5px); }
+.annotation-card textarea { width: 100%; resize: vertical; font-size: var(--chat-font-size, 13.5px); }
+.annotation-card .annotation-edit { min-height: 70px; margin: 6px 0; }
+.annotation-card .annotation-comment { min-height: 32px; background: var(--surface-1); }
+.annotation-chip { display: flex; align-items: center; justify-self: start; border: 1px solid var(--border-strong); border-radius: 9px; }
 /* Nothing here shrinks: when the controls don't fit on one line, the send group wraps to the next. */
 .composer-bar {
   display: flex;
@@ -880,6 +914,74 @@
   gap: 6px;
   margin-left: auto;
 }
+.effort-popover {
+  position: fixed;
+  z-index: 300;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 20px;
+  background: var(--surface-2);
+  box-shadow: var(--shadow);
+}
+.effort-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.effort-heading > svg { margin-top: 5px; }
+.effort-heading > div { display: grid; gap: 3px; text-align: center; }
+.effort-heading strong { color: var(--accent-strong); font-size: 15px; }
+.effort-heading span { color: var(--text-muted); font-size: 11.5px; }
+.effort-heading .btn { width: 24px; height: 24px; }
+.effort-track {
+  position: relative;
+  height: 30px;
+  border-radius: 18px;
+  background: var(--surface-3);
+}
+.effort-track::before {
+  content: '';
+  position: absolute;
+  inset: 0 15px;
+  background: linear-gradient(to right, var(--accent) var(--effort-progress), transparent var(--effort-progress));
+}
+.effort-stops {
+  position: absolute;
+  inset: 0 15px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  pointer-events: none;
+}
+.effort-stops span { width: 4px; height: 4px; border-radius: 50%; background: var(--text-muted); }
+.effort-track input {
+  appearance: none;
+  position: relative;
+  width: 100%;
+  height: 30px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  touch-action: none;
+}
+.effort-track input::-webkit-slider-runnable-track { height: 30px; background: transparent; }
+.effort-track input::-webkit-slider-thumb {
+  appearance: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid #d4d4d4;
+  box-shadow: 0 1px 4px #0003;
+}
+.effort-track input:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 18px; }
+.effort-labels { display: flex; justify-content: space-between; gap: 4px; margin-top: 10px; }
+.effort-labels button { background: transparent; color: var(--text-muted); font-size: 10.5px; padding: 2px; cursor: pointer; }
+.effort-labels button.on { color: var(--accent-strong); }
 .composer-context {
   position: relative;
   display: flex;

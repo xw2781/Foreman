@@ -122,6 +122,8 @@ export interface LaunchOptions {
   provider: Provider;
   profileId: string;
   cwd: string;
+  /** Use a Foreman-managed workspace instead of a project folder. */
+  projectless?: boolean;
   mode: AgentMode;
   prompt?: string;
   title?: string;
@@ -191,6 +193,7 @@ export interface AgentInfo {
   profileLabel: string;
   profileColor: string;
   cwd: string;
+  projectless?: boolean;
   mode: AgentMode;
   title: string;
   model: string | null;
@@ -209,6 +212,8 @@ export interface AgentInfo {
   lastOutputAt: string | null;
   /** Last completed model turn, retained across resumes for the prompt-cache estimate. */
   lastModelActivityAt?: string | null;
+  /** It was running when the app closed: reopened at the next start if its prompt cache is still warm. */
+  reopenOnStart?: boolean;
   commandLine: string;
   telemetry: SessionTelemetry | null;
   resources: AgentResources | null;
@@ -409,6 +414,8 @@ export interface UsageSessionRow {
   title: string | null;
   cwd: string | null;
   model: string | null;
+  /** Reasoning effort the session last ran at; null when unknown (e.g. imported). */
+  effort: string | null;
   /** Every model the session used. */
   models: string[];
   startedAt: string | null;
@@ -535,6 +542,7 @@ export interface AppSettings {
   /** Which palette "light" means (also used by "system" when the OS is light). */
   lightPalette: LightPalette;
   terminalFontSize: number;
+  chatFontSize: number;
   terminalFontFamily: string;
   notifyOnNeedsInput: boolean;
   notifyOnTurnComplete: boolean;
@@ -549,6 +557,8 @@ export interface AppSettings {
   claudeStatusLine: boolean;
   /** What Enter does in a chat while the agent is working; Ctrl+Enter does the other. */
   chatSendMode: ChatSendMode;
+  /** Whisper model for voice input (see shared/voiceModels). */
+  voiceModel: string;
   /** Give new agents Foreman's built-in browser (an MCP server of browser tools). */
   browserEnabled: boolean;
   /** Agents use the browser tools without asking each time. */

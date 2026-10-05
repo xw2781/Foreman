@@ -1,3 +1,5 @@
+import { prepareVoiceModel } from './voice/engine';
+import { chatFontSize } from '@shared/appearance';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart3,
@@ -6,7 +8,6 @@ import {
   Download,
   LayoutGrid,
   MousePointer2,
-  Plus,
   Settings as SettingsIcon,
   SquareTerminal,
   Users
@@ -49,8 +50,13 @@ function useBootstrap() {
           call('computerUse.status')
         ]);
         set({ env, settings, profiles, agents, computerUse });
-        const firstLive = agents.find((a) => LIVE_STATUSES.includes(a.status));
-        if (firstLive) set({ selectedAgentId: firstLive.id });
+        // Fetch and load the speech model now, so voice input is ready when a chat needs it.
+        setTimeout(() => prepareVoiceModel(settings.voiceModel), 1500);
+        // Reopen the chat the person left; otherwise the first live agent.
+        let last: string | null = null;
+        try { last = localStorage.getItem('lastAgentId'); } catch { /* storage unavailable */ }
+        const resume = agents.find((a) => a.id === last) ?? agents.find((a) => LIVE_STATUSES.includes(a.status));
+        if (resume) set({ selectedAgentId: resume.id });
         call('processes.external').then((externals) => set({ externals })).catch(() => {});
         call('usage.report').then((usage) => set({ usage })).catch(() => {});
         call('update.status').then((update) => set({ update })).catch(() => {});
@@ -61,7 +67,12 @@ function useBootstrap() {
       }
     };
     load();
+    const stopRemembering = useApp.subscribe((state, prev) => {
+      if (state.selectedAgentId === prev.selectedAgentId || !state.selectedAgentId) return;
+      try { localStorage.setItem('lastAgentId', state.selectedAgentId); } catch { /* storage unavailable */ }
+    });
     const offs = [
+      stopRemembering,
       listen('agents', (agents) => {
         const runs = new Map(agents.map((a) => [a.id, a.runId]));
         for (const old of store().agents) {
@@ -103,6 +114,9 @@ function useBootstrap() {
 
 function useTheme() {
   const settings = useApp((s) => s.settings);
+  useEffect(() => {
+    document.documentElement.style.setProperty('--chat-font-size', `${chatFontSize(settings?.chatFontSize)}px`);
+  }, [settings?.chatFontSize]);
   const [systemDark, setSystemDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches);
   useEffect(() => {
     const query = window.matchMedia('(prefers-color-scheme: dark)');
@@ -253,7 +267,6 @@ function UpdateButton() {
 }
 
 function TitleBar() {
-  const openLauncher = useApp((s) => s.openLauncher);
   return (
     <header className="titlebar">
       <div className="brand">
@@ -279,9 +292,6 @@ function TitleBar() {
       ))}
       <div className="spacer" />
       <UpdateButton />
-      <button className="btn primary sm no-drag" onClick={() => openLauncher()} title="New agent (Ctrl+N)">
-        <Plus size={14} /> New agent
-      </button>
     </header>
   );
 }

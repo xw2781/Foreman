@@ -1442,19 +1442,57 @@ table.table {
 .agents-layout {
   position: relative;
   display: grid;
-  grid-template-columns: 290px minmax(0, 1fr);
+  grid-template-columns: var(--agent-list-width, 290px) minmax(0, 1fr);
   height: 100%;
   min-height: 0;
 }
 .agents-layout.with-details {
-  grid-template-columns: 290px minmax(0, 1fr) 320px;
+  grid-template-columns: var(--agent-list-width, 290px) minmax(0, 1fr) 320px;
 }
 .agent-list {
+  position: relative;
+  min-width: 0;
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   min-height: 0;
   background: var(--page);
+}
+.agent-list-resize {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 6px;
+  z-index: 5;
+  cursor: col-resize;
+  touch-action: none;
+}
+.agent-list-resize:hover,
+.agent-list-resize:focus-visible,
+.agent-list-resize:active {
+  background: var(--accent);
+}
+.archived-agents > summary {
+  margin: 12px 6px 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.agent-item .ai-archive {
+  position: absolute;
+  top: 8px;
+  right: 7px;
+  width: 24px;
+  height: 24px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+.agent-item:hover .ai-archive,
+.agent-item .ai-archive:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
 }
 .agent-list-head {
   padding: 14px 12px 8px;
@@ -1477,7 +1515,7 @@ table.table {
 }
 .agent-item {
   display: grid;
-  grid-template-columns: 26px 1fr;
+  grid-template-columns: 26px minmax(0, 1fr);
   gap: 4px 10px;
   padding: 10px;
   border-radius: 10px;
@@ -1503,12 +1541,14 @@ table.table {
   background: var(--warning);
 }
 .agent-item .ai-title {
+  padding-right: 26px;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .agent-item .ai-rename {
+  margin-right: 26px;
   height: 24px;
   min-width: 0;
   padding: 0 6px;
@@ -1521,14 +1561,6 @@ table.table {
   font-size: 11.5px;
   color: var(--text-muted);
   min-width: 0;
-}
-.agent-item .ai-detail {
-  grid-column: 2;
-  font-size: 11.5px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .term-panel {
@@ -1915,7 +1947,7 @@ table.table {
 
 @media (max-width: 1200px) {
   .agents-layout.with-details {
-    grid-template-columns: 250px 1fr 280px;
+    grid-template-columns: var(--agent-list-width, 290px) minmax(0, 1fr) 280px;
   }
   .account-columns {
     grid-template-columns: 1fr;
@@ -2214,4 +2246,40 @@ body.dragging-split .bp-canvas {
 }
 .bp-log li.failed .bp-log-text {
   color: inherit;
+}
+
+/* speech model download, in Settings */
+.voice-model-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  width: 260px;
+  max-width: 100%;
+  font-size: 12px;
+}
+.voice-model-status .progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.voice-model-status .progress > div {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+.voice-model-status .progress.indeterminate > div {
+  width: 35%;
+  animation: voice-model-slide 1.2s ease-in-out infinite;
+}
+.voice-model-error {
+  color: var(--critical);
+}
+@keyframes voice-model-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(290%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-model-status .progress.indeterminate > div { animation: none; width: 100%; opacity: 0.5; }
 }

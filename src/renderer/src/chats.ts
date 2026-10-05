@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { ChatImage, ChatCommand, ChatItem, ChatSendMode } from '@shared/types';
 import { call, errorMessage, listen } from './api';
+import { setAnnotations } from './annotations';
 
 interface ChatState {
   items: ChatItem[];
@@ -54,6 +55,7 @@ export async function loadChat(id: string) {
 
 export function forgetChat(id: string) {
   imageDrafts.delete(id);
+  setAnnotations(id, []);
   const { [id]: _removed, ...rest } = useChats.getState().chats;
   useChats.setState({ chats: rest });
 }

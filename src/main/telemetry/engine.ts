@@ -71,6 +71,7 @@ export interface FileSummary {
   title: string | null;
   cwd: string | null;
   model: string | null;
+  effort?: string | null;
   startedAt: string | null;
   updatedAt: string | null;
   byDay: Record<string, DayAccumulator>;
@@ -87,7 +88,7 @@ export interface FileSummary {
 
 const ACTIVE_WRITE_MS = 45_000;
 // 7: retain child turns whose timestamps were flattened during rollout migration.
-const CACHE_VERSION = 7;
+const CACHE_VERSION = 8;
 
 type Parser = ClaudeTranscriptParser | CodexRolloutParser;
 
@@ -512,6 +513,7 @@ export class TelemetryEngine {
       title: claudeTitle(state),
       cwd: state.cwd,
       model: state.model,
+      effort: state.effort,
       startedAt: state.startedAt,
       updatedAt: state.updatedAt,
       byDay: Object.fromEntries(state.byDay),
@@ -537,6 +539,7 @@ export class TelemetryEngine {
       title: codexTitle(state, title),
       cwd: state.cwd,
       model: state.model,
+      effort: state.effort,
       startedAt: state.startedAt,
       updatedAt: state.updatedAt,
       byDay: Object.fromEntries(state.byDay),
@@ -719,6 +722,7 @@ export class TelemetryEngine {
           title: summary.isSubagent ? null : summary.title,
           cwd: summary.cwd,
           model: summary.isSubagent ? null : summary.model,
+          effort: summary.isSubagent ? null : summary.effort ?? null,
           models: Object.keys(summary.byModel),
           startedAt: summary.startedAt,
           updatedAt: summary.updatedAt ?? new Date(summary.mtimeMs).toISOString(),
@@ -864,6 +868,7 @@ export class TelemetryEngine {
       title: session.title,
       cwd: session.cwd,
       model: session.model,
+      effort: null,
       models: Object.keys(session.byModel),
       startedAt: session.startedAt,
       updatedAt: session.updatedAt,

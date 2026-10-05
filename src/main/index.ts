@@ -1,5 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, Notification, safeStorage, shell, screen } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, Notification, safeStorage, session, shell, screen } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { chatFontSize } from '../shared/appearance';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -76,6 +77,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   lightPalette: 'cream',
   terminalFontSize: 13,
+  chatFontSize: 13.5,
   terminalFontFamily: "'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
   notifyOnNeedsInput: true,
   notifyOnTurnComplete: true,
@@ -87,6 +89,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   shellForTerminals: 'powershell.exe',
   claudeStatusLine: true,
   chatSendMode: 'steer',
+  voiceModel: 'Xenova/whisper-base',
   browserEnabled: true,
   browserAutoApprove: true,
   browserProfile: 'shared',
@@ -328,6 +331,7 @@ function registerIpc() {
   });
   handle('settings.get', () => settings());
   handle('settings.update', async (patch) => {
+    if ('chatFontSize' in patch) patch = { ...patch, chatFontSize: chatFontSize(patch.chatFontSize) };
     const next = settingsStore.update(patch);
     if (patch.cliPath) forgetCli();
     if ('claudeContextWindow' in patch || 'contextWindowOverrides' in patch || 'usageDays' in patch) await configureTelemetry();
@@ -819,9 +823,16 @@ app.whenReady().then(async () => {
     console.error('Browser tool server failed to start', error);
   }
   await configureTelemetry();
+  // The app's own window may use the microphone (voice input); nothing else is granted.
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+    const audioOnly = permission === 'media' && !(details as any).mediaTypes?.some((t: string) => t !== 'audio');
+    callback(audioOnly && contents === mainWindow?.webContents);
+  });
+  session.defaultSession.setPermissionCheckHandler((contents, permission) => permission === 'media' && contents === mainWindow?.webContents);
   registerIpc();
   createWindow();
   startLoops();
+  agents.reopenWarm().catch(() => {});
   updates.start();
   computerUse.refreshInstalled(profiles.list());
   computerUse.loadPolicyFromSkill().catch(() => {});

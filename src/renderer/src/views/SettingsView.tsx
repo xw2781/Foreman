@@ -3,6 +3,8 @@ import { Download, FolderOpen, RefreshCw } from 'lucide-react';
 import { PROVIDERS, PROVIDER_LABEL, type AppSettings, type PricingStatus, type UpdateStatus } from '@shared/types';
 import { call, errorMessage, listen } from '../api';
 import { useApp } from '../store';
+import { VOICE_MODELS, voiceModel } from '@shared/voiceModels';
+import { describeVoiceStatus, prepareVoiceModel, useVoiceStatus } from '../voice/engine';
 import { Segmented, Select, Switch } from '../ui';
 
 function Setting({ title, description, children }: { title: string; description?: React.ReactNode; children: React.ReactNode }) {
@@ -198,6 +200,15 @@ export function SettingsView() {
         <h2>Chat</h2>
       </div>
       <div className="card settings-list">
+        <Setting title="Chat font size" description="Message text and chat input, in pixels. Applies immediately.">
+          <input className="input" type="number" min={10} max={24} step={0.5} aria-label="Chat font size" style={{ width: 90 }}
+            value={settings.chatFontSize ?? 13.5}
+            onChange={(e) => {
+              const size = e.target.valueAsNumber;
+              if (Number.isFinite(size)) update({ chatFontSize: Math.max(10, Math.min(24, size)) });
+            }} />
+          <button className="btn sm" onClick={() => update({ chatFontSize: 13.5 })}>Reset</button>
+        </Setting>
         <Setting
           title="Messages sent while an agent works"
           description="Steer: the message goes into the running turn, and the agent reads it after its current step. Queue: it waits above the message box and goes as the next prompt when the turn ends. Ctrl+Enter sends the other way; each chat can also switch."
@@ -210,6 +221,21 @@ export function SettingsView() {
               { value: 'queue', label: 'Queue' }
             ]}
           />
+        </Setting>
+        <Setting
+          title="Voice input model"
+          description="The speech-to-text model behind the microphone button. It runs on this computer; a larger model is more accurate but slower and downloads once on first use. Dictated messages also tell the agent to correct mishearings from context."
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+            <Select
+              style={{ width: 260 }}
+              aria-label="Voice input model"
+              value={voiceModel(settings.voiceModel).id}
+              onChange={(model) => { update({ voiceModel: model }); prepareVoiceModel(model); }}
+              options={VOICE_MODELS.map((m) => ({ value: m.id, label: `${m.label} · ${m.size}`, hint: m.hint }))}
+            />
+            <VoiceModelStatus />
+          </div>
         </Setting>
       </div>
 
@@ -369,6 +395,25 @@ export function SettingsView() {
       <p className="muted" style={{ fontSize: 12, marginTop: 16 }}>
         Foreman {env?.appVersion} · Accounts live in {env?.profilesDir} · Claude hooks endpoint {env?.hookServer ?? 'unavailable'}
       </p>
+    </div>
+  );
+}
+
+/** Download and setup progress of the selected speech model; the download starts as soon as it is chosen. */
+function VoiceModelStatus() {
+  const status = useVoiceStatus();
+  const text = describeVoiceStatus(status);
+  if (!text) return null;
+  const determinate = status.state === 'loading' && status.percent !== null && status.percent < 100;
+  return (
+    <div className="voice-model-status" role="status">
+      {status.state === 'loading' ? (
+        <div className={`progress ${determinate ? '' : 'indeterminate'}`} role="progressbar" aria-label="Speech model download" aria-valuemin={0} aria-valuemax={100} aria-valuenow={determinate ? status.percent! : undefined}>
+          <div style={{ width: determinate ? `${status.percent}%` : undefined }} />
+        </div>
+      ) : null}
+      <span className={status.state === 'failed' ? 'voice-model-error' : 'muted'}>{text}</span>
+      {status.state === 'failed' ? <button className="btn sm" onClick={() => prepareVoiceModel(undefined, true)}>Retry</button> : null}
     </div>
   );
 }

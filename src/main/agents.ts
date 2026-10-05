@@ -2,6 +2,7 @@ import type { ChatImage, ChatMessage } from '../shared/types';
 import crypto from 'node:crypto';
 import { validateChatImages } from '../shared/chatImages';
 import path from 'node:path';
+import { resolveChatWorkspace } from './chatWorkspace';
 import { spawn as spawnChild, type ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import * as pty from 'node-pty';
@@ -126,7 +127,7 @@ export class AgentManager {
     const restored = this.history.data.agents.map((agent) => {
       const withRun = { ...agent, runId: agent.runId ?? agent.id };
       return LIVE_STATUSES.includes(agent.status)
-        ? { ...withRun, status: 'stopped' as AgentStatus, statusDetail: 'App was closed', endedAt: agent.endedAt ?? agent.lastActivityAt, pid: null, resources: null }
+        ? { ...withRun, status: 'stopped' as AgentStatus, statusDetail: 'App was closed', endedAt: agent.endedAt ?? agent.lastActivityAt, pid: null, resources: null, reopenOnStart: true }
         : withRun;
     });
     this.history.replace({ agents: restored });
@@ -177,6 +178,8 @@ export class AgentManager {
       options = { ...options, model: options.model || profile.defaultModel || undefined, effort: options.effort || profile.defaultEffort || undefined };
       if (!options.model && !options.resumeSessionId) options.model = defaultModel(profile.provider, this.deps.profiles.cliDefaults(profile));
     }
+    const id = reuseId ?? crypto.randomBytes(6).toString('hex');
+    options = resolveChatWorkspace(options, id, this.deps.userDataDir);
     if (!exists(options.cwd)) throw new Error(`Folder not found: ${options.cwd}`);
     if (options.mode === 'task' && !options.prompt?.trim()) throw new Error('A background task needs a prompt.');
     const settings = this.deps.settings();
@@ -186,7 +189,6 @@ export class AgentManager {
     const previousSession = reuseId ? this.sessions.get(reuseId) : undefined;
     if (previousSession && !previousSession.info.endedAt) throw new Error('This agent is still running.');
     const previous = reuseId ? this.get(reuseId) : undefined;
-    const id = reuseId ?? crypto.randomBytes(6).toString('hex');
     let claudeSessionId: string | null = null;
     let settingsFile: string | null = null;
     let args: string[];
@@ -231,6 +233,7 @@ export class AgentManager {
       || previous?.title
       || (options.mode === 'login' ? `Sign in · ${profile.label}` : null)
       || promptTitle(options.prompt ?? null)
+      || (options.projectless ? 'New chat' : null)
       || `${path.basename(options.cwd) || options.cwd}`;
     const now = new Date().toISOString();
     const info: AgentInfo = {
@@ -240,6 +243,7 @@ export class AgentManager {
       profileLabel: profile.label,
       profileColor: profile.color,
       cwd: options.cwd,
+      projectless: options.projectless,
       mode: options.mode,
       title,
       model: options.model || null,
@@ -280,6 +284,8 @@ export class AgentManager {
     env.ATC_AGENT_NAME = `${PROVIDER_LABEL[profile.provider]} · ${profile.label}`;
     env.COLORTERM = 'truecolor';
     this.sessions.set(id, session);
+    // On the list from the start: if the app dies before the agent finishes, it is still there next time.
+    this.archive(session.info);
 
     try {
       if (options.mode === 'chat') this.startChat(session, cli.path, args, env, images);
@@ -291,7 +297,7 @@ export class AgentManager {
       if (settingsFile) this.deps.hooks.removeSettingsFile(id);
       throw error;
     }
-    this.onRememberCwd(options.cwd);
+    if (!options.projectless) this.onRememberCwd(options.cwd);
     this.markChanged(id);
     if (chat) this.scheduleChatFlush();
     return info;
@@ -729,6 +735,7 @@ export class AgentManager {
         provider: info.provider,
         profileId: info.profileId,
         cwd: info.cwd,
+        projectless: info.projectless,
         mode,
         title: info.titleCustom ? info.title : undefined,
         model: info.model ?? undefined,
@@ -994,8 +1001,36 @@ export class AgentManager {
     return this.continueAgent(info, target);
   }
 
+  /**
+   * At startup, conversations that were running when the app closed and were last used within
+   * `warmMs` (the prompt cache's lifetime) start again, so work continues where it stopped.
+   * Older ones stay in the list as history.
+   */
+  async reopenWarm(warmMs = 60 * 60_000, now = Date.now()) {
+    const candidates = this.history.data.agents.filter((a) => a.reopenOnStart);
+    this.history.replace({ agents: this.history.data.agents.map((a) => (a.reopenOnStart ? { ...a, reopenOnStart: false } : a)) });
+    const warm = candidates
+      .filter((a) => CONVERSATION_MODES.includes(a.mode) && a.endedAt && (a.sessionId && (a.transcriptPath || a.telemetry)))
+      .filter((a) => now - Date.parse(a.lastModelActivityAt ?? a.lastActivityAt) < warmMs)
+      .sort((a, b) => (b.lastModelActivityAt ?? b.lastActivityAt).localeCompare(a.lastModelActivityAt ?? a.lastActivityAt))
+      .slice(0, 8);
+    for (const agent of warm) {
+      try {
+        await this.resume(agent.id);
+      } catch (error) {
+        console.error('Could not reopen', agent.id, error);
+      }
+    }
+  }
+
   async stopAll() {
-    await Promise.all([...this.sessions.values()].filter((s) => !s.info.endedAt).map((s) => this.stop(s.info.id)));
+    for (const s of this.sessions.values()) if (!s.info.endedAt && CONVERSATION_MODES.includes(s.info.mode)) s.info.reopenOnStart = true;
+    const live = [...this.sessions.values()].filter((s) => !s.info.endedAt);
+    await Promise.all(live.map((s) => this.stop(s.info.id)));
+    // Let the exits register, but never hold the app open for them.
+    await Promise.race([Promise.all(live.map((s) => this.waitForExit(s))), new Promise((resolve) => setTimeout(resolve, 3000))]);
+    // The exit handlers archive only after a telemetry read, which the quitting app won't wait for.
+    for (const s of live) this.archive(s.info);
     this.history.flush();
   }
 

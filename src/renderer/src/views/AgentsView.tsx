@@ -105,17 +105,20 @@ function DisplayToggle({ agent, display }: { agent: AgentInfo; display: Display 
   );
 }
 
-function AgentListItem({ agent, selected, onSelect }: { agent: AgentInfo; selected: boolean; onSelect: () => void }) {
+/** A simple archive box, using the same outline weight as the toolbar icons. */
+function SessionArchiveIcon({ restore = false }: { restore?: boolean }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="4" rx="1" />
+      <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
+      {restore ? <path d="M12 17v-6m-3 3 3-3 3 3" /> : <path d="M10 12h4" />}
+    </svg>
+  );
+}
+
+function AgentListItem({ agent, selected, onSelect, archived = false, onToggleArchived }: { agent: AgentInfo; selected: boolean; onSelect: () => void; archived?: boolean; onToggleArchived: () => void }) {
   const t = agent.telemetry;
   const browser = useApp((s) => s.browsers[agent.id]);
-  const detail =
-    agent.status === 'needs-input'
-      ? agent.statusDetail ?? 'Waiting for your input'
-      : agent.status === 'working'
-        ? agent.statusDetail ?? 'Working…'
-        : agent.endedAt
-          ? `${agent.statusDetail ?? 'Ended'} · ${ago(agent.endedAt)}`
-          : `Idle · ${ago(agent.lastActivityAt)}`;
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(agent.title);
   const rename = async () => {
@@ -151,15 +154,21 @@ function AgentListItem({ agent, selected, onSelect }: { agent: AgentInfo; select
           {agent.title}
         </div>
       )}
+      <button
+        type="button"
+        className="btn ghost icon ai-archive"
+        title={archived ? 'Unarchive session' : 'Archive session'}
+        aria-label={archived ? `Unarchive ${agent.title}` : `Archive ${agent.title}`}
+        onClick={(e) => { e.stopPropagation(); onToggleArchived(); }}
+      >
+        <SessionArchiveIcon restore={archived} />
+      </button>
       <div className="ai-meta">
         <StatusPill status={agent.status} />
         {agent.usesScreen ? <MousePointer2 size={12} color="var(--warning)" /> : null}
         {browser ? <Globe size={12} color={browser.busy ? 'var(--accent-strong)' : 'var(--text-muted)'} aria-label="Has a browser open" /> : null}
         <span className="ellipsis">{agent.mode === 'task' ? 'task' : CONVERSATION_MODES.includes(agent.mode) ? agent.profileLabel : agent.mode}</span>
         {t?.cost.totalUsd != null ? <span style={{ marginLeft: 'auto' }} className="num">{usd(t.cost.reportedUsd ?? t.cost.totalUsd)}</span> : null}
-      </div>
-      <div className="ai-detail" title={detail}>
-        {detail}
       </div>
       {AGENT_MODES.includes(agent.mode) ? <div style={{ gridColumn: 2 }}><PromptCacheBadge agent={agent} /></div> : null}
       {t && t.contextPercent !== null && agent.mode !== 'shell' ? (
@@ -235,8 +244,8 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
           <span data-fit="2">
             <AccountChip label={agent.profileLabel} color={agent.profileColor} />
           </span>
-          <span className="mono" data-fit="3" title={agent.cwd}>
-            {shortPath(agent.cwd)}
+          <span className="mono" data-fit="3" title={agent.projectless ? 'Standalone conversation' : agent.cwd}>
+            {agent.projectless ? 'No project' : shortPath(agent.cwd)}
           </span>
           {model ? (
             <span className="badge" data-fit="1" title={model}>
@@ -265,7 +274,7 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
         <button className="btn ghost icon" data-fit="2" title="Rename" onClick={() => setEditing(true)}>
           <Pencil size={15} />
         </button>
-        <button className="btn ghost icon" data-fit="1" title="Open folder" onClick={() => call('shell.openPath', agent.cwd)}>
+        <button className="btn ghost icon" data-fit="1" title={agent.projectless ? 'Open chat files' : 'Open folder'} onClick={() => call('shell.openPath', agent.cwd)}>
           <FolderOpen size={15} />
         </button>
         {AGENT_MODES.includes(agent.mode) ? <BrowserToggle agent={agent} /> : null}
@@ -447,7 +456,7 @@ function AgentDetails({ agent, overlay, onClose }: { agent: AgentInfo; overlay: 
           <h3>Plan usage</h3>
           <div style={{ display: 'grid', gap: 10 }}>
             {t.limits.windows.map((w) => (
-              <Meter key={w.id} label={w.label} value={w.usedPercent} />
+              <Meter left key={w.id} label={w.label} value={w.usedPercent} />
             ))}
           </div>
         </section>
@@ -528,13 +537,38 @@ export function AgentsView() {
   const details = useDetails();
   const openLauncher = useApp((s) => s.openLauncher);
   const [query, setQuery] = useState('');
+  const [archivedIds, setArchivedIds] = useState<string[]>(() => {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem('archivedAgentIds') ?? localStorage.getItem('hiddenAgentIds') ?? '[]');
+      return Array.isArray(saved) ? saved.filter((id): id is string => typeof id === 'string') : [];
+    } catch { return []; }
+  });
+  const [listWidth, setListWidth] = useState(() => {
+    try {
+      const saved = Number(localStorage.getItem('agentListWidth'));
+      return saved >= 220 && saved <= 480 ? saved : 290;
+    } catch { return 290; }
+  });
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    try {
+      localStorage.setItem('archivedAgentIds', JSON.stringify(archivedIds));
+      localStorage.removeItem('hiddenAgentIds');
+    } catch { /* Storage unavailable. */ }
+  }, [archivedIds]);
+  useEffect(() => {
+    try { localStorage.setItem('agentListWidth', String(listWidth)); } catch { /* Storage unavailable. */ }
+  }, [listWidth]);
+  const toggleArchived = (id: string) => setArchivedIds((ids) => ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id]);
+  const resizeList = (width: number) => setListWidth(Math.min(480, Math.max(220, width)));
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return agents.filter((a) => !q || `${a.title} ${a.cwd} ${a.profileLabel} ${a.model ?? ''}`.toLowerCase().includes(q));
   }, [agents, query]);
-  const live = filtered.filter((a) => !a.endedAt);
-  const ended = filtered.filter((a) => a.endedAt);
+  const live = filtered.filter((a) => !a.endedAt && !archivedIds.includes(a.id));
+  const ended = filtered.filter((a) => a.endedAt && !archivedIds.includes(a.id));
+  const archived = filtered.filter((a) => archivedIds.includes(a.id));
   const selected = agents.find((a) => a.id === selectedId) ?? live[0] ?? null;
   const preferred = useDisplay((s) => (selected ? s[selected.id] : undefined));
   const display = selected ? displayOf(selected, preferred) : 'terminal';
@@ -544,8 +578,8 @@ export function AgentsView() {
   }, [selectedId, selected]);
 
   return (
-    <div className={`agents-layout ${selected && details.docked && details.visible ? 'with-details' : ''}`}>
-      <div className="agent-list">
+    <div className={`agents-layout ${selected && details.docked && details.visible ? 'with-details' : ''}`} style={{ ['--agent-list-width' as string]: `${listWidth}px` }}>
+      <div className="agent-list" ref={listRef}>
         <div className="agent-list-head">
           <button className="btn primary" onClick={() => openLauncher()}>
             <Plus size={15} /> New agent
@@ -573,7 +607,7 @@ export function AgentsView() {
             </div>
           ) : null}
           {live.map((a) => (
-            <AgentListItem key={a.id} agent={a} selected={selected?.id === a.id} onSelect={() => useApp.setState({ selectedAgentId: a.id })} />
+            <AgentListItem key={a.id} agent={a} selected={selected?.id === a.id} onSelect={() => useApp.setState({ selectedAgentId: a.id })} onToggleArchived={() => toggleArchived(a.id)} />
           ))}
           {ended.length ? (
             <div className="agent-group">
@@ -584,9 +618,54 @@ export function AgentsView() {
             </div>
           ) : null}
           {ended.slice(0, 40).map((a) => (
-            <AgentListItem key={a.id} agent={a} selected={selected?.id === a.id} onSelect={() => useApp.setState({ selectedAgentId: a.id })} />
+            <AgentListItem key={a.id} agent={a} selected={selected?.id === a.id} onSelect={() => useApp.setState({ selectedAgentId: a.id })} onToggleArchived={() => toggleArchived(a.id)} />
           ))}
+          {archived.length ? (
+            <details className="archived-agents">
+              <summary>Archived ({archived.length})</summary>
+              {archived.map((a) => (
+                <AgentListItem key={a.id} agent={a} archived selected={selected?.id === a.id} onSelect={() => useApp.setState({ selectedAgentId: a.id })} onToggleArchived={() => toggleArchived(a.id)} />
+              ))}
+            </details>
+          ) : null}
         </div>
+        <div
+          className="agent-list-resize"
+          role="separator"
+          aria-label="Resize session list"
+          aria-orientation="vertical"
+          aria-valuemin={220}
+          aria-valuemax={480}
+          aria-valuenow={listWidth}
+          tabIndex={0}
+          title="Drag to resize; double-click to reset"
+          onDoubleClick={() => setListWidth(290)}
+          onPointerDown={(e) => {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            e.currentTarget.setPointerCapture(e.pointerId);
+          }}
+          onPointerMove={(e) => {
+            if (e.currentTarget.hasPointerCapture(e.pointerId) && listRef.current) {
+              resizeList(e.clientX - listRef.current.getBoundingClientRect().left);
+            }
+          }}
+          onPointerUp={(e) => {
+            if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+          }}
+          onPointerCancel={(e) => {
+            if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+              e.preventDefault();
+              resizeList(listWidth + (e.key === 'ArrowRight' ? 10 : -10));
+            } else if (e.key === 'Home' || e.key === 'End') {
+              e.preventDefault();
+              resizeList(e.key === 'Home' ? 220 : 480);
+            }
+          }}
+        />
       </div>
 
       {selected ? (
@@ -654,7 +733,7 @@ export function AgentsView() {
 }
 
 export function folderLabel(agent: AgentInfo) {
-  return folderName(agent.cwd);
+  return agent.projectless ? 'No project' : folderName(agent.cwd);
 }
 
 export function isLive(agent: AgentInfo) {

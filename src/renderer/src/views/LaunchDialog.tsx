@@ -80,6 +80,7 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
   const [profileId, setProfileId] = useState(preset.profileId ?? activeId);
   const [mode, setMode] = useState<AgentMode>(preset.mode ?? 'chat');
   const [cwd, setCwd] = useState(preset.cwd ?? settings?.defaultCwd ?? '');
+  const [projectless, setProjectless] = useState(preset.projectless ?? preset.cwd === '');
   const [prompt, setPrompt] = useState(preset.prompt ?? '');
   const [title, setTitle] = useState(preset.title ?? '');
   const [model, setModel] = useState(preset.model ?? '');
@@ -120,7 +121,8 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
   const modelSummary = [modelLabel(model.trim()), effort ? `${effortLabel(effort)} effort` : ''].filter(Boolean).join(', ');
   const cli = env?.clis.find((c) => c.provider === provider);
   const permissionHint = PERMISSIONS[provider].find((p) => p.value === permission)?.hint;
-  const canLaunch = Boolean(profile && cwd.trim() && cli?.path && (mode !== 'task' || prompt.trim()));
+  const withoutProject = mode === 'chat' && (projectless || !cwd.trim());
+  const canLaunch = Boolean(profile && (withoutProject || cwd.trim()) && cli?.path && (mode !== 'task' || prompt.trim()));
 
   const launch = async () => {
     if (!canLaunch || !profile) return;
@@ -129,7 +131,8 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
       const agent = await call('agents.launch', {
         provider,
         profileId: profile.id,
-        cwd: cwd.trim(),
+        cwd: withoutProject ? '' : cwd.trim(),
+        projectless: withoutProject,
         mode,
         prompt: prompt.trim() || undefined,
         title: title.trim() || undefined,
@@ -247,9 +250,16 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
         </div>
 
         <div className="field">
-          <label>Working folder</label>
+          <label>{mode === 'chat' ? 'Project' : 'Working folder'}</label>
+          {mode === 'chat' ? (
+            <div className="segmented" aria-label="Project selection">
+              <button type="button" className={projectless ? 'on' : ''} aria-pressed={projectless} disabled={resuming} onClick={() => setProjectless(true)}>No project</button>
+              <button type="button" className={!projectless ? 'on' : ''} aria-pressed={!projectless} disabled={resuming} onClick={() => setProjectless(false)}>Project folder</button>
+            </div>
+          ) : null}
+          {mode === 'chat' && projectless ? <div className="hint">Start a standalone conversation without choosing a project.</div> : <>
           <div className="row">
-            <input className="input mono" value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="C:\path\to\project" spellCheck={false} />
+            <input className="input mono" value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder={mode === 'chat' ? 'Optional — leave empty for no project' : 'C:\\path\\to\\project'} spellCheck={false} />
             <button className="btn" onClick={browse}>
               <FolderOpen size={14} /> Browse
             </button>
@@ -263,6 +273,7 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
               ))}
             </div>
           ) : null}
+          </>}
         </div>
 
         {!resuming ? (

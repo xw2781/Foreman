@@ -1,4 +1,5 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webFrame } from 'electron';
+import { installAppZoom } from './zoom';
 import { EVENT_NAMES, INVOKE_CHANNELS, SEND_CHANNELS, type AtcBridge } from '../shared/ipc';
 
 // Only the channels declared in shared/ipc.ts are reachable from the page.
@@ -24,3 +25,4 @@ const bridge: AtcBridge = {
 };
 
 contextBridge.exposeInMainWorld('atc', bridge);
+installAppZoom(window, webFrame);

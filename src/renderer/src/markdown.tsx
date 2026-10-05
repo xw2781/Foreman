@@ -1,6 +1,9 @@
 import { memo, useMemo, useState, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import { Check, Copy, FolderOpen } from 'lucide-react';
 import { call, errorMessage } from './api';
 import { useApp } from './store';
@@ -86,14 +89,16 @@ const components: Components = {
   img: ({ alt }) => <span className="muted">[{alt || 'image'}]</span>
 };
 
-const plugins = [remarkGfm];
+const plugins = [remarkGfm, remarkMath];
+// Malformed TeX renders as red source text instead of throwing; trust is off so \href etc. stay inert.
+const rehypePlugins: any[] = [[rehypeKatex, { throwOnError: false, strict: 'ignore', trust: false, output: 'html' }]];
 
 /** Assistant text. Memoized: a streaming reply re-renders only the message that changed. */
 export const Markdown = memo(function Markdown({ text, agentId }: { text: string; agentId?: string }) {
   const renderers = useMemo<Components>(() => ({ ...components, a: ({ href, children }) => <ChatLink href={href} agentId={agentId}>{children}</ChatLink> }), [agentId]);
   return (
     <div className="md selectable">
-      <ReactMarkdown remarkPlugins={plugins} components={renderers} urlTransform={(url, key, node) => node.tagName === 'a' && key === 'href' ? url : ''}>
+      <ReactMarkdown remarkPlugins={plugins} rehypePlugins={rehypePlugins} components={renderers} urlTransform={(url, key, node) => node.tagName === 'a' && key === 'href' ? url : ''}>
         {text}
       </ReactMarkdown>
     </div>

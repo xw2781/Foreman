@@ -72,7 +72,7 @@ export const useApp = create<AppState>((set, get) => ({
   github: null,
   toasts: [],
   launcher: null,
-  showDetails: true,
+  showDetails: false,
   detailsOverlay: false,
   browsers: {},
   browserShown: {},

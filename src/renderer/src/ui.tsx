@@ -55,22 +55,29 @@ export function Meter({
   value,
   valueText,
   foot,
-  title
+  title,
+  left = false,
+  plain = false
 }: {
   label: ReactNode;
   value: number | null;
   valueText?: string;
   foot?: ReactNode;
   title?: string;
+  /** `value` is a percent used; show (and fill the bar with) what is left instead. */
+  left?: boolean;
+  /** With `left`: omit the word "left" from the label (compact spaces). */
+  plain?: boolean;
 }) {
   const sev = severity(value);
-  const width = Math.max(0, Math.min(100, value ?? 0));
+  const shown = value === null || !left ? value : 100 - value;
+  const width = Math.max(0, Math.min(100, shown ?? 0));
   return (
     <div className={`meter ${sev}`} title={title}>
       <div className="meter-top">
         {sev === 'crit' ? <AlertCircle size={12} color="var(--warning)" /> : sev === 'warn' ? <AlertTriangle size={12} color="var(--warning)" /> : null}
         <span>{label}</span>
-        <span className="value">{valueText ?? percent(value)}</span>
+        <span className="value">{valueText ?? (left ? (shown === null ? '—' : plain ? percent(shown) : `${percent(shown)} left`) : percent(value))}</span>
       </div>
       <div className="meter-track">
         <div className="meter-fill" style={{ width: `${width}%` }} />
@@ -101,7 +108,16 @@ export function LimitMeters({ windows, compact = false }: { windows: LimitWindow
         isStale(w) ? (
           <Meter key={w.id} label={w.label} value={null} valueText="—" foot={compact ? undefined : 'Reset since last report'} title="This window has reset since the CLI last reported it" />
         ) : (
-          <Meter key={w.id} label={w.label} value={w.usedPercent} valueText={w.detail} foot={compact ? undefined : resetIn(w.resetsAt)} title={w.detail ? `${w.detail} (${Math.round(w.usedPercent)}%)` : resetIn(w.resetsAt)} />
+          <Meter
+            left
+            plain={compact}
+            key={w.id}
+            label={w.label}
+            value={w.usedPercent}
+            valueText={w.detail ? (compact ? w.detail : w.detail.replace(' of ', ' left of ')) : undefined}
+            foot={compact ? undefined : resetIn(w.resetsAt)}
+            title={w.detail ? `${w.detail} (${Math.round(100 - w.usedPercent)}%)` : resetIn(w.resetsAt)}
+          />
         )
       )}
     </>

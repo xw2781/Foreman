@@ -79,7 +79,7 @@ function spendWindow(spend: Record<string, any> | null): LimitWindow | null {
     label: 'Monthly spend',
     usedPercent: clamp(typeof spend.percent === 'number' ? spend.percent : (used / limit) * 100),
     resetsAt: null,
-    detail: `${format(used)} / ${format(limit)}`
+    detail: `${format(Math.max(0, limit - used))} of ${format(limit)}`
   };
 }
 
@@ -130,7 +130,7 @@ function creditWindow(limit: Record<string, any> | null): LimitWindow | null {
     label: unit === 'credit' ? 'Credits' : unit,
     usedPercent: clamp((used / total) * 100),
     resetsAt: epoch(limit.reset_at),
-    detail: `${format(used)} / ${format(total)}`
+    detail: `${format(Math.max(0, total - used))} of ${format(total)}`
   };
 }
 

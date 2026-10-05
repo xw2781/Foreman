@@ -292,7 +292,7 @@ export function TaskManagerView() {
                               {a.mode === 'task' ? <span className="badge" style={{ marginLeft: 6 }}>task</span> : null}
                             </div>
                             <div className="subtitle ellipsis" title={a.statusDetail ?? a.cwd}>
-                              {live && a.statusDetail ? a.statusDetail : `${folderName(a.cwd)} · ${live ? `active ${ago(a.lastActivityAt)}` : `ended ${ago(a.endedAt)}`}`}
+                              {live && a.statusDetail ? a.statusDetail : `${a.projectless ? 'No project' : folderName(a.cwd)} · ${live ? `active ${ago(a.lastActivityAt)}` : `ended ${ago(a.endedAt)}`}`}
                             </div>
                           </div>
                         </div>

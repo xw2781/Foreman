@@ -45,7 +45,7 @@ describe('Claude usage endpoint', () => {
       },
       AT
     );
-    expect(limits?.windows).toEqual([{ id: 'monthly_spend', label: 'Monthly spend', usedPercent: 99, resetsAt: null, detail: '$128.17 / $130.00' }]);
+    expect(limits?.windows).toEqual([{ id: 'monthly_spend', label: 'Monthly spend', usedPercent: 99, resetsAt: null, detail: '$1.83 of $130.00' }]);
   });
 
   it('falls back to the older per-window fields', () => {
@@ -95,7 +95,7 @@ describe('Codex usage endpoint', () => {
     );
     expect(limits?.planType).toBe('business');
     expect(limits?.windows).toHaveLength(1);
-    expect(limits?.windows[0]).toMatchObject({ id: 'credits', label: 'Credits', resetsAt: '2026-10-01T00:00:00.000Z', detail: '226.6 / 500' });
+    expect(limits?.windows[0]).toMatchObject({ id: 'credits', label: 'Credits', resetsAt: '2026-10-01T00:00:00.000Z', detail: '273.4 of 500' });
     expect(limits?.windows[0].usedPercent).toBeCloseTo(45.33, 2);
   });
 

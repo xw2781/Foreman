@@ -1,5 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { ChatImage, ChatMessage } from '@shared/types';
+import { useVoiceInput } from '../voice/useVoiceInput';
+import { describeVoiceStatus } from '../voice/engine';
 import { IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_CHAT_IMAGES, validateChatImages } from '@shared/chatImages';
 import { defaultModel } from '@shared/models';
 import {
@@ -19,6 +21,7 @@ import {
   Globe,
   Image,
   Info,
+  Mic,
   ListChecks,
   ListEnd,
   LoaderCircle,
@@ -56,6 +59,9 @@ import { folderName, percent, usd } from '../format';
 import { ProviderIcon, Select, useFit } from '../ui';
 import { PERMISSIONS, effortOptions, modelOptions } from './LaunchDialog';
 import { ImageAttachments } from '../ImageAttachments';
+import { EffortControl } from '../EffortControl';
+import { AnnotationSelection, AnnotationTray } from '../ChatAnnotations';
+import { annotatedMessage, NO_ANNOTATIONS, restoreAnnotations, setAnnotations, useAnnotations } from '../annotations';
 import { PromptCacheBadge } from '../PromptCacheBadge';
 import '../chat.css';
 
@@ -468,7 +474,7 @@ function SteerMessage({ item }: { item: Item<'user'> }) {
         {waiting ? <LoaderCircle size={11} className="spin" /> : <Navigation size={11} />}
         <span>{waiting ? 'Steering · waiting for the next step' : 'Steered mid-turn'}</span>
       </div>
-      <div className="bubble selectable"><ImageAttachments images={item.images} />{item.text}</div>
+      <div className="bubble selectable" data-annotation-source><ImageAttachments images={item.images} />{item.text}</div>
     </div>
   );
 }
@@ -497,14 +503,14 @@ function renderEntries(items: ChatItem[], agent: AgentInfo, activeTail: boolean,
             <SteerMessage key={item.id} item={item} />
           ) : (
             <div key={item.id} className="msg-user">
-              <div className="bubble selectable"><ImageAttachments images={item.images} />{item.text}</div>
+              <div className="bubble selectable" data-annotation-source><ImageAttachments images={item.images} />{item.text}</div>
             </div>
           )
         );
         break;
       case 'assistant':
         nodes.push(
-          <div key={item.id} className={`msg-assistant ${item.streaming ? 'streaming' : ''}`}>
+          <div key={item.id} data-annotation-source className={`msg-assistant ${item.streaming ? 'streaming' : ''}`}>
             <Markdown text={item.text} agentId={agent.id} />
           </div>
         );
@@ -778,13 +784,18 @@ function QueueTray({ agent, items, busy, onEdit }: { agent: AgentInfo; items: Ar
   );
 }
 
+/** Chats whose draft includes dictated text: the agent is told, so it can correct mishearings from context. */
+const voiceDrafts = new Set<string>();
+const VOICE_NOTE = '(Dictated by voice and transcribed by a small speech model: it may contain mishearings, especially of code, names and technical terms. Interpret it using the conversation context.)';
+
 function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'user'>> }) {
   const toast = useApp((s) => s.toast);
+  const fontSize = useApp((s) => s.settings?.chatFontSize);
+  const annotations = useAnnotations((state) => state.drafts[agent.id] ?? NO_ANNOTATIONS);
   const [text, setText] = useState(() => drafts.get(agent.id) ?? '');
   const [sending, setSending] = useState(false);
   const [images, setImages] = useState<ChatImage[]>(() => imageDrafts.get(agent.id) ?? []);
   const [reading, setReading] = useState(false);
-  const fileInput = useRef<HTMLInputElement>(null);
   const currentAgent = useRef(agent.id);
   currentAgent.current = agent.id;
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -896,7 +907,7 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.35))}px`;
-  }, [text]);
+  }, [text, fontSize]);
 
   const update = (value: string) => {
     setText(value);
@@ -933,20 +944,45 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
     finally { setReading(false); }
   };
 
+  const voice = useVoiceInput(
+    (spoken) => {
+      const before = drafts.get(agent.id) ?? '';
+      voiceDrafts.add(agent.id);
+      update(before && !/\s$/.test(before) ? `${before} ${spoken}` : before + spoken);
+      ref.current?.focus();
+    },
+    (message) => toast('error', message)
+  );
+  const recording = voice.state === 'recording';
+  const transcribing = voice.state === 'transcribing';
+  // The model downloads in the background (Settings shows how far); recording waits for it rather than the transcript.
+  const modelBusy = voice.model.state === 'loading' && !recording && !transcribing;
+
   const send = async (value = text, how: ChatSendMode = mode) => {
-    const message = value.trim();
-    if ((!message && !images.length) || sending || reading) return;
+    let message = value.trim();
+    if ((!message && !images.length && !annotations.length) || sending || reading) return;
+    const dictated = voiceDrafts.has(agent.id) && Boolean(message) && !message.startsWith('/');
+    voiceDrafts.delete(agent.id);
+    const typed = message;
+    if (dictated) message = `${message}
+
+${VOICE_NOTE}`;
+    message = annotatedMessage(message, annotations);
+    const selectedQuotes = annotations;
     const attached = images;
     setSending(true);
     update('');
     updateImages([]);
+    setAnnotations(agent.id, []);
     try {
       await call('chat.send', agent.id, message, how, attached);
     } catch (error) {
-      const restored = [message, drafts.get(agent.id) ?? ''].filter(Boolean).join('\n\n');
+      if (dictated) voiceDrafts.add(agent.id);
+      const restored = [typed, drafts.get(agent.id) ?? ''].filter(Boolean).join('\n\n');
       drafts.set(agent.id, restored);
       if (currentAgent.current === agent.id) setText(restored);
       updateImages([...attached, ...(imageDrafts.get(agent.id) ?? [])]);
+      restoreAnnotations(agent.id, selectedQuotes);
       toast('error', errorMessage(error));
     } finally {
       setSending(false);
@@ -988,15 +1024,18 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
         e.preventDefault();
         void attach(Array.from(e.dataTransfer.files));
       }}>
-        <input ref={fileInput} type="file" accept={IMAGE_TYPES.join(',')} multiple hidden onChange={(e) => { void attach(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
         <ImageAttachments images={images} onRemove={(index) => updateImages(images.filter((_, i) => i !== index))} />
+        <AnnotationTray agentId={agent.id} />
         {menuOpen ? <CommandMenu commands={shown} loading={loadingCommands || !commands} active={active} onHover={setActive} onChoose={complete} /> : null}
         <textarea
           ref={ref}
+          className="composer-input"
           rows={1}
           value={text}
           placeholder={
-            !live
+            annotations.length
+              ? 'Ask for follow-up changes…'
+              : !live
               ? 'Send a message to continue this conversation'
               : midTurn
                 ? mode === 'steer'
@@ -1031,13 +1070,28 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
               e.preventDefault();
               send(text, e.ctrlKey || e.metaKey ? OTHER_MODE[mode] : mode);
             }
+            if (e.key === 'Escape' && recording) { voice.cancel(); return; }
             if (e.key === 'Escape' && working) stop();
           }}
         />
         <div className="composer-bar">
-          <button type="button" className="composer-commands" title="Attach images (or paste / drop)" aria-label="Attach images" disabled={reading || sending} onClick={() => fileInput.current?.click()}>
-            {reading ? <LoaderCircle size={14} className="spin" /> : <Image size={14} />}
+          <button
+            type="button"
+            className={`composer-commands ${recording ? 'recording' : ''}`}
+            title={recording ? 'Stop and transcribe (Esc cancels)' : transcribing ? 'Transcribing…' : modelBusy ? `Speech model: ${describeVoiceStatus(voice.model)} (progress in Settings)` : 'Voice input'}
+            aria-label={recording ? 'Stop recording' : 'Voice input'}
+            aria-pressed={recording}
+            disabled={transcribing || sending || modelBusy}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => (recording ? voice.stop() : void voice.start())}
+          >
+            {transcribing ? <LoaderCircle size={14} className="spin" /> : recording ? <Square size={12} fill="currentColor" /> : <Mic size={14} />}
           </button>
+          {recording || transcribing || modelBusy ? (
+            <span className="voice-status" role="status">
+              {modelBusy ? `Speech model: ${describeVoiceStatus(voice.model)}` : recording ? `Listening ${Math.floor(voice.seconds / 60)}:${String(voice.seconds % 60).padStart(2, '0')}` : 'Transcribing…'}
+            </span>
+          ) : null}
           <button
             type="button"
             className={`composer-commands ${browsing ? 'on' : ''}`}
@@ -1072,13 +1126,8 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
             custom={{ placeholder: 'Other model id…' }}
             onChange={(model) => configure({ model })}
           />
-          <Select
-            variant="ghost"
-            size="sm"
-            heading="Reasoning effort"
-            icon={<Brain size={13} />}
-            aria-label="Reasoning effort"
-            title="Reasoning effort"
+          <EffortControl
+            model={currentModel}
             value={currentEffort}
             // Once a level is in force there's no "default" to go back to mid-session.
             options={effortOptions(agent.provider, profile?.cliDefaults.effort, currentEffort).filter((o) => o.value || !currentEffort)}
@@ -1106,7 +1155,7 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
                 <span>{percent(t.contextPercent)}</span>
               </span>
             ) : null}
-            {working && !text.trim() && !images.length && !reading ? (
+            {working && !text.trim() && !images.length && !annotations.length && !reading ? (
               <button type="button" className="send-btn stop" title="Stop (Esc)" onClick={stop}>
                 <Square size={12} fill="currentColor" />
               </button>
@@ -1115,7 +1164,7 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
                 type="button"
                 className="send-btn"
                 title={midTurn ? `${mode === 'steer' ? 'Steer the running turn' : 'Queue for when this turn ends'} (Enter) · Ctrl+Enter to ${OTHER_MODE[mode]}` : 'Send (Enter)'}
-                disabled={(!text.trim() && !images.length) || sending || reading}
+                disabled={(!text.trim() && !images.length && !annotations.length) || sending || reading}
                 onClick={() => send()}
               >
                 {sending ? <LoaderCircle size={15} className="spin" /> : midTurn && mode === 'steer' ? <Navigation size={15} /> : midTurn ? <ListEnd size={16} /> : <ArrowUp size={16} />}
@@ -1198,7 +1247,7 @@ function Welcome({ agent }: { agent: AgentInfo }) {
       <ProviderIcon provider={agent.provider} size={40} />
       <h2>What should we work on?</h2>
       <p className="secondary">
-        {PROVIDER_LABEL[agent.provider]} · {agent.profileLabel} · <span className="mono">{folderName(agent.cwd)}</span>
+        {PROVIDER_LABEL[agent.provider]} · {agent.profileLabel} · <span className="mono">{agent.projectless ? 'No project' : folderName(agent.cwd)}</span>
       </p>
     </div>
   );
@@ -1245,6 +1294,7 @@ export function ChatView({ agent }: { agent: AgentInfo }) {
   const pendingApproval = items.some((i) => i.kind === 'approval' && i.state === 'pending');
   return (
     <div className="chat">
+      <AnnotationSelection agentId={agent.id} container={scrollRef} />
       <div className="chat-scroll" ref={scrollRef} onScroll={onScroll}>
         <div className="chat-column">
           {items.length === 0 ? (
