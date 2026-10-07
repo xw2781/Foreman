@@ -513,11 +513,18 @@ export class AgentManager {
         if (status === 'idle') setImmediate(() => this.sendQueued(session));
       },
       session: (update) => {
+        let resumable = false;
         if (update.sessionId && update.sessionId !== info.sessionId) {
           info.sessionId = update.sessionId;
           session.claudeSessionId = session.profile.provider === 'claude' ? update.sessionId : session.claudeSessionId;
+          resumable = true;
         }
-        if (update.transcriptPath) info.transcriptPath = update.transcriptPath;
+        if (update.transcriptPath && update.transcriptPath !== info.transcriptPath) {
+          info.transcriptPath = update.transcriptPath;
+          resumable = true;
+        }
+        // Codex names its thread only after launch: save it now, or an app that dies mid-run leaves nothing to resume.
+        if (resumable && !info.endedAt) this.archive(info);
         if (update.model !== undefined) info.model = update.model || null;
         if (update.permission) info.permission = update.permission;
         if (update.title && !session.titleLocked) info.title = update.title;

@@ -81,12 +81,17 @@ if (!dev) {
     name: 'restart-electron',
     setup(buildApi) {
       buildApi.onEnd((result) => {
-        if (result.errors.length === 0) restart();
+        if (initialBuildDone && result.errors.length === 0) restart();
       });
     }
   };
+  // Launch once after every bundle has built; restarting per bundle would kill a
+  // freshly started Electron, whose network service then logs "crashed or was terminated".
+  let initialBuildDone = false;
   for (const options of bundles) {
     const ctx = await context({ ...options, plugins: [restartPlugin] });
     await ctx.watch();
   }
+  initialBuildDone = true;
+  restart();
 }

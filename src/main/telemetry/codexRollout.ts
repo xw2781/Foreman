@@ -258,6 +258,18 @@ export class CodexRolloutParser {
         }
         return;
       }
+      case 'item_completed': {
+        // Newer Codex records the prompt only as a UserMessage item, with no user_message event.
+        const item = object(payload.item);
+        if (item?.type !== 'UserMessage' || !Array.isArray(item.content)) return;
+        const parts = item.content.map((part: unknown) => (object(part)?.type === 'text' ? text(object(part)?.text) : null));
+        const prompt = promptTitle(parts.filter(Boolean).join(' '));
+        if (prompt) {
+          s.lastPrompt = prompt;
+          if (!s.firstPrompt) s.firstPrompt = prompt;
+        }
+        return;
+      }
       case 'context_compacted':
         this.compactionEvents += 1;
         s.lastCompactionAt = timestamp ?? s.lastCompactionAt;

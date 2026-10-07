@@ -129,6 +129,13 @@ describe('Codex rollout parser', () => {
     expect(state.limits?.planType).toBe('pro');
   });
 
+  it('takes the title from a UserMessage item when there is no user_message event', () => {
+    const parser = new CodexRolloutParser('fresh.jsonl');
+    parser.consume(JSON.stringify({ timestamp: '2026-10-06T15:07:47.453Z', type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', content: [{ type: 'text', text: 'create an exe' }] } } }));
+    parser.consume(JSON.stringify({ timestamp: '2026-10-06T15:07:50.000Z', type: 'event_msg', payload: { type: 'item_completed', item: { type: 'AgentMessage', content: [{ type: 'Text', text: 'ok' }] } } }));
+    expect(parser.state.firstPrompt).toBe('create an exe');
+  });
+
   it('turns rate-limit epochs into ISO reset times', () => {
     const limits = parseCodexRateLimits({ primary: { used_percent: 5, window_minutes: 10080, resets_at: 1790559287 } }, '2026-09-22T17:09:30.994Z');
     expect(limits?.windows[0]).toEqual({ id: 'primary', label: 'Weekly', usedPercent: 5, resetsAt: new Date(1790559287 * 1000).toISOString() });
