@@ -1,4 +1,4 @@
-import type { AgentStatus, LimitWindow, Provider } from '@shared/types';
+import type { AgentStatus, LimitWindow, ProfileIdentity, Provider } from '@shared/types';
 
 export function usd(value: number | null | undefined, precise = false): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—';
@@ -27,8 +27,12 @@ export function percent(value: number | null | undefined, digits = 0): string {
 export function duration(fromIso: string | null | undefined, toIso?: string | null): string {
   if (!fromIso) return '—';
   const end = toIso ? Date.parse(toIso) : Date.now();
-  const ms = Math.max(0, end - Date.parse(fromIso));
-  const s = Math.floor(ms / 1000);
+  return elapsed(end - Date.parse(fromIso));
+}
+
+/** "42s", "3m 5s", "2h 10m". */
+export function elapsed(ms: number): string {
+  const s = Math.floor(Math.max(0, ms) / 1000);
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m ${s % 60}s`;
@@ -148,4 +152,9 @@ export function modelLabel(id: string | null | undefined): string {
   else if (gpt) name = `GPT-${gpt[1]}${gpt[2] ? ` ${gpt[2].split('-').map(word).join(' ')}` : ''}`;
   if (!name) return raw;
   return longContext ? `${name} · 1M` : name;
+}
+
+/** Status line for an account that isn't signed in. */
+export function signedOutLabel(identity: ProfileIdentity | null | undefined): string {
+  return identity?.sessionEnded ? 'Session ended' : 'Not signed in';
 }

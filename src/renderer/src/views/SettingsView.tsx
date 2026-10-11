@@ -245,7 +245,7 @@ export function SettingsView() {
       <div className="card settings-list">
         <Setting
           title="Give agents Foreman's browser"
-          description="New Claude Code and Codex agents get browser tools for a Chromium browser inside Foreman. It runs off-screen with its own cookies and logins, apart from your browsers, so it never takes your screen, mouse or keyboard. Watch it (and take over) with the Browser button beside an agent."
+          description="New Claude Code and Codex agents get browser tools for a Chromium browser inside Foreman. It runs off-screen with its own cookies and logins, apart from your browsers, so it never takes your screen, mouse or keyboard. Watch it (and take over) in the Browser tab of the side panel beside an agent."
         >
           <Switch on={settings.browserEnabled} onChange={(v) => update({ browserEnabled: v })} />
         </Setting>
@@ -265,7 +265,7 @@ export function SettingsView() {
             ]}
           />
         </Setting>
-        <Setting title="Show the browser when an agent starts using it" description="Opens it beside the conversation; you can close it at any time.">
+        <Setting title="Show the browser when an agent starts using it" description="Switches the side panel beside the conversation to the Browser tab; you can close it at any time.">
           <Switch on={settings.browserAutoOpen} onChange={(v) => update({ browserAutoOpen: v })} />
         </Setting>
         <Setting title="Agent browsing data" description="Cookies, logins, site storage and cache of the agent browser. Your own browsers are never touched.">

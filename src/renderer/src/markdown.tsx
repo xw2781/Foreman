@@ -8,6 +8,7 @@ import { Check, Copy, FolderOpen } from 'lucide-react';
 import { call, errorMessage } from './api';
 import { useApp } from './store';
 import { chatLinkKind } from '@shared/chatLinks';
+import { normalizeDisplayMath } from './displayMath';
 
 function textOf(node: ReactNode): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -99,7 +100,7 @@ export const Markdown = memo(function Markdown({ text, agentId }: { text: string
   return (
     <div className="md selectable">
       <ReactMarkdown remarkPlugins={plugins} rehypePlugins={rehypePlugins} components={renderers} urlTransform={(url, key, node) => node.tagName === 'a' && key === 'href' ? url : ''}>
-        {text}
+        {normalizeDisplayMath(text)}
       </ReactMarkdown>
     </div>
   );

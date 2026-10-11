@@ -224,7 +224,7 @@ function AccountCard({ profile }: { profile: ProfileView }) {
             {profile.planTier ?? identity?.plan ? <span className="badge accent">{profile.planTier ?? identity?.plan}</span> : null}
           </div>
           <div className="ac-email ellipsis">
-            {signedIn ? identity?.email ?? identity?.authMethod ?? 'Signed in' : <span style={{ color: 'var(--serious)' }}>Not signed in</span>}
+            {signedIn ? identity?.email ?? identity?.authMethod ?? 'Signed in' : <span style={{ color: 'var(--serious)' }}>{identity?.sessionEnded ? 'Session ended — sign in again' : 'Not signed in'}</span>}
           </div>
         </div>
         <div style={{ position: 'relative' }}>

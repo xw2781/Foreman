@@ -9,7 +9,7 @@ export interface HookEvent {
   payload: Record<string, any>;
 }
 
-const EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'SessionEnd'];
+const EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'SubagentStop', 'SessionEnd'];
 const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse']);
 
 /**

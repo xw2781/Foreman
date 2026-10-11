@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import type { Provider } from '../shared/types';
 import { spawnSpec } from './cliLocator';
-import { HOME, readJsonFile, writeJsonFileAtomic } from './util';
+import { decodeJwtPayload, HOME, readJsonFile, writeJsonFileAtomic } from './util';
 
 export interface CatalogModel { id: string; label: string; resolvedModel?: string }
 
@@ -27,6 +27,35 @@ export function catalogIds(provider: Provider, rows: unknown): string[] {
   }))];
 }
 
+/** How long a finished discovery may take to exit on its own before it is killed. */
+export const EXIT_GRACE_MS = 10_000;
+/** Codex refreshes its sign-in once it is 8 days old; discovery stays clear of that. */
+const CODEX_REFRESH_AGE_MS = 7 * 24 * 60 * 60_000;
+const EXPIRY_MARGIN_MS = 5 * 60_000;
+
+/**
+ * Whether starting the CLI just to list models could make it refresh its
+ * sign-in. Refresh tokens rotate, so discovery leaves refreshing to real
+ * agent runs. Accounts without OAuth tokens (API key, signed out) have
+ * nothing to refresh.
+ */
+export function discoveryWouldRefresh(provider: Provider, configDir: string, now = Date.now()): boolean {
+  if (provider === 'claude') {
+    const oauth = readJsonFile<any>(path.join(configDir, '.credentials.json'))?.claudeAiOauth;
+    if (!oauth || typeof oauth !== 'object') return false;
+    if (typeof oauth.accessToken !== 'string' || !oauth.accessToken) return true;
+    // No expiry: a long-lived token (`claude setup-token`).
+    return typeof oauth.expiresAt === 'number' && oauth.expiresAt < now + EXPIRY_MARGIN_MS;
+  }
+  const auth = readJsonFile<any>(path.join(configDir, 'auth.json'));
+  const token = auth?.tokens?.access_token;
+  if (typeof token !== 'string' || !token) return false;
+  const exp = Number(decodeJwtPayload(token)?.exp);
+  if (Number.isFinite(exp) && exp * 1000 < now + EXPIRY_MARGIN_MS) return true;
+  const lastRefresh = Date.parse(auth.last_refresh);
+  return Number.isFinite(lastRefresh) && now - lastRefresh > CODEX_REFRESH_AGE_MS;
+}
+
 /** Metadata only: never create a Codex thread or send a Claude user message. */
 export function discoverModels(provider: Provider, cli: string, env: Record<string, string>): Promise<CatalogModel[]> {
   return new Promise((resolve, reject) => {
@@ -46,14 +75,20 @@ export function discoverModels(provider: Provider, cli: string, env: Record<stri
       if (done) return;
       done = true;
       clearTimeout(timeout);
+      // Closing stdin ends both CLIs. Killing them outright could land mid token
+      // refresh: the server has rotated the refresh token, the CLI hasn't saved
+      // it yet, and the account is signed out on its next start.
       child.stdin.end();
-      // Kill the shim's descendants as well, so a timed-out discovery cannot linger.
-      if (child.pid && child.exitCode === null) {
+      const grace = setTimeout(() => {
+        // Kill the shim's descendants as well, so a hung discovery cannot linger.
+        if (!child.pid || child.exitCode !== null) return;
         if (process.platform === 'win32') {
           const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
           killer.on('error', () => child.kill());
         } else child.kill();
-      }
+      }, EXIT_GRACE_MS);
+      grace.unref?.();
+      child.once('exit', () => clearTimeout(grace));
       if (error) reject(error);
       else resolve([...new Map(models.map((model) => [model.id, model])).values()]);
     };

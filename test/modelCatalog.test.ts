@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('node:child_process', () => ({ spawn: vi.fn(), execFile: vi.fn() }));
 import { spawn } from 'node:child_process';
-import { catalogIds, discoverModels, ModelCatalog } from '../src/main/modelCatalog';
+import { catalogIds, discoverModels, discoveryWouldRefresh, EXIT_GRACE_MS, ModelCatalog } from '../src/main/modelCatalog';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -67,9 +67,64 @@ describe('CLI model discovery', () => {
     await assertion;
   });
 
+  it('lets a finished CLI exit on its own and kills it only after a grace period', async () => {
+    vi.useFakeTimers();
+    const kills = () => vi.mocked(spawn).mock.calls.filter(([file]) => file === 'taskkill.exe').length + process.child.kill.mock.calls.length;
+    let process = cli();
+    Object.assign(process.child, { pid: 4242 });
+    let result = discoverModels('claude', 'claude.exe', {});
+    process.reply({ type: 'control_response', response: { request_id: 'models', subtype: 'success', response: { models: [] } } });
+    await result;
+    expect(process.child.stdin.writableEnded).toBe(true);
+    await vi.advanceTimersByTimeAsync(EXIT_GRACE_MS - 1);
+    expect(kills()).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(kills()).toBe(1);
+
+    vi.mocked(spawn).mockClear();
+    process = cli();
+    Object.assign(process.child, { pid: 4243 });
+    result = discoverModels('claude', 'claude.exe', {});
+    process.reply({ type: 'control_response', response: { request_id: 'models', subtype: 'success', response: { models: [] } } });
+    await result;
+    process.child.emit('exit', 0);
+    await vi.advanceTimersByTimeAsync(EXIT_GRACE_MS);
+    expect(kills()).toBe(0);
+  });
+
   it('ignores invalid and duplicate model entries', () => {
     expect(catalogIds('claude', [null, {}, { value: '' }, { value: 1 }, { value: ' sonnet ' }, { value: 'sonnet' }])).toEqual(['sonnet']);
     expect(catalogIds('codex', null)).toEqual([]);
+  });
+});
+
+describe('discovery and sign-in refresh', () => {
+  const now = Date.parse('2026-10-09T12:00:00Z');
+  const claude = (oauth: unknown) => {
+    const dir = directory();
+    fs.writeFileSync(path.join(dir, '.credentials.json'), JSON.stringify({ claudeAiOauth: oauth }));
+    return dir;
+  };
+  const codex = (exp: number, lastRefresh?: string) => {
+    const dir = directory();
+    const token = ['e30', Buffer.from(JSON.stringify({ exp: exp / 1000 })).toString('base64url'), 'sig'].join('.');
+    fs.writeFileSync(path.join(dir, 'auth.json'), JSON.stringify({ tokens: { access_token: token }, last_refresh: lastRefresh }));
+    return dir;
+  };
+
+  it('skips Claude discovery when the access token is cleared or about to expire', () => {
+    expect(discoveryWouldRefresh('claude', claude({ accessToken: 'a', refreshToken: 'r', expiresAt: now + 3_600_000 }), now)).toBe(false);
+    expect(discoveryWouldRefresh('claude', claude({ accessToken: 'a', refreshToken: 'r', expiresAt: now + 60_000 }), now)).toBe(true);
+    expect(discoveryWouldRefresh('claude', claude({ accessToken: '', refreshToken: '', expiresAt: 0 }), now)).toBe(true);
+    expect(discoveryWouldRefresh('claude', claude({ accessToken: 'long-lived', expiresAt: null }), now)).toBe(false);
+    expect(discoveryWouldRefresh('claude', directory(), now)).toBe(false);
+  });
+
+  it('skips Codex discovery when the token expires soon or is due for its periodic refresh', () => {
+    expect(discoveryWouldRefresh('codex', codex(now + 3_600_000, '2026-10-08T12:00:00Z'), now)).toBe(false);
+    expect(discoveryWouldRefresh('codex', codex(now + 60_000, '2026-10-08T12:00:00Z'), now)).toBe(true);
+    expect(discoveryWouldRefresh('codex', codex(now + 3_600_000, '2026-10-01T12:00:00Z'), now)).toBe(true);
+    expect(discoveryWouldRefresh('codex', directory(), now)).toBe(false);
   });
 });
 

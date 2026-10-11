@@ -76,3 +76,24 @@ describe('ProfileService.update', () => {
     expect(new ProfileService(dir).get('claude-default')?.defaultEffort).toBeUndefined();
   });
 });
+
+describe('Claude sign-in state', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const identity = (oauth: unknown) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-identity-'));
+    dirs.push(dir);
+    if (oauth !== undefined) fs.writeFileSync(path.join(dir, '.credentials.json'), JSON.stringify({ claudeAiOauth: oauth }));
+    const service = new ProfileService(dir);
+    (service as any).store.flush();
+    return (service as any).claudeIdentity({ ...base, configDir: dir });
+  };
+
+  it('tells a session the CLI cleared apart from an account that never signed in', () => {
+    expect(identity({ accessToken: '', refreshToken: '', expiresAt: 0, subscriptionType: 'enterprise' })).toMatchObject({ loggedIn: false, sessionEnded: true, plan: 'enterprise' });
+    expect(identity(undefined)).toMatchObject({ loggedIn: false, sessionEnded: false });
+    expect(identity({ accessToken: 'a', refreshToken: 'r', expiresAt: 1 })).toMatchObject({ loggedIn: true, sessionEnded: false });
+  });
+});

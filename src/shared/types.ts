@@ -38,6 +38,8 @@ export interface ProfileIdentity {
   authMethod: string | null;
   checkedAt: string;
   error: string | null;
+  /** Signed in before, but the CLI cleared its tokens (a refresh was rejected). */
+  sessionEnded?: boolean;
 }
 
 export interface LimitWindow {
@@ -225,6 +227,35 @@ export interface AgentInfo {
   attached?: boolean;
   /** The person named it (at launch or by renaming); automatic titles leave it alone. */
   titleCustom?: boolean;
+  /** Subagents it started (Claude Code's Task/Agent tool, Codex's spawn_agent), oldest first. */
+  subagents?: SubagentInfo[];
+}
+
+export type SubagentStatus = 'running' | 'done' | 'failed' | 'stopped';
+
+/** One subagent on the agent map. */
+export interface SubagentInfo {
+  /** Claude: the agent tool call's id. Codex: the child thread's id. */
+  id: string;
+  /** The subagent that started this one; null when the agent itself did. */
+  parentId: string | null;
+  /** Claude's subagent_type (Explore, general-purpose…), Codex's role. */
+  kind: string;
+  description: string | null;
+  prompt: string | null;
+  model: string | null;
+  status: SubagentStatus;
+  /** Runs on while its parent carries on (Claude's run_in_background; every Codex child). */
+  background: boolean;
+  startedAt: string;
+  endedAt: string | null;
+  /** What it's doing now, while running. */
+  activity: string | null;
+  toolUses: number;
+  tokens: number | null;
+  durationMs: number | null;
+  /** The start of its answer, once finished. */
+  result: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -565,7 +596,7 @@ export interface AppSettings {
   browserAutoApprove: boolean;
   /** One agent profile (cookies, logins) shared by every agent, or a fresh one per agent. */
   browserProfile: BrowserProfileMode;
-  /** Show the browser beside the conversation when its agent starts using it. */
+  /** Bring up the side panel's Browser tab when its agent starts using the browser. */
   browserAutoOpen: boolean;
 }
 
@@ -681,3 +712,18 @@ export interface BrowserFrame {
   /** JPEG. */
   data: Uint8Array;
 }
+
+/** An entry of a project folder, for the file panel. `path` is relative to the agent's folder, with `/` separators. */
+export interface ProjectFileEntry {
+  name: string;
+  path: string;
+  dir: boolean;
+  size: number;
+  modifiedMs: number;
+}
+
+/** What the file panel shows for one file. */
+export type ProjectFilePreview =
+  | { kind: 'text'; path: string; size: number; modifiedMs: number; text: string; truncated: boolean }
+  | { kind: 'image'; path: string; size: number; modifiedMs: number; dataUrl: string }
+  | { kind: 'binary' | 'too-large'; path: string; size: number; modifiedMs: number };

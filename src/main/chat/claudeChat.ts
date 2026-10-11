@@ -202,6 +202,7 @@ export class ClaudeChat implements ChatDriver {
     } catch {
       return;
     }
+    this.host.subagents?.claude(event);
     // Messages of a subagent (Task tool) belong to that tool call, not the main conversation.
     if (event.parent_tool_use_id) return;
     switch (event.type) {

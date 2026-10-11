@@ -37,6 +37,8 @@ import type { TelemetryClient } from './telemetry/client';
 import { killTree, type ProcessMonitor } from './processMonitor';
 import { promptTitle } from './telemetry/jsonl';
 import { JsonStore, cleanEnv, exists } from './util';
+import { SubagentTracker, settleSubagents } from './subagents';
+import { savedSession } from './savedSession';
 import { defaultStatusText, originalStatusLine, parseStatusPayload, runStatusCommand, type StatusSnapshot } from './statusLine';
 
 const BUFFER_LIMIT = 2_500_000;
@@ -81,6 +83,8 @@ interface Session {
   /** Chat mode: the conversation and the protocol driver behind it. */
   chat: ChatLog | null;
   driver: (ChatDriver & { dispose?: (reason: string) => void }) | null;
+  /** The subagents it has started, for the agent map. */
+  subagents: SubagentTracker;
   /** The driver's slash commands and skills, kept for after the process ends. */
   commands: ChatCommand[];
   stderrTail: string;
@@ -127,7 +131,7 @@ export class AgentManager {
     const restored = this.history.data.agents.map((agent) => {
       const withRun = { ...agent, runId: agent.runId ?? agent.id };
       return LIVE_STATUSES.includes(agent.status)
-        ? { ...withRun, status: 'stopped' as AgentStatus, statusDetail: 'App was closed', endedAt: agent.endedAt ?? agent.lastActivityAt, pid: null, resources: null, reopenOnStart: true }
+        ? { ...withRun, status: 'stopped' as AgentStatus, statusDetail: 'App was closed', endedAt: agent.endedAt ?? agent.lastActivityAt, pid: null, resources: null, reopenOnStart: true, subagents: settleSubagents(agent.subagents ?? [], agent.lastActivityAt) }
         : withRun;
     });
     this.history.replace({ agents: restored });
@@ -266,7 +270,9 @@ export class AgentManager {
       usesScreen: false,
       prompt: options.prompt ?? previous?.prompt ?? null,
       runId: newRunId(),
-      titleCustom: Boolean(options.title?.trim()) || previous?.titleCustom === true
+      titleCustom: Boolean(options.title?.trim()) || previous?.titleCustom === true,
+      // A continued conversation keeps the map of what it ran before.
+      subagents: previous?.subagents
     };
     const session = this.createSession(info, options, profile, {
       formatter: headless && profile.provider === 'claude' ? new ClaudeStreamFormatter() : null,
@@ -304,6 +310,11 @@ export class AgentManager {
   }
 
   private createSession(info: AgentInfo, options: LaunchOptions, profile: Profile, extra: Partial<Session> = {}): Session {
+    const subagents = new SubagentTracker(info.subagents, () => {
+      info.subagents = subagents.list();
+      this.markChanged(info.id);
+    });
+    info.subagents = subagents.list();
     return {
       info,
       options,
@@ -329,6 +340,7 @@ export class AgentManager {
       statusLine: null,
       chat: null,
       driver: null,
+      subagents,
       commands: [],
       stderrTail: '',
       failure: null,
@@ -502,6 +514,7 @@ export class AgentManager {
     const info = session.info;
     return {
       log: session.chat!,
+      subagents: session.subagents,
       changed: () => this.scheduleChatFlush(),
       status: (status, detail) => {
         if (info.endedAt) return;
@@ -566,11 +579,7 @@ export class AgentManager {
     const log = new ChatLog();
     let file = knownPath;
     try {
-      if (!file && sessionId) {
-        file = profile.provider === 'claude'
-          ? await this.deps.telemetry.findClaudeTranscript(profile.configDir, sessionId)
-          : await this.deps.telemetry.findCodexRolloutById(profile.configDir, sessionId);
-      }
+      if (!file && sessionId) file = await this.findTranscript(profile, sessionId);
       if (!file || !exists(file)) return log;
       for (const { entry, at } of await this.deps.telemetry.chatHistory(profile.provider, file)) log.upsert(entry, at ?? undefined);
     } catch (error) {
@@ -578,6 +587,18 @@ export class AgentManager {
     }
     log.takeDirty();
     return log;
+  }
+
+  private findTranscript(profile: Profile, sessionId: string): Promise<string | null> {
+    return profile.provider === 'claude'
+      ? this.deps.telemetry.findClaudeTranscript(profile.configDir, sessionId)
+      : this.deps.telemetry.findCodexRolloutById(profile.configDir, sessionId);
+  }
+
+  /** The session an ended agent can continue; see `savedSession`. */
+  private savedSessionOf(info: AgentInfo) {
+    const profile = this.deps.profiles.list().find((p) => p.id === info.profileId);
+    return savedSession(info, (sessionId) => (profile ? this.findTranscript(profile, sessionId) : Promise.resolve(null)));
   }
 
   private scheduleChatFlush() {
@@ -731,11 +752,12 @@ export class AgentManager {
   }
 
   /** Relaunches a finished agent's conversation in place, as a chat or in the terminal. */
-  private continueAgent(info: AgentInfo, mode: AgentMode, prompt?: string, images?: ChatImage[]): Promise<AgentInfo> {
-    const sessionId = info.telemetry?.sessionId ?? info.sessionId;
+  private async continueAgent(info: AgentInfo, mode: AgentMode, prompt?: string, images?: ChatImage[]): Promise<AgentInfo> {
     // Only a conversation the CLI actually saved can be resumed; an empty one starts over.
-    const resumable = Boolean(sessionId && (info.transcriptPath || info.telemetry));
-    if (!resumable && mode !== 'chat') throw new Error('This agent never started a session that can be resumed.');
+    const saved = await this.savedSessionOf(info);
+    if (!saved && mode !== 'chat') throw new Error('This agent never started a session that can be resumed.');
+    // `launch` reads the transcript from the record it continues.
+    if (saved?.transcriptPath && !info.transcriptPath) info.transcriptPath = saved.transcriptPath;
     const effort = this.sessions.get(info.id)?.options.effort ?? info.effort ?? undefined;
     return this.launch(
       {
@@ -748,7 +770,7 @@ export class AgentManager {
         model: info.model ?? undefined,
         effort,
         permission: info.permission ?? undefined,
-        resumeSessionId: resumable ? sessionId! : undefined,
+        resumeSessionId: saved?.sessionId,
         prompt
       },
       info.id,
@@ -850,6 +872,7 @@ export class AgentManager {
     info.pid = null;
     info.resources = null;
     session.needsInput = false;
+    session.subagents.settle();
     let status: AgentStatus;
     if (session.failure) status = 'failed';
     else if (session.stopping) status = 'stopped';
@@ -1016,11 +1039,12 @@ export class AgentManager {
   async reopenWarm(warmMs = 60 * 60_000, now = Date.now()) {
     const candidates = this.history.data.agents.filter((a) => a.reopenOnStart);
     this.history.replace({ agents: this.history.data.agents.map((a) => (a.reopenOnStart ? { ...a, reopenOnStart: false } : a)) });
-    const warm = candidates
-      .filter((a) => CONVERSATION_MODES.includes(a.mode) && a.endedAt && (a.sessionId && (a.transcriptPath || a.telemetry)))
+    const recent = candidates
+      .filter((a) => CONVERSATION_MODES.includes(a.mode) && a.endedAt)
       .filter((a) => now - Date.parse(a.lastModelActivityAt ?? a.lastActivityAt) < warmMs)
-      .sort((a, b) => (b.lastModelActivityAt ?? b.lastActivityAt).localeCompare(a.lastModelActivityAt ?? a.lastActivityAt))
-      .slice(0, 8);
+      .sort((a, b) => (b.lastModelActivityAt ?? b.lastActivityAt).localeCompare(a.lastModelActivityAt ?? a.lastActivityAt));
+    const warm: AgentInfo[] = [];
+    for (const agent of recent) if (warm.length < 8 && (await this.savedSessionOf(agent))) warm.push(agent);
     for (const agent of warm) {
       try {
         await this.resume(agent.id);
@@ -1066,6 +1090,7 @@ export class AgentManager {
     if (!session || session.info.endedAt) return;
     this.onHookEvent(event);
     const payload = event.payload;
+    session.subagents.claudeHook(event.name, payload);
     if (session.info.mode === 'task') {
       // A background task is working until its process exits; hooks only say what it's doing.
       if (event.name === 'PreToolUse') {
@@ -1213,7 +1238,11 @@ export class AgentManager {
       const claimed = [...this.sessions.values()].map((s) => s.info.transcriptPath).filter((p): p is string => Boolean(p));
       found = await telemetry.findCodexRollout(configDir, info.cwd, Date.parse(info.startedAt), claimed);
     }
-    if (found) info.transcriptPath = found;
+    if (found) {
+      info.transcriptPath = found;
+      // Save it now: an app that dies mid-run would otherwise leave a record that can't find its conversation.
+      if (!info.endedAt) this.archive(info);
+    }
     return found;
   }
 

@@ -63,6 +63,7 @@ import { EffortControl } from '../EffortControl';
 import { AnnotationSelection, AnnotationTray } from '../ChatAnnotations';
 import { annotatedMessage, NO_ANNOTATIONS, restoreAnnotations, setAnnotations, useAnnotations } from '../annotations';
 import { PromptCacheBadge } from '../PromptCacheBadge';
+import { SubagentPill } from './SubagentMap';
 import '../chat.css';
 
 type Item<K extends ChatItem['kind']> = Extract<ChatItem, { kind: K }>;
@@ -1106,6 +1107,7 @@ ${VOICE_NOTE}`;
             <SquareSlash size={14} />
           </button>
           <PromptCacheBadge agent={agent} />
+          <SubagentPill agent={agent} />
           <Select
             variant="ghost"
             size="sm"

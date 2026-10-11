@@ -15,13 +15,14 @@ import {
 } from '../shared/types';
 import type { EventMap, EventName, InvokeChannel, InvokeMap, ThemePrefs } from '../shared/ipc';
 import { ProfileService } from './profiles';
-import { discoverModels } from './modelCatalog';
+import { discoverModels, discoveryWouldRefresh } from './modelCatalog';
 import { PlanUsageClient } from './planUsage';
 import { TelemetryClient } from './telemetry/client';
 import { loadPricingFile, seedPricingFile } from './telemetry/pricingFile';
 import { HookServer } from './hookServer';
 import { ProcessMonitor, killTree } from './processMonitor';
 import { resolveChatFile } from './chat/fileLinks';
+import { listProjectDirectory, readProjectFile } from './projectFiles';
 import { AgentManager } from './agents';
 import { ComputerUseService } from './computerUse';
 import { forgetCli, locateCli } from './cliLocator';
@@ -176,6 +177,8 @@ profiles.runningCounter = (id) => agents.runningCount(id);
 profiles.skillChecker = (profile) => computerUse.isInstalled(profile);
 profiles.codexLimitsLoader = (profile) => telemetry.codexLimits({ id: profile.id, provider: profile.provider, configDir: profile.configDir });
 profiles.modelsLoader = async (profile) => {
+  // An empty list keeps the last good catalog; a later pass tries again.
+  if (discoveryWouldRefresh(profile.provider, profile.configDir)) return [];
   const cli = await locateCli(profile.provider, settings().cliPath[profile.provider]);
   return cli.path ? discoverModels(profile.provider, cli.path, profiles.envFor(profile, cleanEnv())) : [];
 };
@@ -453,6 +456,13 @@ function registerIpc() {
       if (error) throw new Error(`Could not open ${target}: ${error}. Try Show in folder.`);
     }
   });
+  const projectRoot = (id: string) => {
+    const agent = agents.get(id);
+    if (!agent) throw new Error('This conversation is no longer available.');
+    return agent.cwd;
+  };
+  handle('files.list', (id, dir) => listProjectDirectory(projectRoot(id), dir));
+  handle('files.read', (id, file) => readProjectFile(projectRoot(id), file));
   handle('chat.send', (id, text, mode, images) => agents.chatSend(id, text, mode, images));
   handle('chat.queued', (id, itemId, action) => agents.chatQueued(id, itemId, action));
   handle('chat.interrupt', (id) => agents.chatInterrupt(id));

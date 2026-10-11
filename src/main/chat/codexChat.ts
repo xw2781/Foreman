@@ -316,6 +316,8 @@ export class CodexChat implements ChatDriver {
   }
 
   private onNotification(method: string, params: any) {
+    // Child threads (spawned agents) report here too; only the map follows them.
+    this.host.subagents?.codex(method, params, this.threadId);
     if (params.threadId && this.threadId && params.threadId !== this.threadId) return;
     switch (method) {
       case 'turn/started':

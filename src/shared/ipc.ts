@@ -17,6 +17,8 @@ import type {
   GitHubSyncStatus,
   LaunchOptions,
   PricingStatus,
+  ProjectFileEntry,
+  ProjectFilePreview,
   NewProfileInput,
   ProfileView,
   Provider,
@@ -79,6 +81,11 @@ export interface InvokeMap {
   'chat.configure': (id: string, patch: ChatSettingsPatch) => void;
   /** The slash commands and skills the session accepts (the last known ones once it has ended). */
   'chat.commands': (id: string) => ChatCommand[];
+
+  /** A folder of the agent's project, relative to its cwd ('' is the root). */
+  'files.list': (id: string, dir: string) => { entries: ProjectFileEntry[]; omitted: number };
+  /** A file of the agent's project, for the preview. */
+  'files.read': (id: string, file: string) => ProjectFilePreview;
 
   /** null until the first process snapshot has been taken. */
   'processes.external': () => ExternalAgentProcess[] | null;
@@ -159,6 +166,7 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'agents.list', 'agents.launch', 'agents.write', 'agents.resize', 'agents.stop', 'agents.remove', 'agents.clearFinished',
   'agents.rename', 'agents.resume', 'agents.buffer',
   'chat.file', 'chat.items', 'chat.send', 'chat.interrupt', 'chat.respond', 'chat.configure', 'chat.commands', 'chat.queued',
+  'files.list', 'files.read',
   'processes.external', 'processes.kill',
   'usage.report', 'usage.export', 'usage.import', 'usage.forgetMachine', 'pricing.status', 'pricing.edit',
   'github.status', 'github.connect', 'github.cancel', 'github.disconnect', 'github.sync',

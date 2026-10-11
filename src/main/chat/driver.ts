@@ -1,10 +1,13 @@
 import type { ChatImage } from '../../shared/types';
 import type { ChatAnswer, ChatCommand, ChatSettingsPatch, ProfileLimits } from '../../shared/types';
 import type { ChatLog } from './log';
+import type { SubagentTracker } from '../subagents';
 
 /** What a chat driver tells the agent manager. */
 export interface ChatHost {
   log: ChatLog;
+  /** The agent map: drivers report every event to it, the subagents' own included. */
+  subagents?: SubagentTracker;
   /** Items changed; schedule a flush to the renderer. */
   changed(): void;
   status(status: 'working' | 'idle' | 'needs-input', detail?: string | null): void;

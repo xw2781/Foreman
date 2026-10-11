@@ -10,9 +10,8 @@ import {
   Hand,
   History,
   Loader2,
-  Maximize2,
-  Minimize2,
   Plus,
+  Power,
   RotateCw,
   X
 } from 'lucide-react';
@@ -20,7 +19,7 @@ import type { AgentInfo, BrowserCommand, BrowserInput, BrowserState } from '@sha
 import { call, errorMessage, listen } from '../api';
 import { useApp } from '../store';
 import { ago } from '../format';
-import { useTicker } from '../ui';
+import { Empty, useTicker } from '../ui';
 
 function sendInput(agentId: string, input: BrowserInput) {
   window.atc.send('browser.input', agentId, input);
@@ -339,20 +338,44 @@ function StatusBar({ agent, state }: { agent: AgentInfo; state: BrowserState }) 
   );
 }
 
-export function BrowserPanel({ agent, state, expanded, onExpand }: { agent: AgentInfo; state: BrowserState | null; expanded: boolean; onExpand?: () => void }) {
-  const hide = () => useApp.setState({ browserShown: { ...useApp.getState().browserShown, [agent.id]: false }, browserExpanded: false });
+/** The side panel's Browser tab. Opening it doesn't start a browser; the button below does (e.g. to sign in to a site first). */
+export function BrowserPanel({ agent, state }: { agent: AgentInfo; state: BrowserState | null }) {
+  const [opening, setOpening] = useState(false);
   const command = (name: BrowserCommand, tabId?: string) => call('browser.command', agent.id, name, tabId).catch((error) => useApp.getState().toast('error', errorMessage(error)));
+  const open = async () => {
+    setOpening(true);
+    try {
+      await call('browser.open', agent.id);
+    } catch (error) {
+      useApp.getState().toast('error', errorMessage(error));
+    } finally {
+      setOpening(false);
+    }
+  };
 
-  useEffect(() => {
-    // Opening the panel before the agent browses gives it a blank tab, e.g. to sign in to a site first.
-    if (!state) call('browser.open', agent.id).catch((error) => useApp.getState().toast('error', errorMessage(error)));
-  }, [agent.id, Boolean(state)]);
+  if (!state) {
+    return (
+      <section className="browser-panel bp-closed" aria-label="Agent browser">
+        <Empty
+          icon={<Globe size={22} />}
+          title="The agent hasn't opened its browser"
+          action={
+            <button className="btn primary" disabled={opening} onClick={open}>
+              {opening ? <Loader2 size={14} className="spin" /> : <Globe size={14} />} Open browser
+            </button>
+          }
+        >
+          It opens here when the agent starts browsing. Open it yourself to sign in to a site first; it has its own cookies and logins.
+        </Empty>
+      </section>
+    );
+  }
 
-  const active = state?.tabs.find((t) => t.id === state.activeTabId) ?? null;
+  const active = state.tabs.find((t) => t.id === state.activeTabId) ?? null;
   return (
     <section className="browser-panel" aria-label="Agent browser">
       <div className="bp-tabs">
-        {state?.tabs.map((tab) => (
+        {state.tabs.map((tab) => (
           <div
             key={tab.id}
             className={`bp-tab ${tab.id === state.activeTabId ? 'on' : ''}`}
@@ -377,13 +400,8 @@ export function BrowserPanel({ agent, state, expanded, onExpand }: { agent: Agen
           <Plus size={14} />
         </button>
         <div className="bp-tabs-end">
-          {onExpand ? (
-            <button className="btn ghost icon sm" title={expanded ? 'Show the conversation too' : 'Fill the panel with the browser'} onClick={onExpand}>
-              {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-            </button>
-          ) : null}
-          <button className="btn ghost icon sm" title="Hide the browser (it keeps running for the agent)" onClick={hide}>
-            <X size={15} />
+          <button className="btn ghost icon sm" title="Close the browser (its logins are kept)" onClick={() => command('close')}>
+            <Power size={14} />
           </button>
         </div>
       </div>
@@ -402,16 +420,16 @@ export function BrowserPanel({ agent, state, expanded, onExpand }: { agent: Agen
           <Code2 size={15} />
         </button>
       </div>
-      {state?.fileChooser ? <div className="bp-notice">The page is waiting for the agent to choose files to upload.</div> : null}
-      {state && active ? (
+      {state.fileChooser ? <div className="bp-notice">The page is waiting for the agent to choose files to upload.</div> : null}
+      {active ? (
         <Viewport key={agent.id} agentId={agent.id} state={state} />
       ) : (
         <div className="bp-viewport bp-empty">
           <Globe size={22} className="muted" />
-          <div className="muted">{state ? 'No page is open. Type a URL above, or let the agent open one.' : 'Opening the browser…'}</div>
+          <div className="muted">No page is open. Type a URL above, or let the agent open one.</div>
         </div>
       )}
-      {state ? <StatusBar agent={agent} state={state} /> : null}
+      <StatusBar agent={agent} state={state} />
     </section>
   );
 }

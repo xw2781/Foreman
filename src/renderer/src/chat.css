@@ -1171,3 +1171,214 @@
 .image-preview-canvas { display: flex; width: max-content; min-width: 100%; min-height: 100%; padding: 16px; box-sizing: border-box; }
 .image-preview-canvas img { display: block; flex: none; margin: auto; max-width: none; max-height: none; object-fit: contain; }
 .image-preview-hint { padding: 8px; text-align: center; font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--border); }
+
+/* ------------------------------------------------------------- subagent map */
+
+/* Composer pill beside the prompt-cache one: how many subagents are active; opens the map. */
+.subagent-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.subagent-pill:hover { background: var(--surface-3); color: var(--text-secondary); }
+.subagent-pill.active { color: var(--accent-strong); background: var(--accent-soft); }
+.subagent-pill.on { box-shadow: inset 0 0 0 1px var(--accent); }
+.subagent-pill:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+/* The side panel's Subagents tab. */
+.subagent-pane-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.subagent-pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+/* The tree reads left to right: the agent, the subagents it started, then theirs. */
+.map-branch {
+  display: flex;
+  align-items: flex-start;
+}
+/* Connectors: a stub out of the parent, a spine down the children, a stub into each child.
+   22px is the height of a card's first row, where every edge meets it. */
+.map-children {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0 0 0 40px;
+  list-style: none;
+}
+.map-children::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 22px;
+  width: 20px;
+  border-top: 1.5px solid var(--baseline);
+}
+.map-children > li { position: relative; }
+.map-children > li::before {
+  content: '';
+  position: absolute;
+  left: -20px;
+  top: 22px;
+  width: 20px;
+  border-top: 1.5px solid var(--baseline);
+}
+.map-children > li::after {
+  content: '';
+  position: absolute;
+  left: -20px;
+  top: -5px;
+  bottom: -5px;
+  border-left: 1.5px solid var(--baseline);
+}
+.map-children > li:first-child::after { top: 22px; }
+.map-children > li:last-child::after { bottom: auto; height: 27px; }
+.map-children > li:first-child:last-child::after { display: none; }
+.map-children > li.running::before { border-top-color: var(--accent); }
+
+/* Stacked: a tree too deep for the window puts each level under its parent, indented. */
+.map-tree.stacked .map-branch {
+  flex-direction: column;
+  align-items: stretch;
+}
+.map-tree.stacked .map-card { width: auto; }
+.map-tree.stacked .map-children {
+  margin-top: 10px;
+  padding-left: 24px;
+}
+.map-tree.stacked .map-children::before { display: none; }
+.map-tree.stacked .map-children > li::before { left: -14px; width: 14px; }
+.map-tree.stacked .map-children > li::after { left: -14px; }
+.map-tree.stacked .map-children > li:first-child::after { top: -10px; }
+.map-tree.stacked .map-children > li:last-child::after { bottom: auto; height: 27px; }
+.map-tree.stacked .map-children > li:first-child:last-child::after { display: block; top: -10px; height: 32px; }
+
+.map-card {
+  flex: none;
+  width: 260px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  overflow-wrap: anywhere;
+}
+.map-card.agent {
+  width: 220px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--surface-3);
+}
+.map-card.sub.running { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.map-card.sub.failed { border-color: color-mix(in srgb, var(--critical) 55%, transparent); }
+.map-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+}
+.map-agent-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.map-card-foot {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+.map-card-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 7px 10px 8px;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.map-card-toggle:hover { background: var(--accent-soft); }
+.map-card-toggle:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.map-kind {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.map-time {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.map-desc { color: var(--text-primary); }
+.map-activity {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.map-outcome {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.map-outcome.done { color: var(--good); }
+.map-outcome.failed { color: var(--critical); }
+.map-card-more {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.map-more-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.map-more-text {
+  margin: 0 0 6px;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+.map-empty {
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.agent-item .ai-subagents {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}

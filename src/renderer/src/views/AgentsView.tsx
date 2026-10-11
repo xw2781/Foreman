@@ -6,6 +6,7 @@ import {
   History,
   MessagesSquare,
   MousePointer2,
+  Network,
   PanelRightClose,
   PanelRightOpen,
   Pencil,
@@ -17,14 +18,15 @@ import {
   X
 } from 'lucide-react';
 import { create } from 'zustand';
-import { AGENT_MODES, CONVERSATION_MODES, LIVE_STATUSES, PROVIDER_LABEL, type AgentInfo, type AgentMode } from '@shared/types';
+import { AGENT_MODES, CONVERSATION_MODES, LIVE_STATUSES, type AgentInfo, type AgentMode } from '@shared/types';
 import { ChatView } from './ChatView';
 import { PromptCacheBadge } from '../PromptCacheBadge';
-import { BrowserPanel } from './BrowserPanel';
+import { SidePanel, usePanelTab } from './SidePanel';
+import { runningSubagents } from '@shared/subagents';
 import { call, errorMessage } from '../api';
-import { useApp } from '../store';
-import { ago, compact, duration, folderName, modelLabel, percent, shortPath, usd } from '../format';
-import { AccountChip, Empty, Meter, MiniMeter, ProviderIcon, StatusPill, confirmDialog, useFit, useMediaQuery, useTicker } from '../ui';
+import { isPanelOpen, useApp } from '../store';
+import { compact, folderName, modelLabel, percent, shortPath, usd } from '../format';
+import { AccountChip, Empty, Meter, MiniMeter, ProviderIcon, StatusPill, confirmDialog, useFit, useTicker } from '../ui';
 import { mountTerminal, terminalBackground } from '../terminals';
 
 export async function stopAgent(agent: AgentInfo) {
@@ -119,6 +121,7 @@ function SessionArchiveIcon({ restore = false }: { restore?: boolean }) {
 function AgentListItem({ agent, selected, onSelect, archived = false, onToggleArchived }: { agent: AgentInfo; selected: boolean; onSelect: () => void; archived?: boolean; onToggleArchived: () => void }) {
   const t = agent.telemetry;
   const browser = useApp((s) => s.browsers[agent.id]);
+  const subagents = runningSubagents(agent);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(agent.title);
   const rename = async () => {
@@ -167,6 +170,11 @@ function AgentListItem({ agent, selected, onSelect, archived = false, onToggleAr
         <StatusPill status={agent.status} />
         {agent.usesScreen ? <MousePointer2 size={12} color="var(--warning)" /> : null}
         {browser ? <Globe size={12} color={browser.busy ? 'var(--accent-strong)' : 'var(--text-muted)'} aria-label="Has a browser open" /> : null}
+        {subagents ? (
+          <span className="ai-subagents" title={`${subagents} subagent${subagents === 1 ? '' : 's'} running`}>
+            <Network size={12} /> {subagents}
+          </span>
+        ) : null}
         <span className="ellipsis">{agent.mode === 'task' ? 'task' : CONVERSATION_MODES.includes(agent.mode) ? agent.profileLabel : agent.mode}</span>
         {t?.cost.totalUsd != null ? <span style={{ marginLeft: 'auto' }} className="num">{usd(t.cost.reportedUsd ?? t.cost.totalUsd)}</span> : null}
       </div>
@@ -189,21 +197,11 @@ function TerminalHost({ agent }: { agent: AgentInfo }) {
   return <div className="term-host" ref={hostRef} style={{ ['--term-bg' as any]: terminalBackground() }} />;
 }
 
-/** Wide enough to dock the details beside a conversation that still has room; narrower, they open over it. */
-const DOCK_DETAILS = '(min-width: 1420px)';
-
-function useDetails() {
-  // With the browser beside the conversation there's no room to dock them as well: they open over it.
-  const browserOpen = useApp((s) => (s.selectedAgentId ? s.browserShown[s.selectedAgentId] === true : false));
-  const docked = useMediaQuery(DOCK_DETAILS) && !browserOpen;
-  const showDetails = useApp((s) => s.showDetails);
-  const overlay = useApp((s) => s.detailsOverlay);
-  const toggle = () => (docked ? useApp.getState().toggleDetails() : useApp.setState({ detailsOverlay: !overlay }));
-  return { docked, visible: docked ? showDetails : overlay, toggle };
-}
-
 function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display }) {
-  const details = useDetails();
+  const panelOpen = useApp((s) => isPanelOpen(s, agent.id));
+  const panelTab = usePanelTab(agent);
+  // The cost shows here unless the panel's Details tab already does.
+  const costShown = panelOpen && panelTab === 'details';
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(agent.title);
   useEffect(() => setName(agent.title), [agent.title]);
@@ -211,7 +209,7 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
   const t = agent.telemetry;
   const model = t?.model ?? agent.model;
   // What doesn't fit is left out whole: the cost first (the details have it), then shortcuts the title offers too.
-  const row = useFit<HTMLDivElement>([agent.id, agent.title, agent.status, display, details.visible, live, editing]);
+  const row = useFit<HTMLDivElement>([agent.id, agent.title, agent.status, display, costShown, panelOpen, live, editing]);
   const meta = useFit<HTMLDivElement>([agent.id, agent.status, agent.statusDetail, agent.profileLabel, agent.cwd, model]);
   const rename = async () => {
     setEditing(false);
@@ -261,7 +259,7 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
             <Meter label="Context" value={t.contextPercent} valueText={`${percent(t.contextPercent)} of ${compact(t.contextWindow)}`} title={`${compact(t.contextUsedTokens)} tokens in context${t.contextWindowAssumed ? ' (window size assumed)' : ''}`} />
           </div>
         ) : null}
-        {t && !details.visible ? (
+        {t && !costShown ? (
           <div data-fit="3" style={{ textAlign: 'right', minWidth: 70 }} title={t.cost.reportedUsd != null ? "Claude Code's own estimate" : 'Estimated at API list prices'}>
             <div className="num" style={{ fontWeight: 600 }}>
               {usd(t.cost.reportedUsd ?? t.cost.totalUsd)}
@@ -277,7 +275,6 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
         <button className="btn ghost icon" data-fit="1" title={agent.projectless ? 'Open chat files' : 'Open folder'} onClick={() => call('shell.openPath', agent.cwd)}>
           <FolderOpen size={15} />
         </button>
-        {AGENT_MODES.includes(agent.mode) ? <BrowserToggle agent={agent} /> : null}
         {/* A chat stops from its composer; terminal agents have no composer. */}
         {live && display !== 'chat' ? (
           <button className="btn danger sm" onClick={() => stopAgent(agent)}>
@@ -293,43 +290,32 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
             <Trash2 size={15} />
           </button>
         ) : null}
-        <button className="btn ghost icon" title={details.visible ? 'Hide details' : 'Show details'} onClick={details.toggle}>
-          {details.visible ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+        <button
+          className={`btn ghost icon ${panelOpen ? 'on' : ''}`}
+          title={panelOpen ? 'Hide the side panel' : 'Show the side panel: subagents, browser, files and details'}
+          aria-pressed={panelOpen}
+          onClick={() => useApp.getState().togglePanel(agent.id)}
+        >
+          {panelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
         </button>
       </div>
     </div>
   );
 }
 
-function BrowserToggle({ agent }: { agent: AgentInfo }) {
-  const shown = useApp((s) => s.browserShown[agent.id] === true);
-  const browser = useApp((s) => s.browsers[agent.id]);
-  const toggle = () => {
-    const state = useApp.getState();
-    useApp.setState({ browserShown: { ...state.browserShown, [agent.id]: !shown }, browserExpanded: shown ? false : state.browserExpanded });
-  };
-  return (
-    <button
-      className={`btn ghost icon ${shown ? 'on' : ''}`}
-      title={shown ? 'Hide the browser' : browser ? "Show the agent's browser" : "Open the agent's browser (it has its own cookies and logins)"}
-      aria-pressed={shown}
-      onClick={toggle}
-    >
-      <Globe size={15} color={browser?.busy ? 'var(--accent-strong)' : undefined} />
-    </button>
-  );
-}
-
-/** The conversation beside the agent's browser, with a divider to drag; in a narrow panel the browser takes it all. */
+/** The conversation beside the side panel, with a divider to drag; in a narrow window the panel takes it all. */
 function AgentWork({ agent, children }: { agent: AgentInfo; children: React.ReactNode }) {
-  const shown = useApp((s) => s.browserShown[agent.id] === true) && AGENT_MODES.includes(agent.mode);
-  const state = useApp((s) => s.browsers[agent.id] ?? null);
-  const expanded = useApp((s) => s.browserExpanded);
+  const shown = useApp((s) => isPanelOpen(s, agent.id));
+  const expanded = useApp((s) => s.panelExpanded);
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [share, setShare] = useState(() => {
-    const saved = Number(localStorage.getItem('browserShare'));
-    return saved > 0.2 && saved < 0.8 ? saved : 0.5;
+    try {
+      const saved = Number(localStorage.getItem('sidePanelShare') ?? localStorage.getItem('browserShare'));
+      return saved > 0.2 && saved < 0.8 ? saved : 0.42;
+    } catch {
+      return 0.42;
+    }
   });
   useEffect(() => {
     const element = box.current;
@@ -349,7 +335,11 @@ function AgentWork({ agent, children }: { agent: AgentInfo; children: React.Reac
     const move = (e: PointerEvent) => {
       const next = Math.min(0.75, Math.max(0.25, (bounds.right - e.clientX) / bounds.width));
       setShare(next);
-      localStorage.setItem('browserShare', String(next));
+      try {
+        localStorage.setItem('sidePanelShare', String(next));
+      } catch {
+        /* storage unavailable */
+      }
     };
     const up = () => {
       window.removeEventListener('pointermove', move);
@@ -367,166 +357,11 @@ function AgentWork({ agent, children }: { agent: AgentInfo; children: React.Reac
       </div>
       {shown && !full ? <div className="split-handle" role="separator" aria-orientation="vertical" title="Drag to resize" onPointerDown={drag} /> : null}
       {shown ? (
-        <div className="agent-browser" style={full ? { flex: 1 } : { width: `${share * 100}%` }}>
-          <BrowserPanel agent={agent} state={state} expanded={full} onExpand={narrow ? undefined : () => useApp.setState({ browserExpanded: !expanded })} />
+        <div className="agent-side" style={full ? { flex: 1 } : { width: `${share * 100}%` }}>
+          <SidePanel agent={agent} expanded={full} onExpand={narrow ? undefined : () => useApp.setState({ panelExpanded: !expanded })} />
         </div>
       ) : null}
     </div>
-  );
-}
-
-function TokenRow({ label, value }: { label: string; value: number | undefined }) {
-  return (
-    <>
-      <dt>{label}</dt>
-      <dd>{value === undefined ? '—' : compact(value)}</dd>
-    </>
-  );
-}
-
-function AgentDetails({ agent, overlay, onClose }: { agent: AgentInfo; overlay: boolean; onClose: () => void }) {
-  useTicker(5000);
-  const t = agent.telemetry;
-  const total = t?.totalUsage;
-  useEffect(() => {
-    if (!overlay) return;
-    const key = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
-    window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
-  }, [overlay]);
-  return (
-    <aside className={`details ${overlay ? 'overlay' : ''}`} aria-label="Agent details">
-      {overlay ? (
-        <button className="btn ghost icon details-close" title="Close details (Esc)" aria-label="Close details" onClick={onClose}>
-          <X size={16} />
-        </button>
-      ) : null}
-      <section>
-        <h3>Cost</h3>
-        <div className="big-number">{usd(t?.cost.reportedUsd ?? t?.cost.totalUsd ?? null)}</div>
-        <div className="muted" style={{ fontSize: 12 }}>
-          {t?.cost.reportedUsd != null
-            ? `Claude Code's estimate · list-price estimate ${usd(t.cost.totalUsd)}`
-            : t
-              ? 'Estimated at API list prices; subscriptions are billed differently'
-              : 'Appears after the first response'}
-        </div>
-        {t?.cost.byModel.length ? (
-          <dl className="kv" style={{ marginTop: 10 }}>
-            {t.cost.byModel.map((m) => (
-              <FragmentRow key={m.model} label={m.model} value={m.usd === null ? 'unpriced' : usd(m.usd, true)} />
-            ))}
-          </dl>
-        ) : null}
-      </section>
-      {t ? (
-        <section>
-          <h3>Context window</h3>
-          <Meter
-            label={`${compact(t.contextUsedTokens)} of ${compact(t.contextWindow)} tokens`}
-            value={t.contextPercent}
-            foot={t.contextWindowAssumed ? 'Window size assumed from the model; adjust in Settings' : t.source === 'status-line' ? 'Reported by Claude Code' : 'Reported by the CLI'}
-          />
-          <dl className="kv" style={{ marginTop: 10 }}>
-            <dt>Compactions</dt>
-            <dd>
-              {t.compactions}
-              {t.lastCompactionAt ? ` · ${ago(t.lastCompactionAt)}` : ''}
-            </dd>
-            <dt>Requests</dt>
-            <dd>{compact(t.requests)}</dd>
-          </dl>
-        </section>
-      ) : null}
-      {total ? (
-        <section>
-          <h3>Tokens (session total)</h3>
-          <dl className="kv">
-            <TokenRow label="Input (uncached)" value={Math.max(0, total.inputTokens - total.cachedInputTokens - total.cacheWriteInputTokens)} />
-            <TokenRow label="Cache reads" value={total.cachedInputTokens} />
-            <TokenRow label="Cache writes" value={total.cacheWriteInputTokens} />
-            <TokenRow label="Output" value={total.outputTokens} />
-            {total.reasoningOutputTokens ? <TokenRow label="  of which reasoning" value={total.reasoningOutputTokens} /> : null}
-            <TokenRow label="Total" value={total.totalTokens} />
-          </dl>
-        </section>
-      ) : null}
-      {t?.limits?.windows.length ? (
-        <section>
-          <h3>Plan usage</h3>
-          <div style={{ display: 'grid', gap: 10 }}>
-            {t.limits.windows.map((w) => (
-              <Meter left key={w.id} label={w.label} value={w.usedPercent} />
-            ))}
-          </div>
-        </section>
-      ) : null}
-      <section>
-        <h3>Session</h3>
-        <dl className="kv">
-          <dt>Tool</dt>
-          <dd>{PROVIDER_LABEL[agent.provider]}</dd>
-          <dt>Mode</dt>
-          <dd>{agent.mode}</dd>
-          <dt>Running</dt>
-          <dd>{duration(agent.startedAt, agent.endedAt)}</dd>
-          {agent.permission ? (
-            <>
-              <dt>Permissions</dt>
-              <dd>{agent.permission}</dd>
-            </>
-          ) : null}
-          {t?.effort ? (
-            <>
-              <dt>Effort</dt>
-              <dd>{t.effort}</dd>
-            </>
-          ) : null}
-          <dt>Session id</dt>
-          <dd className="mono" title={t?.sessionId ?? agent.sessionId ?? ''}>
-            {(t?.sessionId ?? agent.sessionId ?? '—').slice(0, 13)}
-          </dd>
-          {agent.resources ? (
-            <>
-              <dt>CPU / memory</dt>
-              <dd>
-                {agent.resources.cpuPercent.toFixed(1)}% · {Math.round(agent.resources.memoryMB)} MB
-              </dd>
-              <dt>Processes</dt>
-              <dd>{agent.resources.processCount}</dd>
-            </>
-          ) : null}
-          {agent.exitCode !== null ? (
-            <>
-              <dt>Exit code</dt>
-              <dd>{agent.exitCode}</dd>
-            </>
-          ) : null}
-        </dl>
-        {agent.transcriptPath ? (
-          <button className="btn sm" style={{ marginTop: 10 }} onClick={() => call('shell.showItem', agent.transcriptPath!)}>
-            <FolderOpen size={13} /> Show session file
-          </button>
-        ) : null}
-      </section>
-      <section>
-        <h3>Command</h3>
-        <div className="mono selectable muted" style={{ fontSize: 11, wordBreak: 'break-all' }}>
-          {agent.commandLine}
-        </div>
-      </section>
-    </aside>
-  );
-}
-
-function FragmentRow({ label, value }: { label: string; value: string }) {
-  return (
-    <>
-      <dt className="ellipsis" title={label}>
-        {label}
-      </dt>
-      <dd>{value}</dd>
-    </>
   );
 }
 
@@ -534,7 +369,6 @@ export function AgentsView() {
   useTicker(15_000);
   const agents = useApp((s) => s.agents);
   const selectedId = useApp((s) => s.selectedAgentId);
-  const details = useDetails();
   const openLauncher = useApp((s) => s.openLauncher);
   const [query, setQuery] = useState('');
   const [archivedIds, setArchivedIds] = useState<string[]>(() => {
@@ -578,7 +412,7 @@ export function AgentsView() {
   }, [selectedId, selected]);
 
   return (
-    <div className={`agents-layout ${selected && details.docked && details.visible ? 'with-details' : ''}`} style={{ ['--agent-list-width' as string]: `${listWidth}px` }}>
+    <div className="agents-layout" style={{ ['--agent-list-width' as string]: `${listWidth}px` }}>
       <div className="agent-list" ref={listRef}>
         <div className="agent-list-head">
           <button className="btn primary" onClick={() => openLauncher()}>
@@ -727,7 +561,6 @@ export function AgentsView() {
           </Empty>
         </section>
       )}
-      {selected && details.visible ? <AgentDetails agent={selected} overlay={!details.docked} onClose={details.toggle} /> : null}
     </div>
   );
 }

@@ -15,7 +15,7 @@ import {
 import { AGENT_MODES, LIVE_STATUSES, PROVIDERS, PROVIDER_LABEL, type Provider } from '@shared/types';
 import { call, errorMessage, listen, pageTheme } from './api';
 import { useApp, type View } from './store';
-import { colorVar, limitSummary, usd } from './format';
+import { colorVar, limitSummary, signedOutLabel, usd } from './format';
 import { ConfirmHost, LimitMeters, ProviderIcon, Toasts } from './ui';
 import { configureTerminals, disposeTerminal } from './terminals';
 import { forgetChat } from './chats';
@@ -75,6 +75,12 @@ function useBootstrap() {
       stopRemembering,
       listen('agents', (agents) => {
         const runs = new Map(agents.map((a) => [a.id, a.runId]));
+        // A subagent that just started brings the side panel up at the map.
+        const known = new Map(store().agents.map((a) => [a.id, new Set((a.subagents ?? []).map((n) => n.id))]));
+        for (const agent of agents) {
+          const before = known.get(agent.id);
+          if (before && agent.subagents?.some((n) => n.status === 'running' && !before.has(n.id))) store().showPanel(agent.id, 'subagents');
+        }
         for (const old of store().agents) {
           const run = runs.get(old.id);
           // A new process for the same agent (resume, hand-off) starts a fresh terminal.
@@ -94,13 +100,18 @@ function useBootstrap() {
       listen('update', (update) => set({ update })),
       listen('github', (github) => set({ github })),
       listen('browser', ({ agentId, state }) => {
-        const { browsers, browserShown, settings } = store();
+        const { browsers, settings } = store();
         const next = { ...browsers };
         if (state) next[agentId] = state;
         else delete next[agentId];
-        // A browser the agent just opened shows beside it, unless the person already chose.
-        const opened = state && !browsers[agentId] && browserShown[agentId] === undefined && settings?.browserAutoOpen !== false;
-        set({ browsers: next, ...(opened ? { browserShown: { ...browserShown, [agentId]: true } } : {}) });
+        set({ browsers: next });
+        // A browser that just opened, or that the agent comes back to after a pause, comes up in the side panel.
+        // Not on every tool call: that would keep pulling the panel away from another tab.
+        const previous = browsers[agentId];
+        const lastUse = previous?.actions.findLast((a) => a.source === 'agent');
+        const resumed = previous && state?.busy && !previous.busy && !state.paused && (!lastUse || Date.now() - Date.parse(lastUse.at) > 60_000);
+        const started = state && (!previous || resumed);
+        if (started && settings?.browserAutoOpen !== false) store().showPanel(agentId, 'browser');
       }),
       listen('toast', (t) => store().toast(t.kind, t.message)),
       listen('navigate', ({ view, agentId }) => {
@@ -202,7 +213,7 @@ function AccountSwitcher({ provider }: { provider: Provider }) {
             {active.label}
             {detail ? <span className="muted"> · {detail}</span> : null}
           </span>
-          <span className="limit ellipsis">{limitSummary(active.limits?.windows) || (active.identity?.loggedIn ? active.planTier ?? 'Signed in' : 'Not signed in')}</span>
+          <span className="limit ellipsis">{limitSummary(active.limits?.windows) || (active.identity?.loggedIn ? active.planTier ?? 'Signed in' : signedOutLabel(active.identity))}</span>
         </span>
         <ChevronDown size={14} className="muted" />
       </button>
@@ -218,7 +229,7 @@ function AccountSwitcher({ provider }: { provider: Provider }) {
                   {p.planTier ? <span className="badge" style={{ marginLeft: 6 }}>{p.planTier}</span> : null}
                 </div>
                 <div className="muted ellipsis" style={{ fontSize: 11.5 }}>
-                  {p.identity?.email ?? (p.identity?.loggedIn ? 'Signed in' : 'Not signed in')}
+                  {p.identity?.email ?? (p.identity?.loggedIn ? 'Signed in' : signedOutLabel(p.identity))}
                 </div>
               </span>
               <span>{p.isActive ? <Check size={15} color="var(--accent-strong)" /> : null}</span>

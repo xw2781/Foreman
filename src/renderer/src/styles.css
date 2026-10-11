@@ -1446,9 +1446,6 @@ table.table {
   height: 100%;
   min-height: 0;
 }
-.agents-layout.with-details {
-  grid-template-columns: var(--agent-list-width, 290px) minmax(0, 1fr) 320px;
-}
 .agent-list {
   position: relative;
   min-width: 0;
@@ -1655,23 +1652,7 @@ table.table {
   font-size: 12.5px;
 }
 
-/* In a window too narrow to dock it, the panel opens over the conversation. */
-.details.overlay {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 320px;
-  z-index: 25;
-  box-shadow: var(--shadow);
-}
-.details-close {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-}
 .details {
-  border-left: 1px solid var(--border);
   overflow: auto;
   padding: 16px;
   display: grid;
@@ -1946,9 +1927,6 @@ table.table {
 }
 
 @media (max-width: 1200px) {
-  .agents-layout.with-details {
-    grid-template-columns: var(--agent-list-width, 290px) minmax(0, 1fr) 280px;
-  }
   .account-columns {
     grid-template-columns: 1fr;
   }
@@ -1971,6 +1949,324 @@ table.table {
 }
 
 /* ---------------------------------------------------------------------------
+   Side panel: subagents, browser, files and details as tabs beside an agent
+   --------------------------------------------------------------------------- */
+
+.side-panel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--page);
+  container-type: inline-size;
+}
+/* Browser-style tabs: the active one joins the page below it. */
+.sp-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  overflow: hidden;
+  padding: 6px 6px 0;
+  background: var(--surface-2);
+  /* The line under the tabs, drawn inside the strip so the active tab can cover it. */
+  box-shadow: inset 0 -1px 0 var(--border);
+  min-width: 0;
+}
+.sp-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 31px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  flex: none;
+  cursor: pointer;
+}
+.sp-tab:hover {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+.sp-tab.on {
+  background: var(--page);
+  border-color: var(--border);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.sp-tab:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+.sp-badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.sp-live {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--good);
+}
+.sp-tabs-end {
+  margin-left: auto;
+  align-self: center;
+  display: flex;
+  gap: 2px;
+  flex: none;
+  padding-bottom: 4px;
+}
+/* Too narrow for the labels: the tabs keep their icons (and their titles). */
+.sp-tabs.compact .sp-tab-label {
+  display: none;
+}
+.sp-tabs.compact .sp-tab {
+  padding: 0 10px;
+}
+.sp-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.sp-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sp-pane.details {
+  display: grid;
+  overflow: auto;
+}
+.sp-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 4px 8px 4px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-1);
+  font-size: 12.5px;
+}
+.sp-bar-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+
+/* Files: the tree beside the preview, or above it in a narrow panel. */
+.files-pane {
+  display: grid;
+  grid-template-columns: minmax(200px, 34%) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+.ft {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+}
+.ft-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+}
+.ft-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  height: 24px;
+  padding-right: 8px;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.ft-row:hover {
+  background: var(--surface-2);
+}
+.ft-row.on {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.ft-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.ft-row .ellipsis {
+  flex: 1;
+  min-width: 0;
+}
+.ft-chevron {
+  width: 14px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+.ft-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+.ft-row.on .ft-icon {
+  color: inherit;
+}
+.ft-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.ft-note.error {
+  color: var(--critical);
+}
+.fp {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface-1);
+}
+.fp-placeholder {
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+.fp-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.fp-meta {
+  flex: none;
+  font-size: 11.5px;
+}
+.fp-mode {
+  flex: none;
+}
+.fp-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+}
+.fp-notice {
+  padding: 6px 12px;
+  font-size: 12px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+}
+.fp-code {
+  display: flex;
+  align-items: flex-start;
+  min-width: max-content;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.fp-code pre {
+  margin: 0;
+  padding: 10px 0;
+  font: inherit;
+  white-space: pre;
+  tab-size: 4;
+}
+.fp-gutter {
+  position: sticky;
+  left: 0;
+  flex: none;
+  padding-left: 10px !important;
+  padding-right: 12px !important;
+  text-align: right;
+  color: var(--text-muted);
+  background: var(--surface-1);
+  border-right: 1px solid var(--border);
+  user-select: none;
+}
+.fp-text {
+  padding-left: 12px !important;
+  padding-right: 16px !important;
+  color: var(--text-primary);
+}
+.fp-markdown {
+  padding: 14px 18px;
+  max-width: 860px;
+}
+.fp-image {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: 16px;
+  background-color: var(--surface-2);
+  background-image: linear-gradient(45deg, var(--surface-3) 25%, transparent 25%, transparent 75%, var(--surface-3) 75%),
+    linear-gradient(45deg, var(--surface-3) 25%, transparent 25%, transparent 75%, var(--surface-3) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+.fp-image img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.fp-other {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 32px 16px;
+  text-align: center;
+  font-size: 12.5px;
+}
+@container (max-width: 620px) {
+  .files-pane {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ft {
+    border-right: none;
+  }
+  .files-pane .fp-placeholder {
+    display: none;
+  }
+  .files-pane.previewing {
+    grid-template-rows: minmax(120px, 38%) minmax(0, 1fr);
+  }
+  .files-pane.previewing .fp {
+    border-top: 1px solid var(--border);
+  }
+  .fp-meta {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
    Agent browser
    --------------------------------------------------------------------------- */
 
@@ -1990,7 +2286,7 @@ table.table {
 .agent-main[hidden] {
   display: none;
 }
-.agent-browser {
+.agent-side {
   flex: none;
   min-width: 320px;
   display: flex;
@@ -2023,10 +2319,16 @@ body.dragging-split .bp-canvas {
 .browser-panel {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--surface-2);
-  border-left: 1px solid var(--border);
+}
+.browser-panel.bp-closed {
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: var(--surface-1);
 }
 .bp-tabs {
   display: flex;

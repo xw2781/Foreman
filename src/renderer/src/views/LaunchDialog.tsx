@@ -3,7 +3,7 @@ import { ChevronRight, FolderOpen, History, MessagesSquare, Play, Rocket, Square
 import { PROVIDER_LABEL, type AgentMode, type CliDefaults, type LaunchOptions, type Provider } from '@shared/types';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
-import { colorVar, limitSummary, modelLabel } from '../format';
+import { colorVar, limitSummary, modelLabel, signedOutLabel } from '../format';
 import { Modal, ProviderIcon, Select, type SelectOption } from '../ui';
 import { defaultModel, modelChoices } from '@shared/models';
 
@@ -218,7 +218,7 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
               options={providerProfiles.map((p) => ({
                 value: p.id,
                 label: p.planTier ? `${p.label} · ${p.planTier}` : p.label,
-                hint: p.identity?.email ?? (p.identity?.loggedIn ? undefined : 'Not signed in')
+                hint: p.identity?.email ?? (p.identity?.loggedIn ? undefined : signedOutLabel(p.identity))
               }))}
             />
             <div className="hint row">

@@ -268,7 +268,9 @@ export class ProfileService {
       org: account.organizationName ?? null,
       authMethod: oauth ? 'Claude account' : loggedIn ? 'API key' : null,
       checkedAt: new Date().toISOString(),
-      error: null
+      error: null,
+      // Claude Code blanks both tokens but keeps the record when a refresh is rejected.
+      sessionEnded: !loggedIn && Boolean(oauth && typeof oauth === 'object' && 'refreshToken' in oauth)
     };
   }
 
