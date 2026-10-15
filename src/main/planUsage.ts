@@ -74,12 +74,15 @@ function spendWindow(spend: Record<string, any> | null): LimitWindow | null {
   if (used === null || limit === null || limit <= 0) return null;
   const currency = text(spend.used?.currency) ?? text(spend.limit?.currency) ?? 'USD';
   const format = (amount: number) => amount.toLocaleString('en-US', { style: 'currency', currency });
+  const usedPercent = clamp(typeof spend.percent === 'number' ? spend.percent : (used / limit) * 100);
   return {
     id: 'monthly_spend',
-    label: 'Monthly spend',
-    usedPercent: clamp(typeof spend.percent === 'number' ? spend.percent : (used / limit) * 100),
+    label: 'Monthly',
+    shortLabel: 'Monthly',
+    usedPercent,
     resetsAt: null,
-    detail: `${format(Math.max(0, limit - used))} of ${format(limit)}`
+    detail: `${format(Math.max(0, limit - used))} of ${format(limit)}`,
+    hint: `${format(used)} used (${Math.round(usedPercent)}%) · ${Math.round(100 - usedPercent)}% left`
   };
 }
 
@@ -123,14 +126,16 @@ function creditWindow(limit: Record<string, any> | null): LimitWindow | null {
   const used = Number(limit.used);
   const total = Number(limit.limit);
   if (!Number.isFinite(used) || !Number.isFinite(total) || total <= 0) return null;
-  const unit = text(limit.unit) ?? 'credit';
   const format = (amount: number) => amount.toLocaleString('en-US', { maximumFractionDigits: 1 });
+  const usedPercent = clamp((used / total) * 100);
   return {
     id: 'credits',
-    label: unit === 'credit' ? 'Credits' : unit,
-    usedPercent: clamp((used / total) * 100),
+    label: 'Monthly',
+    shortLabel: 'Monthly',
+    usedPercent,
     resetsAt: epoch(limit.reset_at),
-    detail: `${format(Math.max(0, total - used))} of ${format(total)}`
+    detail: `${format(Math.max(0, total - used))} of ${format(total)}`,
+    hint: `${format(used)} used (${Math.round(usedPercent)}%) · ${Math.round(100 - usedPercent)}% left`
   };
 }
 

@@ -22,6 +22,8 @@ import type {
   NewProfileInput,
   ProfileView,
   Provider,
+  SettingsChange,
+  SwitchCost,
   Toast,
   UpdateStatus,
   UsageExportResult,
@@ -46,7 +48,7 @@ export interface InvokeMap {
   'profiles.list': () => ProfileView[];
   'profiles.create': (input: NewProfileInput) => ProfileView[];
   /** An empty defaultModel / defaultEffort clears it (back to the CLI default). */
-  'profiles.update': (id: string, patch: { label?: string; color?: string; emailHint?: string; defaultModel?: string; defaultEffort?: string }) => ProfileView[];
+  'profiles.update': (id: string, patch: { label?: string; color?: string; emailHint?: string; defaultModel?: string; defaultEffort?: string; planLabel?: string }) => ProfileView[];
   'profiles.remove': (id: string, deleteData: boolean) => ProfileView[];
   'profiles.setActive': (provider: Provider, id: string) => ProfileView[];
   'profiles.refresh': () => ProfileView[];
@@ -79,6 +81,8 @@ export interface InvokeMap {
   'chat.interrupt': (id: string) => ChatMessage[];
   'chat.respond': (id: string, itemId: string, answer: ChatAnswer) => void;
   'chat.configure': (id: string, patch: ChatSettingsPatch) => void;
+  /** Prices model/effort changes against keeping the current settings (prompt-cache rebuild). */
+  'chat.switchCost': (id: string, changes: SettingsChange[]) => Array<SwitchCost | null>;
   /** The slash commands and skills the session accepts (the last known ones once it has ended). */
   'chat.commands': (id: string) => ChatCommand[];
 
@@ -165,7 +169,7 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'profiles.login', 'profiles.logout', 'profiles.setGlobalDefault', 'profiles.shareConfig', 'profiles.openShell',
   'agents.list', 'agents.launch', 'agents.write', 'agents.resize', 'agents.stop', 'agents.remove', 'agents.clearFinished',
   'agents.rename', 'agents.resume', 'agents.buffer',
-  'chat.file', 'chat.items', 'chat.send', 'chat.interrupt', 'chat.respond', 'chat.configure', 'chat.commands', 'chat.queued',
+  'chat.file', 'chat.items', 'chat.send', 'chat.interrupt', 'chat.respond', 'chat.configure', 'chat.switchCost', 'chat.commands', 'chat.queued',
   'files.list', 'files.read',
   'processes.external', 'processes.kill',
   'usage.report', 'usage.export', 'usage.import', 'usage.forgetMachine', 'pricing.status', 'pricing.edit',

@@ -15,8 +15,8 @@ import {
 import { AGENT_MODES, LIVE_STATUSES, PROVIDERS, PROVIDER_LABEL, type Provider } from '@shared/types';
 import { call, errorMessage, listen, pageTheme } from './api';
 import { useApp, type View } from './store';
-import { colorVar, limitSummary, signedOutLabel, usd } from './format';
-import { ConfirmHost, LimitMeters, ProviderIcon, Toasts } from './ui';
+import { colorVar, limitSummary, signedOutLabel } from './format';
+import { ConfirmHost, LimitMeters, ProviderIcon, TipHost, Toasts } from './ui';
 import { configureTerminals, disposeTerminal } from './terminals';
 import { forgetChat } from './chats';
 import { AgentsView } from './views/AgentsView';
@@ -27,13 +27,15 @@ import { ComputerUseView } from './views/ComputerUseView';
 import { SettingsView } from './views/SettingsView';
 import { LaunchDialog } from './views/LaunchDialog';
 
-const NAV: Array<{ view: View; label: string; icon: typeof LayoutGrid; key: string }> = [
+// In on-screen order, top to bottom: `foot` items sit at the bottom of the nav, so they come last
+// and the Ctrl shortcuts count down the sidebar.
+const NAV: Array<{ view: View; label: string; icon: typeof LayoutGrid; key: string; foot?: boolean }> = [
   { view: 'agents', label: 'Agents', icon: SquareTerminal, key: '1' },
   { view: 'tasks', label: 'Task Manager', icon: LayoutGrid, key: '2' },
   { view: 'usage', label: 'Usage & Cost', icon: BarChart3, key: '3' },
-  { view: 'accounts', label: 'Accounts', icon: Users, key: '4' },
-  { view: 'computer', label: 'Computer Use', icon: MousePointer2, key: '5' },
-  { view: 'settings', label: 'Settings', icon: SettingsIcon, key: '6' }
+  { view: 'computer', label: 'Computer Use', icon: MousePointer2, key: '4' },
+  { view: 'accounts', label: 'Accounts', icon: Users, key: '5', foot: true },
+  { view: 'settings', label: 'Settings', icon: SettingsIcon, key: '6', foot: true }
 ];
 
 function useBootstrap() {
@@ -311,43 +313,57 @@ function Nav() {
   const view = useApp((s) => s.view);
   const setView = useApp((s) => s.setView);
   const agents = useApp((s) => s.agents);
-  const usage = useApp((s) => s.usage);
   const computerUse = useApp((s) => s.computerUse);
-  const env = useApp((s) => s.env);
   const needsInput = agents.filter((a) => a.status === 'needs-input').length;
   const live = agents.filter((a) => LIVE_STATUSES.includes(a.status) && AGENT_MODES.includes(a.mode)).length;
   const badges: Partial<Record<View, React.ReactNode>> = {
     agents: needsInput ? <span className="badge count">{needsInput}</span> : live ? <span className="badge">{live}</span> : null,
-    computer: computerUse?.active && computerUse.overlayRunning ? <span className="badge warning">Live</span> : null
+    computer: computerUse?.active && computerUse.overlayRunning ? <span className="badge dot warning" /> : null
+  };
+  const badgeNote: Partial<Record<View, string>> = {
+    agents: needsInput ? `${needsInput} waiting for input` : live ? `${live} running` : '',
+    computer: badges.computer ? 'Controlling the screen' : ''
+  };
+  const item = (item: (typeof NAV)[number]) => (
+    <button
+      key={item.view}
+      className={`nav-item ${view === item.view ? 'active' : ''}`}
+      onClick={() => setView(item.view)}
+      aria-label={item.label}
+      aria-keyshortcuts={`Control+${item.key}`}
+    >
+      <item.icon size={18} />
+      {badges[item.view]}
+      <span className="hover-tip" role="tooltip">
+        <span className="hover-tip-head">
+          {item.label}
+          <span className="kbd">Ctrl {item.key}</span>
+        </span>
+        {badgeNote[item.view] ? <span className="hover-tip-note">{badgeNote[item.view]}</span> : null}
+      </span>
+    </button>
+  );
+  // The wheel steps through the pages. Deltas add up to one notch before a step, and a step
+  // is held off briefly so a touchpad's stream of small deltas doesn't race through them.
+  const wheel = useRef({ sum: 0, last: 0, seen: 0 });
+  const onWheel = (event: React.WheelEvent) => {
+    const w = wheel.current;
+    const now = performance.now();
+    if (now - w.seen > 400) w.sum = 0;
+    w.seen = now;
+    w.sum += event.deltaY;
+    if (Math.abs(w.sum) < 50 || now - w.last < 150) return;
+    const step = Math.sign(w.sum);
+    w.sum = 0;
+    w.last = now;
+    const index = NAV.findIndex((n) => n.view === useApp.getState().view);
+    const next = NAV[index + step];
+    if (next) setView(next.view);
   };
   return (
-    <nav className="nav">
-      {NAV.map((item) => (
-        <button key={item.view} className={`nav-item ${view === item.view ? 'active' : ''}`} onClick={() => setView(item.view)} title={`Ctrl+${item.key}`}>
-          <item.icon size={16} />
-          <span>{item.label}</span>
-          {badges[item.view] ? <span className="badge-wrap" style={{ marginLeft: 'auto' }}>{badges[item.view]}</span> : null}
-        </button>
-      ))}
-      <div className="nav-footer">
-        {usage ? (
-          <div className="row">
-            <span>Today</span>
-            <span style={{ marginLeft: 'auto', color: 'var(--text-primary)' }} className="num">
-              {usd(usage.totals.today)}
-            </span>
-          </div>
-        ) : null}
-        {env?.clis.map((cli) => (
-          <div className="row" key={cli.provider} title={cli.path ?? cli.error ?? ''}>
-            <span className="swatch" style={{ background: cli.path ? 'var(--good)' : 'var(--critical)', borderRadius: '50%', width: 7, height: 7 }} />
-            <span>{PROVIDER_LABEL[cli.provider]}</span>
-            <span className="ellipsis" style={{ marginLeft: 'auto', maxWidth: 110 }}>
-              {cli.version?.replace(/\s*\(.*\)$/, '').replace(/^codex-cli\s*/, '') ?? 'missing'}
-            </span>
-          </div>
-        ))}
-      </div>
+    <nav className="nav" onWheel={onWheel}>
+      {NAV.filter((n) => !n.foot).map(item)}
+      <div className="nav-footer">{NAV.filter((n) => n.foot).map(item)}</div>
     </nav>
   );
 }
@@ -395,6 +411,7 @@ export function App() {
       <main className="main">{ready ? content : null}</main>
       {launcher ? <LaunchDialog preset={launcher} /> : null}
       <ConfirmHost />
+      <TipHost />
       <Toasts />
     </div>
   );

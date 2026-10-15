@@ -27,6 +27,8 @@ export interface Profile {
   defaultModel?: string;
   /** Reasoning effort new agents on this account start with unless the launcher picks one. */
   defaultEffort?: string;
+  /** Shown in place of the detected plan tier ("Enterprise", "Max 20x"…). */
+  planLabel?: string;
 }
 
 export interface ProfileIdentity {
@@ -49,6 +51,10 @@ export interface LimitWindow {
   resetsAt: string | null;
   /** Shown instead of the percentage, e.g. "$128.17 / $130.00" for a spend cap. */
   detail?: string;
+  /** Tooltip in place of the default, e.g. "$15.03 used (12%) · 88% left". */
+  hint?: string;
+  /** Label for one-line summaries, which then show the percentage left instead of `detail`. */
+  shortLabel?: string;
 }
 
 export interface ProfileLimits {
@@ -63,6 +69,8 @@ export interface ProfileView extends Profile {
   limits: ProfileLimits | null;
   /** The subscription as the vendor names it ("Max 20x", "Pro", "Plus", "Business"); null when unknown or an API key. */
   planTier: string | null;
+  /** The tier as detected, before the account's own planLabel replaces it. */
+  detectedPlanTier: string | null;
   /** What the CLI itself uses when no model or effort is given (its settings.json / config.toml). */
   cliDefaults: CliDefaults;
   /** Default account for new agents started in this app. */
@@ -229,6 +237,32 @@ export interface AgentInfo {
   titleCustom?: boolean;
   /** Subagents it started (Claude Code's Task/Agent tool, Codex's spawn_agent), oldest first. */
   subagents?: SubagentInfo[];
+  /** A model or effort change made mid-session whose next request hasn't run yet: it rebuilds the prompt cache. */
+  cacheRebuild?: CacheRebuild | null;
+}
+
+export interface CacheRebuild {
+  /** The model switched to (null: the CLI's default), when the model changed. */
+  model?: string | null;
+  /** The effort switched to, when only the effort changed. */
+  effort?: string;
+  at: string;
+}
+
+/** What the next request's input costs if a model or effort change goes ahead, against keeping the settings. */
+export interface SwitchCost {
+  /** Prompt the next request re-sends: the last request's prompt and its reply. */
+  contextTokens: number;
+  /** Whether the current prompt cache is still estimated warm. */
+  cacheWarm: boolean;
+  /** `full`: nothing cached is reused (new model). `messages`: the conversation is re-written, tools and system prompt may stay cached. */
+  rebuild: 'full' | 'messages' | 'none';
+  /** Next request's input at the current settings; null when the model has no list price. */
+  stayUsd: number | null;
+  /** Next request's input after the change. */
+  switchUsd: number | null;
+  /** switchUsd - stayUsd. */
+  extraUsd: number | null;
 }
 
 export type SubagentStatus = 'running' | 'done' | 'failed' | 'stopped';
@@ -387,6 +421,12 @@ export interface ChatCommand {
 
 export interface ChatSettingsPatch {
   permission?: string;
+  model?: string;
+  effort?: string;
+}
+
+/** A model and/or effort change to price with `chat.switchCost`. */
+export interface SettingsChange {
   model?: string;
   effort?: string;
 }

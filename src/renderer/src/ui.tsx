@@ -4,7 +4,7 @@ import { create } from 'zustand';
 import { AlertCircle, AlertTriangle, Check, CheckCircle2, ChevronDown, Info, X, XCircle } from 'lucide-react';
 import type { AgentStatus, LimitWindow, Provider } from '@shared/types';
 import { PROVIDER_LABEL } from '@shared/types';
-import { STATUS_LABEL, colorVar, isStale, percent, resetIn, severity } from './format';
+import { STATUS_LABEL, colorVar, isStale, percent, resetAt, resetIn, severity } from './format';
 import { useApp } from './store';
 import codexIcon from './assets/codex.png';
 
@@ -116,7 +116,7 @@ export function LimitMeters({ windows, compact = false }: { windows: LimitWindow
             value={w.usedPercent}
             valueText={w.detail ? (compact ? w.detail : w.detail.replace(' of ', ' left of ')) : undefined}
             foot={compact ? undefined : resetIn(w.resetsAt)}
-            title={w.detail ? `${w.detail} (${Math.round(100 - w.usedPercent)}%)` : resetIn(w.resetsAt)}
+            title={[w.hint ?? (w.detail ? `${w.detail} (${Math.round(100 - w.usedPercent)}% left)` : null), resetAt(w.resetsAt)].filter(Boolean).join('\n')}
           />
         )
       )}
@@ -250,6 +250,92 @@ export function Empty({ icon, title, children, action }: { icon: ReactNode; titl
       {children ? <p>{children}</p> : null}
       {action}
     </div>
+  );
+}
+
+// ------------------------------------------------------------------ hover tips
+
+/**
+ * One hover card for every element that sets `data-tip` (the label), and optionally
+ * `data-tip-note` (a second, quieter line) and `data-tip-key` (a shortcut). It opens below
+ * the element after a short pause, flips above when there's no room, and stays on screen.
+ * Use it instead of `title` on icon-only buttons; keep `aria-label` for screen readers.
+ */
+export function TipHost() {
+  const [tip, setTip] = useState<{ el: HTMLElement; label: string; note: string | null; key: string | null } | null>(null);
+  const [place, setPlace] = useState<{ left: number; top: number; above: boolean; arrow: number } | null>(null);
+  const card = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let timer: number | undefined;
+    let current: HTMLElement | null = null;
+    const hide = () => {
+      window.clearTimeout(timer);
+      current = null;
+      setTip(null);
+    };
+    const show = (el: HTMLElement, delay: number) => {
+      if (el === current) return;
+      window.clearTimeout(timer);
+      current = el;
+      setTip(null);
+      timer = window.setTimeout(() => {
+        if (current !== el || !el.isConnected) return;
+        setTip({ el, label: el.dataset.tip ?? '', note: el.dataset.tipNote ?? null, key: el.dataset.tipKey ?? null });
+      }, delay);
+    };
+    const target = (event: Event) => (event.target instanceof Element ? event.target.closest<HTMLElement>('[data-tip]') : null);
+    const onOver = (event: PointerEvent) => {
+      const el = target(event);
+      if (el) show(el, 350);
+      else if (current) hide();
+    };
+    const onFocus = (event: FocusEvent) => {
+      const el = target(event);
+      if (el?.matches(':focus-visible')) show(el, 0);
+    };
+    document.addEventListener('pointerover', onOver);
+    document.addEventListener('focusin', onFocus);
+    document.addEventListener('focusout', hide);
+    document.addEventListener('pointerdown', hide, true);
+    window.addEventListener('blur', hide);
+    window.addEventListener('scroll', hide, true);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('pointerover', onOver);
+      document.removeEventListener('focusin', onFocus);
+      document.removeEventListener('focusout', hide);
+      document.removeEventListener('pointerdown', hide, true);
+      window.removeEventListener('blur', hide);
+      window.removeEventListener('scroll', hide, true);
+    };
+  }, []);
+  useLayoutEffect(() => {
+    if (!tip || !card.current) return setPlace(null);
+    const anchor = tip.el.getBoundingClientRect();
+    const box = card.current.getBoundingClientRect();
+    const gap = 8;
+    const margin = 8;
+    const above = anchor.bottom + gap + box.height > window.innerHeight - margin;
+    const center = anchor.left + anchor.width / 2;
+    const left = Math.max(margin, Math.min(center - box.width / 2, window.innerWidth - margin - box.width));
+    const top = above ? anchor.top - gap - box.height : anchor.bottom + gap;
+    setPlace({ left, top, above, arrow: Math.max(10, Math.min(center - left, box.width - 10)) });
+  }, [tip]);
+  if (!tip || !tip.label) return null;
+  return createPortal(
+    <div
+      ref={card}
+      className={`hover-tip floating ${place ? 'shown' : ''} ${place?.above ? 'above' : 'below'}`}
+      role="tooltip"
+      style={{ left: place?.left ?? 0, top: place?.top ?? 0, ['--arrow-x' as string]: `${place?.arrow ?? 0}px` }}
+    >
+      <span className="hover-tip-head">
+        {tip.label}
+        {tip.key ? <span className="kbd">{tip.key}</span> : null}
+      </span>
+      {tip.note ? <span className="hover-tip-note">{tip.note}</span> : null}
+    </div>,
+    document.body
   );
 }
 

@@ -90,8 +90,9 @@ function AddAccountDialog({ provider, onClose }: { provider: Provider; onClose: 
 function EditAccountDialog({ profile, onClose }: { profile: ProfileView; onClose: () => void }) {
   const [label, setLabel] = useState(profile.label);
   const [color, setColor] = useState(profile.color);
+  const [planLabel, setPlanLabel] = useState(profile.planLabel ?? '');
   const save = async () => {
-    setProfiles(await run(() => call('profiles.update', profile.id, { label, color })));
+    setProfiles(await run(() => call('profiles.update', profile.id, { label, color, planLabel })));
     onClose();
   };
   return (
@@ -112,6 +113,16 @@ function EditAccountDialog({ profile, onClose }: { profile: ProfileView; onClose
       <div className="field">
         <label>Name</label>
         <input className="input" value={label} onChange={(e) => setLabel(e.target.value)} autoFocus />
+      </div>
+      <div className="field">
+        <label>Plan label</label>
+        <input
+          className="input"
+          value={planLabel}
+          onChange={(e) => setPlanLabel(e.target.value)}
+          placeholder={profile.detectedPlanTier ?? profile.identity?.plan ?? 'Detected plan'}
+          title="Shown instead of the detected plan tier. Leave empty to use the detected one."
+        />
       </div>
       <div className="field">
         <label>Color</label>

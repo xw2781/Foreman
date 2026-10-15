@@ -1382,3 +1382,8 @@
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
+
+/* What previewing another effort level adds to the next message (prompt-cache rebuild). */
+.effort-cost { min-height: 16px; margin-top: 8px; color: var(--text-muted); font-size: 11px; line-height: 1.4; text-align: center; }
+.cache-rebuild .queue-head { align-items: flex-start; color: var(--warning); }
+.cache-rebuild .queue-head > svg { flex: none; margin-top: 2px; }

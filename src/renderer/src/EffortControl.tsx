@@ -5,15 +5,19 @@ import { modelLabel } from './format';
 import type { SelectOption } from './ui';
 
 /** A discrete effort slider; dragging previews a level and releasing applies it. */
-export function EffortControl({ value, model, options, onChange }: {
+export function EffortControl({ value, model, options, onChange, hint }: {
   value: string;
   model: string;
   options: SelectOption[];
   onChange: (value: string) => void;
+  /** What moving to a level costs (shown while it's previewed). */
+  hint?: (value: string) => string | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(value);
   const [original, setOriginal] = useState(value);
+  const [hovered, setHovered] = useState<string | null>(null);
+  const previewed = hovered ?? draft;
   const [place, setPlace] = useState<CSSProperties>({ visibility: 'hidden' });
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -95,8 +99,10 @@ export function EffortControl({ value, model, options, onChange }: {
               }
             }} />
         </div>
+        {hint ? <div className="effort-cost" role="status">{(previewed !== value && hint(previewed)) || ''}</div> : null}
         <div className="effort-labels">
           {options.map((option) => <button key={option.value} type="button" className={draft === option.value ? 'on' : ''}
+            onMouseEnter={() => setHovered(option.value)} onMouseLeave={() => setHovered(null)}
             onClick={() => apply(option.value)}>{option.label}</button>)}
         </div>
       </div>, document.body

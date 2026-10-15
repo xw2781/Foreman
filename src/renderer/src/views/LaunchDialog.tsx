@@ -67,6 +67,19 @@ export const PERMISSIONS: Record<Provider, Array<{ value: string; label: string;
 /** What a new agent starts with when the launcher isn't told otherwise. */
 export const DEFAULT_PERMISSION: Record<Provider, string> = { claude: 'auto', codex: 'approve-for-me' };
 
+/** The tool picked last in the launcher, so the next new agent starts on it. */
+function lastProvider(): Provider {
+  try {
+    const saved = localStorage.getItem('launcherProvider');
+    if (saved === 'claude' || saved === 'codex') return saved;
+  } catch { /* storage unavailable */ }
+  return 'claude';
+}
+
+function rememberProvider(p: Provider) {
+  try { localStorage.setItem('launcherProvider', p); } catch { /* storage unavailable */ }
+}
+
 export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
   const close = useApp((s) => s.closeLauncher);
   const profiles = useApp((s) => s.profiles);
@@ -74,7 +87,7 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
   const env = useApp((s) => s.env);
   const toast = useApp((s) => s.toast);
 
-  const [provider, setProvider] = useState<Provider>(preset.provider ?? 'claude');
+  const [provider, setProvider] = useState<Provider>(preset.provider ?? lastProvider());
   const providerProfiles = profiles.filter((p) => p.provider === provider);
   const activeId = providerProfiles.find((p) => p.isActive)?.id ?? providerProfiles[0]?.id ?? '';
   const [profileId, setProfileId] = useState(preset.profileId ?? activeId);
@@ -85,9 +98,9 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
   const [title, setTitle] = useState(preset.title ?? '');
   const [model, setModel] = useState(preset.model ?? '');
   const [effort, setEffort] = useState(preset.effort ?? '');
-  const [permission, setPermission] = useState(preset.permission ?? DEFAULT_PERMISSION[preset.provider ?? 'claude']);
+  const [permission, setPermission] = useState(preset.permission ?? DEFAULT_PERMISSION[provider]);
   const [extraArgs, setExtraArgs] = useState(preset.extraArgs ?? '');
-  const [advanced, setAdvanced] = useState(Boolean(preset.model || preset.effort || preset.extraArgs));
+  const [advanced, setAdvanced] = useState(Boolean(preset.model || preset.effort || preset.extraArgs || preset.title || preset.permission));
   const [busy, setBusy] = useState(false);
   const resuming = Boolean(preset.resumeSessionId);
   // A model or effort from the preset, or picked here, wins over the account's defaults.
@@ -118,7 +131,8 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
   }, [profile?.id, profile?.defaultModel, profile?.defaultEffort, profile?.cliDefaults, provider]);
   const modelFromAccount = Boolean(profile?.defaultModel) && model === profile?.defaultModel;
   const effortFromAccount = Boolean(profile?.defaultEffort) && effort === profile?.defaultEffort;
-  const modelSummary = [modelLabel(model.trim()), effort ? `${effortLabel(effort)} effort` : ''].filter(Boolean).join(', ');
+  const permissionLabel = PERMISSIONS[provider].find((p) => p.value === permission)?.label;
+  const modelSummary = [modelLabel(model.trim()), effort ? `${effortLabel(effort)} effort` : '', permissionLabel].filter(Boolean).join(', ');
   const cli = env?.clis.find((c) => c.provider === provider);
   const permissionHint = PERMISSIONS[provider].find((p) => p.value === permission)?.hint;
   const withoutProject = mode === 'chat' && (projectless || !cwd.trim());
@@ -134,7 +148,7 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
         cwd: withoutProject ? '' : cwd.trim(),
         projectless: withoutProject,
         mode,
-        prompt: prompt.trim() || undefined,
+        prompt: (mode === 'task' ? prompt : preset.prompt ?? '').trim() || undefined,
         title: title.trim() || undefined,
         model: model.trim() || undefined,
         effort: effort || undefined,
@@ -195,7 +209,10 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
             {(['claude', 'codex'] as Provider[]).map((p) => {
               const info = env?.clis.find((c) => c.provider === p);
               return (
-                <button key={p} className={`choice ${provider === p ? 'on' : ''}`} onClick={() => setProvider(p)}>
+                <button key={p} className={`choice ${provider === p ? 'on' : ''}`} onClick={() => {
+                  rememberProvider(p);
+                  setProvider(p);
+                }}>
                   <ProviderIcon provider={p} size={30} />
                   <div style={{ minWidth: 0 }}>
                     <div className="choice-title">{PROVIDER_LABEL[p]}</div>
@@ -276,43 +293,43 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
           </>}
         </div>
 
-        {!resuming ? (
+        {mode === 'task' && !resuming ? (
           <div className="field">
-            <label>{mode === 'task' ? 'Task' : mode === 'chat' ? 'Message (optional)' : 'First message (optional)'}</label>
+            <label>Task</label>
             <textarea
               className="textarea"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder={mode === 'task' ? 'Describe what the agent should do. It runs until done.' : 'Leave empty to start at the prompt.'}
+              placeholder="Describe what the agent should do. It runs until done."
               autoFocus
             />
           </div>
         ) : null}
-
-        <div className="grid-2">
-          <div className="field">
-            <label>Name (optional)</label>
-            <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Shown in the task manager" />
-          </div>
-          <div className="field">
-            <label>Permissions</label>
-            <Select
-              value={permission}
-              onChange={setPermission}
-              aria-label="Permissions"
-              options={PERMISSIONS[provider].map((p) => ({ value: p.value, label: p.label, hint: p.hint }))}
-            />
-            <div className="hint" style={{ color: /never|No sandbox/i.test(permissionHint ?? '') ? 'var(--serious)' : undefined }}>
-              {permissionHint}
-            </div>
-          </div>
-        </div>
 
         <button className="btn ghost sm" style={{ justifySelf: 'start' }} onClick={() => setAdvanced(!advanced)}>
           <ChevronRight size={14} style={{ transform: advanced ? 'rotate(90deg)' : undefined, transition: 'transform .15s' }} /> Model & advanced
           {!advanced && modelSummary ? <span className="muted" style={{ fontWeight: 400 }}>· {modelSummary}</span> : null}
         </button>
         {advanced ? (
+          <>
+          <div className="grid-2">
+            <div className="field">
+              <label>Chat title</label>
+              <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Shown in the task manager" />
+            </div>
+            <div className="field">
+              <label>Permissions</label>
+              <Select
+                value={permission}
+                onChange={setPermission}
+                aria-label="Permissions"
+                options={PERMISSIONS[provider].map((p) => ({ value: p.value, label: p.label, hint: p.hint }))}
+              />
+              <div className="hint" style={{ color: /never|No sandbox/i.test(permissionHint ?? '') ? 'var(--serious)' : undefined }}>
+                {permissionHint}
+              </div>
+            </div>
+          </div>
           <div className="grid-3" style={{ alignItems: 'start' }}>
             <div className="field">
               <label>Model</label>
@@ -346,6 +363,7 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
               <input className="input mono" value={extraArgs} onChange={(e) => setExtraArgs(e.target.value)} placeholder={provider === 'claude' ? '--add-dir ..\\shared' : '--search'} spellCheck={false} />
             </div>
           </div>
+          </>
         ) : null}
         {!cli?.path ? <div className="badge critical" style={{ justifySelf: 'start' }}>{cli?.error ?? `${PROVIDER_LABEL[provider]} CLI not found`}</div> : null}
         {profile && profile.identity && !profile.identity.loggedIn ? (

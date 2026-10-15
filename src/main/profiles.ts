@@ -53,7 +53,12 @@ export class ProfileService {
   private store: JsonStore<ProfilesFile>;
   private modelCatalog: ModelCatalog;
   private identities = new Map<string, ProfileIdentity>();
-  private limits = new Map<string, ProfileLimits>();
+  /**
+   * The last plan usage seen per account, kept across restarts: an account's
+   * access token expires hours after its CLI last ran, and until it runs again
+   * these are the only numbers there are.
+   */
+  private limitsStore: JsonStore<Record<string, ProfileLimits>>;
   /** Display name of each account's plan, read with its identity. */
   private tiers = new Map<string, string | null>();
   private globalDefaults: Record<Provider, string | null> = { claude: null, codex: null };
@@ -68,6 +73,7 @@ export class ProfileService {
   constructor(userDataDir: string) {
     this.modelCatalog = new ModelCatalog(userDataDir);
     this.store = new JsonStore<ProfilesFile>(path.join(userDataDir, 'profiles.json'), { profiles: [] });
+    this.limitsStore = new JsonStore<Record<string, ProfileLimits>>(path.join(userDataDir, 'plan-usage.json'), {});
     this.ensureBuiltins();
   }
 
@@ -81,6 +87,11 @@ export class ProfileService {
       profiles.push({ id: 'codex-default', provider: 'codex', label: 'Primary', color: COLORS[1], configDir: defaultCodexDir(), builtin: true, createdAt: now });
     }
     this.store.replace({ profiles });
+  }
+
+  flush() {
+    this.store.flush();
+    this.limitsStore.flush();
   }
 
   list(): Profile[] {
@@ -106,17 +117,21 @@ export class ProfileService {
   }
 
   views(active: Record<Provider, string>): ProfileView[] {
-    return this.list().map((profile) => ({
-      ...profile,
-      identity: this.identities.get(profile.id) ?? null,
-      limits: this.limits.get(profile.id) ?? null,
-      planTier: this.planTier(profile),
-      cliDefaults: this.cliDefaults(profile),
-      isActive: active[profile.provider] === profile.id,
-      isGlobalDefault: this.isGlobalDefault(profile),
-      skillInstalled: this.skillChecker(profile),
-      runningAgents: this.runningCounter(profile.id)
-    }));
+    return this.list().map((profile) => {
+      const detectedPlanTier = this.planTier(profile);
+      return {
+        ...profile,
+        identity: this.identities.get(profile.id) ?? null,
+        limits: this.limitsStore.data[profile.id] ?? null,
+        planTier: profile.planLabel ?? detectedPlanTier,
+        detectedPlanTier,
+        cliDefaults: this.cliDefaults(profile),
+        isActive: active[profile.provider] === profile.id,
+        isGlobalDefault: this.isGlobalDefault(profile),
+        skillInstalled: this.skillChecker(profile),
+        runningAgents: this.runningCounter(profile.id)
+      };
+    });
   }
 
   cliDefaults(profile: Profile): CliDefaults {
@@ -133,7 +148,7 @@ export class ProfileService {
    * sign-in token's claim.
    */
   private planTier(profile: Profile): string | null {
-    const reported = planTierLabel(profile.provider, this.limits.get(profile.id)?.planType);
+    const reported = planTierLabel(profile.provider, this.limitsStore.data[profile.id]?.planType);
     const signedIn = this.tiers.get(profile.id) ?? null;
     return profile.provider === 'codex' ? reported ?? signedIn : signedIn ?? reported;
   }
@@ -216,7 +231,7 @@ export class ProfileService {
     }
     this.store.replace({ profiles: this.list().filter((p) => p.id !== id) });
     this.identities.delete(id);
-    this.limits.delete(id);
+    this.forgetLimits(id);
     this.tiers.delete(id);
     this.onChanged();
   }
@@ -281,7 +296,7 @@ export class ProfileService {
    */
   private async refreshLimits(profile: Profile, force: boolean) {
     if (!this.identities.get(profile.id)?.loggedIn) {
-      this.limits.delete(profile.id);
+      this.forgetLimits(profile.id);
       return;
     }
     try {
@@ -346,13 +361,19 @@ export class ProfileService {
    * status line knows the 5-hour and weekly windows but not the spend cap.
    */
   private mergeLimits(id: string, limits: ProfileLimits): boolean {
-    const current = this.limits.get(id);
+    const current = this.limitsStore.data[id];
     const newer = !current || Date.parse(limits.observedAt ?? '') >= Date.parse(current.observedAt ?? '');
     if (!newer) return false;
     const reported = new Set(limits.windows.map((w) => w.id));
     const kept = (current?.windows ?? []).filter((w) => !reported.has(w.id));
-    this.limits.set(id, { ...limits, windows: [...limits.windows, ...kept], planType: limits.planType ?? current?.planType ?? null });
+    this.limitsStore.update({ [id]: { ...limits, windows: [...limits.windows, ...kept], planType: limits.planType ?? current?.planType ?? null } });
     return true;
+  }
+
+  private forgetLimits(id: string) {
+    if (!(id in this.limitsStore.data)) return;
+    const { [id]: _, ...rest } = this.limitsStore.data;
+    this.limitsStore.replace(rest);
   }
 
   private limitsNotifyAt = 0;
@@ -396,13 +417,14 @@ export class ProfileService {
   }
 }
 
-/** The editable fields of an account; an empty defaultModel / defaultEffort / emailHint clears it. */
+/** The editable fields of an account; an empty defaultModel / defaultEffort / emailHint / planLabel clears it. */
 export interface ProfilePatch {
   label?: string;
   color?: string;
   emailHint?: string;
   defaultModel?: string;
   defaultEffort?: string;
+  planLabel?: string;
 }
 
 /** Applies an edit, taking only the editable fields; a blank label keeps the old one. */
@@ -410,7 +432,7 @@ export function applyProfilePatch(profile: Profile, patch: ProfilePatch): Profil
   const next: Profile = { ...profile };
   if (patch.label !== undefined) next.label = patch.label.trim() || profile.label;
   if (patch.color !== undefined && patch.color) next.color = patch.color;
-  for (const key of ['emailHint', 'defaultModel', 'defaultEffort'] as const) {
+  for (const key of ['emailHint', 'defaultModel', 'defaultEffort', 'planLabel'] as const) {
     const value = patch[key];
     if (value === undefined) continue;
     const trimmed = String(value).trim();

@@ -468,6 +468,7 @@ function registerIpc() {
   handle('chat.interrupt', (id) => agents.chatInterrupt(id));
   handle('chat.respond', (id, itemId, answer) => agents.chatRespond(id, itemId, answer));
   handle('chat.configure', (id, patch) => agents.chatConfigure(id, patch));
+  handle('chat.switchCost', (id, changes) => agents.switchCosts(id, changes));
   handle('chat.commands', (id) => agents.chatCommands(id));
   ipcMain.on('agents.write', (_event, id: string, data: string) => agents.write(id, data));
   ipcMain.on('agents.resize', (_event, id: string, cols: number, rows: number) => agents.resize(id, cols, rows));
@@ -833,12 +834,16 @@ app.whenReady().then(async () => {
     console.error('Browser tool server failed to start', error);
   }
   await configureTelemetry();
-  // The app's own window may use the microphone (voice input); nothing else is granted.
+  // The app's own window may use the microphone (voice input) and the clipboard (terminal
+  // paste reads it); nothing else is granted.
+  const CLIPBOARD = new Set(['clipboard-read', 'clipboard-sanitized-write']);
   session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
     const audioOnly = permission === 'media' && !(details as any).mediaTypes?.some((t: string) => t !== 'audio');
-    callback(audioOnly && contents === mainWindow?.webContents);
+    callback((audioOnly || CLIPBOARD.has(permission)) && contents === mainWindow?.webContents);
   });
-  session.defaultSession.setPermissionCheckHandler((contents, permission) => permission === 'media' && contents === mainWindow?.webContents);
+  session.defaultSession.setPermissionCheckHandler(
+    (contents, permission) => (permission === 'media' || CLIPBOARD.has(permission)) && contents === mainWindow?.webContents
+  );
   registerIpc();
   createWindow();
   startLoops();
@@ -862,6 +867,7 @@ app.on('will-quit', (event) => {
       await agents.stopAll();
       settingsStore.flush();
       windowStore.flush();
+      profiles.flush();
       processes.dispose();
       updates.dispose();
       hooks.stop();

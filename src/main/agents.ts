@@ -1,4 +1,4 @@
-import type { ChatImage, ChatMessage } from '../shared/types';
+import type { ChatImage, ChatMessage, SettingsChange, SwitchCost } from '../shared/types';
 import crypto from 'node:crypto';
 import { validateChatImages } from '../shared/chatImages';
 import path from 'node:path';
@@ -30,6 +30,7 @@ import { CodexChat } from './chat/codexChat';
 import { LineSplitter, type ChatDriver, type ChatHost } from './chat/driver';
 import { locateCli, spawnSpec } from './cliLocator';
 import { defaultModel } from '../shared/models';
+import { estimateSwitchCost } from './chat/switchCost';
 import { ClaudeStreamFormatter, describeToolInput } from './streamFormat';
 import type { HookEvent, HookServer } from './hookServer';
 import type { ProfileService } from './profiles';
@@ -91,6 +92,8 @@ interface Session {
   /** Set when the chat protocol failed to start; the exit then counts as a failure. */
   failure: string | null;
   exitWaiters: Array<() => void>;
+  /** A Codex change made mid-turn: the turn running then ends before the one that rebuilds the cache. */
+  rebuildSkipsTurn?: boolean;
 }
 
 export interface AgentManagerDeps {
@@ -272,7 +275,8 @@ export class AgentManager {
       runId: newRunId(),
       titleCustom: Boolean(options.title?.trim()) || previous?.titleCustom === true,
       // A continued conversation keeps the map of what it ran before.
-      subagents: previous?.subagents
+      subagents: previous?.subagents,
+      cacheRebuild: options.resumeSessionId ? previous?.cacheRebuild ?? null : null
     };
     const session = this.createSession(info, options, profile, {
       formatter: headless && profile.provider === 'claude' ? new ClaudeStreamFormatter() : null,
@@ -545,6 +549,8 @@ export class AgentManager {
       },
       turnComplete: () => {
         info.lastModelActivityAt = new Date().toISOString();
+        if (session.rebuildSkipsTurn) session.rebuildSkipsTurn = false;
+        else info.cacheRebuild = null;
         this.markChanged(info.id);
         this.refreshTelemetry(session).catch(() => {});
         this.syncTitle(session);
@@ -723,15 +729,50 @@ export class AgentManager {
     session.driver.respond(itemId, answer);
   }
 
+  /** Prices each change against keeping the current settings (null: nothing to price yet). */
+  switchCosts(id: string, changes: SettingsChange[]): Array<SwitchCost | null> {
+    const info = this.get(id);
+    if (!info) return changes.map(() => null);
+    const now = Date.now();
+    return changes.map((change) => estimateSwitchCost(info, { ...change, model: change.model === undefined ? undefined : this.resolveModel(info, change.model) }, now));
+  }
+
+  /** Model aliases (`opus`, `default`) as the account's CLI resolves them, for pricing. */
+  private resolveModel(info: AgentInfo, model: string): string {
+    const profile = this.deps.profiles.get(info.profileId);
+    const defaults = profile ? this.deps.profiles.cliDefaults(profile) : null;
+    const id = model || defaultModel(info.provider, defaults);
+    return defaults?.discoveredModels?.find((m) => m.id === id)?.resolvedModel ?? id;
+  }
+
+  /** Remembers a mid-session model or effort change until the request that pays for it has run. */
+  private noteCacheRebuild(session: Session | undefined, info: AgentInfo, patch: ChatSettingsPatch) {
+    if (!info.telemetry?.lastUsage) return;
+    const cost = estimateSwitchCost(info, { model: patch.model === undefined ? undefined : this.resolveModel(info, patch.model), effort: patch.effort });
+    if (!cost) return;
+    if (cost.rebuild === 'none') {
+      // Switched back to what the cache was built with.
+      if (info.cacheRebuild && (patch.model !== undefined || !info.cacheRebuild.model)) info.cacheRebuild = null;
+      return;
+    }
+    info.cacheRebuild = cost.rebuild === 'full'
+      ? { model: patch.model || null, at: new Date().toISOString() }
+      : { ...info.cacheRebuild, effort: patch.effort, at: new Date().toISOString() };
+    // Codex applies the change from the next turn: the one running now doesn't pay for it.
+    if (session) session.rebuildSkipsTurn = info.provider === 'codex' && info.status === 'working';
+  }
+
   chatConfigure(id: string, patch: ChatSettingsPatch) {
     const session = this.sessions.get(id);
+    const before = this.get(id);
+    if (before && (patch.model !== undefined || patch.effort)) this.noteCacheRebuild(session, before, patch);
     if (session?.driver && !session.info.endedAt) {
       session.driver.configure(patch);
       if (patch.effort) {
         session.options = { ...session.options, effort: patch.effort };
         session.info.effort = patch.effort;
-        this.markChanged(id);
       }
+      if (patch.effort || patch.model !== undefined) this.markChanged(id);
       return;
     }
     // Not running: remembered for when the conversation continues.

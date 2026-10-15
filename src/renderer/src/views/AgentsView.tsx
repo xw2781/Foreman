@@ -168,6 +168,7 @@ function AgentListItem({ agent, selected, onSelect, archived = false, onToggleAr
       </button>
       <div className="ai-meta">
         <StatusPill status={agent.status} />
+        {AGENT_MODES.includes(agent.mode) ? <PromptCacheBadge agent={agent} iconOnly /> : null}
         {agent.usesScreen ? <MousePointer2 size={12} color="var(--warning)" /> : null}
         {browser ? <Globe size={12} color={browser.busy ? 'var(--accent-strong)' : 'var(--text-muted)'} aria-label="Has a browser open" /> : null}
         {subagents ? (
@@ -178,7 +179,6 @@ function AgentListItem({ agent, selected, onSelect, archived = false, onToggleAr
         <span className="ellipsis">{agent.mode === 'task' ? 'task' : CONVERSATION_MODES.includes(agent.mode) ? agent.profileLabel : agent.mode}</span>
         {t?.cost.totalUsd != null ? <span style={{ marginLeft: 'auto' }} className="num">{usd(t.cost.reportedUsd ?? t.cost.totalUsd)}</span> : null}
       </div>
-      {AGENT_MODES.includes(agent.mode) ? <div style={{ gridColumn: 2 }}><PromptCacheBadge agent={agent} /></div> : null}
       {t && t.contextPercent !== null && agent.mode !== 'shell' ? (
         <div style={{ gridColumn: 2 }}>
           <MiniMeter value={t.contextPercent} title={`Context ${compact(t.contextUsedTokens)} / ${compact(t.contextWindow)}`} />
@@ -269,10 +269,17 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
             </div>
           </div>
         ) : null}
-        <button className="btn ghost icon" data-fit="2" title="Rename" onClick={() => setEditing(true)}>
+        <button className="btn ghost icon" data-fit="2" data-tip="Rename" aria-label="Rename" onClick={() => setEditing(true)}>
           <Pencil size={15} />
         </button>
-        <button className="btn ghost icon" data-fit="1" title={agent.projectless ? 'Open chat files' : 'Open folder'} onClick={() => call('shell.openPath', agent.cwd)}>
+        <button
+          className="btn ghost icon"
+          data-fit="1"
+          data-tip={agent.projectless ? 'Open chat files' : 'Open folder'}
+          data-tip-note={agent.projectless ? undefined : agent.cwd}
+          aria-label={agent.projectless ? 'Open chat files' : 'Open folder'}
+          onClick={() => call('shell.openPath', agent.cwd)}
+        >
           <FolderOpen size={15} />
         </button>
         {/* A chat stops from its composer; terminal agents have no composer. */}
@@ -286,13 +293,15 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
           </button>
         ) : null}
         {!live ? (
-          <button className="btn ghost icon" title="Remove from list" onClick={() => call('agents.remove', agent.id)}>
+          <button className="btn ghost icon" data-tip="Remove from list" data-tip-note="Its transcript stays on disk" aria-label="Remove from list" onClick={() => call('agents.remove', agent.id)}>
             <Trash2 size={15} />
           </button>
         ) : null}
         <button
           className={`btn ghost icon ${panelOpen ? 'on' : ''}`}
-          title={panelOpen ? 'Hide the side panel' : 'Show the side panel: subagents, browser, files and details'}
+          data-tip={panelOpen ? 'Hide side panel' : 'Show side panel'}
+          data-tip-note={panelOpen ? undefined : 'Subagents, browser, files and details'}
+          aria-label={panelOpen ? 'Hide side panel' : 'Show side panel'}
           aria-pressed={panelOpen}
           onClick={() => useApp.getState().togglePanel(agent.id)}
         >

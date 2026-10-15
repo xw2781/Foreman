@@ -14,6 +14,7 @@
 }
 .prompt-cache.warm { color: var(--good); background: var(--good-soft); }
 .prompt-cache.expired { color: var(--serious); }
+.prompt-cache.icon-only { padding: 0; background: none; }
 .prompt-cache:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 
 :root {
@@ -65,7 +66,7 @@
   --radius-sm: 6px;
   --shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
   --titlebar-h: 40px;
-  --nav-w: 208px;
+  --nav-w: 56px;
 }
 
 /* Light palettes. Neither uses a white panel: surfaces sit a step below paper so the
@@ -212,7 +213,7 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 150px 0 14px; /* room for the native window controls */
+  padding: 0 150px 0 17px; /* room for the native window controls; the mark lines up with the nav icons */
   -webkit-app-region: drag;
   border-bottom: 1px solid var(--border);
   background: var(--page);
@@ -224,7 +225,7 @@ button {
   font-weight: 600;
   font-size: 13px;
   letter-spacing: 0.1px;
-  width: calc(var(--nav-w) - 14px);
+  margin-right: 14px;
 }
 .brand-mark {
   width: 22px;
@@ -243,25 +244,25 @@ button {
 .nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 12px 10px;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 0;
   border-right: 1px solid var(--border);
   background: var(--page);
   min-height: 0;
 }
 .nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 34px;
-  padding: 0 10px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
   border-radius: var(--radius);
   color: var(--text-secondary);
   cursor: pointer;
   border: none;
   background: none;
-  width: 100%;
-  text-align: left;
 }
 .nav-item:hover {
   background: var(--surface-2);
@@ -274,30 +275,142 @@ button {
 .nav-item.active svg {
   color: var(--accent-strong);
 }
+/* Counts sit on the icon's corner. */
 .nav-item .badge {
-  margin-left: auto;
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  height: 16px;
+  min-width: 16px;
+  padding: 0 4px;
+  font-size: 10px;
+  justify-content: center;
+  pointer-events: none;
 }
-.nav-section {
-  margin: 14px 10px 6px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--text-muted);
+.nav-item .badge.dot {
+  top: 5px;
+  right: 5px;
+  height: 9px;
+  min-width: 9px;
+  padding: 0;
+  background: var(--warning);
+  box-shadow: 0 0 0 2px var(--page);
 }
 .nav-footer {
   margin-top: auto;
-  padding: 10px;
-  font-size: 11.5px;
-  color: var(--text-muted);
   display: grid;
-  gap: 6px;
-}
-.nav-footer .row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
+/* Hover cards: the floating one from TipHost (ui.tsx), and the nav's own, which open to the right. */
+.hover-tip {
+  position: absolute;
+  z-index: 30;
+  display: grid;
+  gap: 3px;
+  width: max-content;
+  max-width: 340px;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+/* the little pointer back to the element */
+.hover-tip::before {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: inherit;
+  border: 0 solid var(--border-strong);
+}
+.hover-tip-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+  white-space: nowrap;
+}
+.hover-tip-head .kbd {
+  font-size: 10.5px;
+  font-weight: 400;
+}
+.hover-tip-note {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+.hover-tip-note.path {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.hover-tip-note.error {
+  color: var(--critical);
+}
+
+.hover-tip.floating {
+  position: fixed;
+  z-index: 1000;
+}
+.hover-tip.floating.shown {
+  opacity: 1;
+}
+.hover-tip.floating.below {
+  transform: translateY(-3px);
+}
+.hover-tip.floating.above {
+  transform: translateY(3px);
+}
+.hover-tip.floating.shown.below,
+.hover-tip.floating.shown.above {
+  transform: none;
+}
+.hover-tip.floating::before {
+  left: var(--arrow-x);
+  margin-left: -4px;
+}
+.hover-tip.floating.below::before {
+  top: -5px;
+  border-left-width: 1px;
+  border-top-width: 1px;
+  transform: rotate(45deg);
+}
+.hover-tip.floating.above::before {
+  bottom: -5px;
+  border-right-width: 1px;
+  border-bottom-width: 1px;
+  transform: rotate(45deg);
+}
+
+.nav .hover-tip {
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translate(-4px, -50%);
+}
+.nav .hover-tip::before {
+  left: -5px;
+  top: 50%;
+  border-left-width: 1px;
+  border-bottom-width: 1px;
+  transform: translateY(-50%) rotate(45deg);
+}
+.nav-item:hover .hover-tip,
+.nav-item:focus-visible .hover-tip {
+  opacity: 1;
+  transform: translate(0, -50%);
+  transition-delay: 0.25s;
+}
 .main {
   min-width: 0;
   min-height: 0;

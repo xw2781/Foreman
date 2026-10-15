@@ -22,6 +22,43 @@ interface Entry {
   queue: Array<{ data: string; end: number }>;
   observer: ResizeObserver | null;
   lastSize: string;
+  /** Stars drawn locally after a hidden-input prompt (see maskEcho). */
+  masked: number;
+}
+
+/**
+ * `claude auth login` reads the pasted sign-in code without echoing it, so the
+ * prompt looks dead. Draw a star per character locally, but only while the
+ * cursor line is that prompt plus our own stars: a CLI that echoes its own
+ * mask breaks the match, and we stop.
+ */
+const HIDDEN_PROMPT = 'Paste code here if prompted >';
+
+function maskEcho(entry: Entry, data: string) {
+  const buffer = entry.term.buffer.active;
+  const line = buffer.getLine(buffer.baseY + buffer.cursorY)?.translateToString(true) ?? '';
+  const rest = line.startsWith(HIDDEN_PROMPT) ? line.slice(HIDDEN_PROMPT.length).trim() : null;
+  if (rest === null || rest !== '*'.repeat(rest.length) || rest.length !== entry.masked) {
+    entry.masked = 0;
+    return;
+  }
+  let out = '';
+  for (const ch of data.replace(/\x1b\[[0-9;]*[~A-Za-z]/g, '')) {
+    if (ch === '\r' || ch === '\n') {
+      entry.masked = 0;
+      break;
+    }
+    if (ch === '\x7f' || ch === '\b') {
+      if (entry.masked > 0) {
+        entry.masked--;
+        out += '\b \b';
+      }
+    } else if (ch >= ' ') {
+      entry.masked++;
+      out += '*';
+    }
+  }
+  if (out) entry.term.write(out);
 }
 
 type TerminalTheme = 'dark' | 'cream' | 'grey';
@@ -113,16 +150,26 @@ function create(id: string, provider: Provider | null): Entry {
     allowProposedApi: true,
     macOptionIsMeta: true,
     lineHeight: 1.12,
-    drawBoldTextInBrightColors: false
+    drawBoldTextInBrightColors: false,
+    // OSC 8 hyperlinks (Claude Code prints its sign-in URL as one). xterm's default handler
+    // calls window.open() with no URL, which the window-open handler denies.
+    linkHandler: {
+      activate: (_event, uri) => {
+        if (/^https?:\/\//i.test(uri)) call('shell.openExternal', uri);
+      }
+    }
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
   term.loadAddon(new WebLinksAddon((_event, url) => call('shell.openExternal', url)));
   const element = document.createElement('div');
   element.className = 'term-mount';
-  const entry: Entry = { term, fit, element, end: 0, ready: false, queue: [], observer: null, lastSize: '' };
+  const entry: Entry = { term, fit, element, end: 0, ready: false, queue: [], observer: null, lastSize: '', masked: 0 };
 
-  term.onData((data) => writeToAgent(id, data));
+  term.onData((data) => {
+    writeToAgent(id, data);
+    maskEcho(entry, data);
+  });
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true;
     const ctrl = event.ctrlKey && !event.altKey && !event.metaKey;

@@ -63,6 +63,7 @@ import { EffortControl } from '../EffortControl';
 import { AnnotationSelection, AnnotationTray } from '../ChatAnnotations';
 import { annotatedMessage, NO_ANNOTATIONS, restoreAnnotations, setAnnotations, useAnnotations } from '../annotations';
 import { PromptCacheBadge } from '../PromptCacheBadge';
+import { switchCostHint, switchCostNotice, useSwitchCosts } from '../switchCost';
 import { SubagentPill } from './SubagentMap';
 import '../chat.css';
 
@@ -789,6 +790,22 @@ function QueueTray({ agent, items, busy, onEdit }: { agent: AgentInfo; items: Ar
 const voiceDrafts = new Set<string>();
 const VOICE_NOTE = '(Dictated by voice and transcribed by a small speech model: it may contain mishearings, especially of code, names and technical terms. Interpret it using the conversation context.)';
 
+/** A model or effort change waiting for its first request, and what rebuilding the prompt cache adds to it. */
+function CacheRebuildNotice({ agent }: { agent: AgentInfo }) {
+  const pending = agent.cacheRebuild!;
+  const change = pending.model !== undefined ? { model: pending.model ?? '' } : { effort: pending.effort };
+  const [cost] = useSwitchCosts(agent, [change]);
+  if (!cost || cost.rebuild === 'none') return null;
+  return (
+    <div className="queue cache-rebuild" role="status">
+      <div className="queue-head" title="Input only, at API list prices. A different model or effort also changes how much the reply itself costs.">
+        <TriangleAlert size={12} />
+        <span>{switchCostNotice(cost, pending.model)}</span>
+      </div>
+    </div>
+  );
+}
+
 function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'user'>> }) {
   const toast = useApp((s) => s.toast);
   const fontSize = useApp((s) => s.settings?.chatFontSize);
@@ -1017,10 +1034,19 @@ ${VOICE_NOTE}`;
   const currentModel = agent.model || profile?.defaultModel || defaultModel(agent.provider, profile?.cliDefaults);
   // What the session runs at: the level chosen here or at launch, else the CLI's configured default.
   const currentEffort = agent.effort || profile?.cliDefaults.effort || '';
+  const models = modelOptions(agent.provider, profile?.cliDefaults, currentModel);
+  // Once a level is in force there's no "default" to go back to mid-session.
+  const efforts = effortOptions(agent.provider, profile?.cliDefaults.effort, currentEffort).filter((o) => o.value || !currentEffort);
+  const otherModels = models.filter((o) => o.value !== currentModel);
+  const otherEfforts = efforts.filter((o) => o.value && o.value !== currentEffort);
+  const costs = useSwitchCosts(agent, [...otherModels.map((o) => ({ model: o.value })), ...otherEfforts.map((o) => ({ effort: o.value }))]);
+  const modelHints = new Map(otherModels.map((o, i) => [o.value, switchCostHint(costs[i])]));
+  const effortHints = new Map(otherEfforts.map((o, i) => [o.value, switchCostHint(costs[otherModels.length + i])]));
 
   return (
     <div className="composer">
       {queued.length ? <QueueTray agent={agent} items={queued} busy={midTurn} onEdit={(queuedText) => restore([queuedText])} /> : null}
+      {agent.cacheRebuild ? <CacheRebuildNotice agent={agent} /> : null}
       <div className="composer-box" onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={(e) => {
         e.preventDefault();
         void attach(Array.from(e.dataTransfer.files));
@@ -1124,15 +1150,15 @@ ${VOICE_NOTE}`;
             heading="Model"
             aria-label="Model"
             value={currentModel}
-            options={modelOptions(agent.provider, profile?.cliDefaults, currentModel)}
+            options={models.map((o) => ({ ...o, hint: modelHints.get(o.value) ?? o.hint }))}
             custom={{ placeholder: 'Other model id…' }}
             onChange={(model) => configure({ model })}
           />
           <EffortControl
             model={currentModel}
             value={currentEffort}
-            // Once a level is in force there's no "default" to go back to mid-session.
-            options={effortOptions(agent.provider, profile?.cliDefaults.effort, currentEffort).filter((o) => o.value || !currentEffort)}
+            options={efforts}
+            hint={(effort) => effortHints.get(effort)}
             onChange={(effort) => effort && configure({ effort })}
           />
           {/* Wraps to a line of its own rather than squeezing the controls' labels. */}

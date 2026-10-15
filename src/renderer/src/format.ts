@@ -64,7 +64,21 @@ export function resetIn(iso: string | null | undefined): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `resets in ${h}h ${m % 60}m`;
   const date = new Date(iso);
+  // A weekday alone is ambiguous past a week out (monthly allowances).
+  if (h >= 24 * 6) return `resets ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
   return `resets ${date.toLocaleDateString(undefined, { weekday: 'short' })} ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+}
+
+/** The exact reset moment for a tooltip, e.g. "Resets Sat, Nov 1, 12:00 AM (in 18 days)". */
+export function resetAt(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const ms = Date.parse(iso) - Date.now();
+  if (!Number.isFinite(ms)) return '';
+  if (ms <= 0) return 'Resets now';
+  const date = new Date(iso);
+  const when = date.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const days = Math.floor(ms / 86_400_000);
+  return days >= 1 ? `Resets ${when} (in ${days} day${days === 1 ? '' : 's'})` : `Resets ${when} (${resetIn(iso).replace('resets ', '')})`;
 }
 
 export function shortPath(value: string | null | undefined, keep = 2): string {
@@ -122,7 +136,10 @@ export function limitSummary(windows: LimitWindow[] | undefined | null): string 
   if (fresh.length === 0) return '';
   return fresh
     .slice(0, 2)
-    .map((w) => `${w.label} ${w.detail ?? `${Math.round(100 - w.usedPercent)}%`}`)
+    .map((w) => {
+      const left = `${Math.round(100 - w.usedPercent)}%`;
+      return w.shortLabel ? `${w.shortLabel} ${left}` : `${w.label} ${w.detail ?? left}`;
+    })
     .join(' · ');
 }
 

@@ -28,6 +28,12 @@ describe('account edits', () => {
     expect(next.id).toBe('claude-work');
     expect(next.configDir).toBe('C:\\p');
   });
+
+  it('sets a custom plan label and clears it with an empty string', () => {
+    const labelled = applyProfilePatch(base, { planLabel: ' Premium Seat ' });
+    expect(labelled.planLabel).toBe('Premium Seat');
+    expect('planLabel' in applyProfilePatch(labelled, { planLabel: '' })).toBe(false);
+  });
 });
 
 describe('ProfileService.update', () => {
@@ -58,6 +64,18 @@ describe('ProfileService.update', () => {
     await service.refresh();
     expect(loader.mock.calls).toHaveLength(4);
     expect(loader.mock.calls.every((args: unknown[]) => args[1] === false)).toBe(true);
+  });
+
+  it('remembers the last reported plan usage across restarts', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-usage-'));
+    dirs.push(dir);
+    const service = new ProfileService(dir);
+    const window = { id: 'monthly_spend', label: 'Monthly', usedPercent: 12, resetsAt: null };
+    service.applyReportedLimits('claude-default', { windows: [window], observedAt: '2026-10-14T12:00:00.000Z', planType: 'enterprise' });
+    service.flush();
+    const reread = new ProfileService(dir).views({ claude: 'claude-default', codex: 'codex-default' }).find((p) => p.id === 'claude-default');
+    expect(reread?.limits?.windows).toEqual([window]);
+    expect(reread?.limits?.observedAt).toBe('2026-10-14T12:00:00.000Z');
   });
 
   it('persists account defaults to profiles.json', () => {
