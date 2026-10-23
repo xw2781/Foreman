@@ -75,6 +75,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   cliPath: { claude: '', codex: '' },
   defaultCwd: HOME,
   recentCwds: [],
+  projectFolders: [],
   theme: 'dark',
   lightPalette: 'cream',
   terminalFontSize: 13,
@@ -847,6 +848,7 @@ app.whenReady().then(async () => {
   registerIpc();
   createWindow();
   startLoops();
+  agents.restoreHistory().catch(() => {});
   agents.reopenWarm().catch(() => {});
   updates.start();
   computerUse.refreshInstalled(profiles.list());

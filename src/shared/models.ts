@@ -26,3 +26,24 @@ export function modelChoices(provider: Provider, defaults?: CliDefaults | null, 
 export function defaultModel(provider: Provider, defaults?: CliDefaults | null): string {
   return modelChoices(provider, defaults)[0];
 }
+
+/** Older versions within each family; aliases are compared using CLI resolution metadata. */
+export function olderModelIds(provider: Provider, defaults?: CliDefaults | null, current = ''): Set<string> {
+  const models = modelChoices(provider, defaults, current).map((id) => {
+    const resolved = defaults?.discoveredModels?.find((model) => model.id === id)?.resolvedModel ?? id;
+    const base = resolved.replace(/\[[^\]]*\]$/, '').replace(/-\d{8}$/, '');
+    const claude = /^claude-([a-z]+)-(\d+)(?:[.-](\d+))?$/.exec(base);
+    const codex = /^gpt-(\d+)(?:\.(\d+))?(?:-(.+))?$/.exec(base);
+    return {
+      id,
+      family: claude ? claude[1] : codex ? `gpt-${codex[3] ?? 'base'}` : null,
+      version: claude ? [Number(claude[2]), Number(claude[3] ?? 0)] : codex ? [Number(codex[1]), Number(codex[2] ?? 0)] : [0, 0]
+    };
+  });
+  const newer = (a: number[], b: number[]) => a[0] > b[0] || (a[0] === b[0] && a[1] > b[1]);
+  const latest = new Map<string, number[]>();
+  for (const model of models) {
+    if (model.family && (!latest.has(model.family) || newer(model.version, latest.get(model.family)!))) latest.set(model.family, model.version);
+  }
+  return new Set(models.filter((model) => model.id !== 'default' && model.family && newer(latest.get(model.family)!, model.version)).map((model) => model.id));
+}

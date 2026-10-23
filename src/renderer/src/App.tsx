@@ -69,11 +69,23 @@ function useBootstrap() {
       }
     };
     load();
+    const markVisibleRead = () => {
+      const state = store();
+      if (state.view === 'agents' && !state.launcher && !state.panelExpanded && state.selectedAgentId && document.hasFocus() && document.visibilityState === 'visible') {
+        state.markSessionRead(state.selectedAgentId);
+      }
+    };
+    window.addEventListener('focus', markVisibleRead);
+    document.addEventListener('visibilitychange', markVisibleRead);
+    const stopTrackingRead = useApp.subscribe(markVisibleRead);
     const stopRemembering = useApp.subscribe((state, prev) => {
       if (state.selectedAgentId === prev.selectedAgentId || !state.selectedAgentId) return;
       try { localStorage.setItem('lastAgentId', state.selectedAgentId); } catch { /* storage unavailable */ }
     });
     const offs = [
+      stopTrackingRead,
+      () => window.removeEventListener('focus', markVisibleRead),
+      () => document.removeEventListener('visibilitychange', markVisibleRead),
       stopRemembering,
       listen('agents', (agents) => {
         const runs = new Map(agents.map((a) => [a.id, a.runId]));

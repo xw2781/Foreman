@@ -30,11 +30,11 @@ export function ProviderIcon({ provider, size = 22 }: { provider: Provider; size
   );
 }
 
-export function StatusPill({ status, detail }: { status: AgentStatus; detail?: string | null }) {
+export function StatusPill({ status, detail, label }: { status: AgentStatus; detail?: string | null; label?: string }) {
   return (
     <span className={`status ${status}`} title={detail ?? undefined}>
       <span className="dot" />
-      <span className="label">{STATUS_LABEL[status]}</span>
+      <span className="label">{label ?? STATUS_LABEL[status]}</span>
     </span>
   );
 }
@@ -420,6 +420,8 @@ export interface SelectOption {
   label: ReactNode;
   /** A second, muted line in the menu. */
   hint?: string;
+  /** Options tucked under a disclosure at the end of the menu. */
+  collapsedGroup?: string;
 }
 
 interface SelectProps {
@@ -451,13 +453,28 @@ export function Select({ value, options, onChange, prefix, icon, variant = 'fiel
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [draft, setDraft] = useState('');
+  const [expanded, setExpanded] = useState(false);
   const [place, setPlace] = useState<CSSProperties>({ visibility: 'hidden' });
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const listed = options.some((o) => o.value === value);
   // A custom value stays choosable once set.
-  const items: SelectOption[] = listed || !value ? options : [...options, { value, label: value }];
-  const selected = items.find((o) => o.value === value);
+  const allItems: SelectOption[] = listed || !value ? options : [...options, { value, label: value }];
+  const selected = allItems.find((o) => o.value === value);
+  const collapsed = allItems.filter((o) => o.collapsedGroup);
+  const primary = allItems.filter((o) => !o.collapsedGroup);
+  const disclosure = primary.length;
+  const items: SelectOption[] = collapsed.length
+    ? [...primary, { value: '', label: collapsed[0].collapsedGroup }, ...(expanded ? collapsed : [])]
+    : primary;
+  const toggleGroup = () => {
+    setExpanded((value) => !value);
+    setActive(disclosure);
+  };
+  const chooseIndex = (index: number) => {
+    if (collapsed.length && index === disclosure) toggleGroup();
+    else if (items[index]) choose(items[index].value);
+  };
 
   const close = (refocus = true) => {
     setOpen(false);
@@ -469,7 +486,8 @@ export function Select({ value, options, onChange, prefix, icon, variant = 'fiel
   };
   const show = () => {
     if (disabled) return;
-    setActive(Math.max(0, items.findIndex((o) => o.value === value)));
+    setExpanded(false);
+    setActive(selected?.collapsedGroup ? disclosure : Math.max(0, primary.findIndex((o) => o.value === value)));
     setDraft(listed ? '' : value);
     setPlace({ visibility: 'hidden' });
     setOpen(true);
@@ -491,7 +509,7 @@ export function Select({ value, options, onChange, prefix, icon, variant = 'fiel
       maxHeight: Math.max(120, Math.min(480, up ? above : below)),
       ...(up ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 })
     });
-  }, [open]);
+  }, [open, expanded]);
 
   useEffect(() => {
     if (!open) return;
@@ -539,7 +557,7 @@ export function Select({ value, options, onChange, prefix, icon, variant = 'fiel
       setActive(event.key === 'Home' ? 0 : items.length - 1);
     } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      if (items[active]) choose(items[active].value);
+      chooseIndex(active);
     } else if (event.key.length === 1 && /\S/.test(event.key)) {
       // Type-ahead: the next option whose text starts with the key.
       const key = event.key.toLowerCase();
@@ -578,16 +596,19 @@ export function Select({ value, options, onChange, prefix, icon, variant = 'fiel
               {heading ? <div className="sel-heading">{heading}</div> : null}
               {items.map((option, index) => (
                 <div
-                  key={option.value}
+                  key={collapsed.length && index === disclosure ? 'collapsed-group' : `option-${option.value}`}
                   data-index={index}
                   role="option"
-                  aria-selected={option.value === value}
-                  className={`sel-option ${option.value === value ? 'on' : ''} ${index === active ? 'active' : ''}`}
+                  aria-selected={index !== disclosure || !collapsed.length ? option.value === value : false}
+                  aria-expanded={collapsed.length && index === disclosure ? expanded : undefined}
+                  className={`sel-option ${option.value === value && !(collapsed.length && index === disclosure) ? 'on' : ''} ${index === active ? 'active' : ''}`}
                   onMouseEnter={() => setActive(index)}
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => choose(option.value)}
+                  onClick={() => chooseIndex(index)}
                 >
-                  <span className="sel-check">{option.value === value ? <Check size={13} /> : null}</span>
+                  <span className="sel-check">{collapsed.length && index === disclosure
+                    ? <ChevronDown size={13} style={{ transform: expanded ? undefined : 'rotate(-90deg)' }} />
+                    : option.value === value ? <Check size={13} /> : null}</span>
                   <span className="sel-text">
                     <span className="sel-label">{option.label}</span>
                     {option.hint ? <span className="sel-hint">{option.hint}</span> : null}

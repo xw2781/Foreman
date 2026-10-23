@@ -5,7 +5,7 @@ import { call, errorMessage } from '../api';
 import { useApp } from '../store';
 import { colorVar, limitSummary, modelLabel, signedOutLabel } from '../format';
 import { Modal, ProviderIcon, Select, type SelectOption } from '../ui';
-import { defaultModel, modelChoices } from '@shared/models';
+import { defaultModel, modelChoices, olderModelIds } from '@shared/models';
 
 /** Newest first; Claude's family aliases (always the latest of each) follow its dated ids. */
 export { MODELS } from '@shared/models';
@@ -22,13 +22,14 @@ export function defaultLabel(configured: string | null | undefined) {
  * (e.g. the id a running session resolved to) is kept when unlisted.
  */
 export function modelOptions(provider: Provider, defaults: CliDefaults | null | undefined, current = ''): SelectOption[] {
+  const older = olderModelIds(provider, defaults, current);
   return modelChoices(provider, defaults, current).map((m) => {
     const discovered = defaults?.discoveredModels?.find((model) => model.id === m);
     const resolved = discovered?.resolvedModel;
     const label = resolved
       ? `${m === 'default' ? 'Default · ' : ''}${modelLabel(resolved + (m.endsWith('[1m]') && !resolved.endsWith('[1m]') ? '[1m]' : ''))}`
       : discovered?.label || modelLabel(m);
-    return { value: m, label };
+    return { value: m, label, ...(older.has(m) ? { collapsedGroup: 'Older models' } : {}) };
   });
 }
 

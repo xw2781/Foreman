@@ -222,6 +222,8 @@ export interface AgentInfo {
   lastOutputAt: string | null;
   /** Last completed model turn, retained across resumes for the prompt-cache estimate. */
   lastModelActivityAt?: string | null;
+  /** Latest successful turn or task completion, used by the unread session badge. */
+  completedAt?: string | null;
   /** It was running when the app closed: reopened at the next start if its prompt cache is still warm. */
   reopenOnStart?: boolean;
   commandLine: string;
@@ -609,6 +611,8 @@ export interface AppSettings {
   cliPath: Record<Provider, string>;
   defaultCwd: string;
   recentCwds: string[];
+  /** Project folders added to the session panel, including projects without sessions yet. */
+  projectFolders?: string[];
   theme: 'dark' | 'light' | 'system';
   /** Which palette "light" means (also used by "system" when the OS is light). */
   lightPalette: LightPalette;

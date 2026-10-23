@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { completionStamp, hasUnreadCompletion } from './sessionUnread';
 import type {
   AgentInfo,
   AppSettings,
@@ -30,6 +31,8 @@ interface AppState {
   profiles: ProfileView[];
   agents: AgentInfo[];
   selectedAgentId: string | null;
+  readCompletions: Record<string, string>;
+  markSessionRead: (id: string) => void;
   /** null until the first process snapshot arrives. */
   externals: ExternalAgentProcess[] | null;
   usage: UsageReport | null;
@@ -70,6 +73,14 @@ export const useApp = create<AppState>((set, get) => ({
   profiles: [],
   agents: [],
   selectedAgentId: null,
+  readCompletions: readCompletionState(),
+  markSessionRead: (id) => {
+    const agent = get().agents.find((agent) => agent.id === id);
+    if (!agent || !hasUnreadCompletion(agent, get().readCompletions)) return;
+    const readCompletions = { ...get().readCompletions, [id]: completionStamp(agent)! };
+    try { localStorage.setItem('readSessionCompletions', JSON.stringify(readCompletions)); } catch { /* storage unavailable */ }
+    set({ readCompletions });
+  },
   externals: null,
   usage: null,
   usageProgress: 0,
@@ -118,6 +129,14 @@ function readPanelDefault() {
   } catch {
     return false;
   }
+}
+
+function readCompletionState(): Record<string, string> {
+  try {
+    const saved = JSON.parse(localStorage.getItem('readSessionCompletions') ?? '{}');
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {};
+    return Object.fromEntries(Object.entries(saved).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+  } catch { return {}; }
 }
 
 function rememberPanelDefault(open: boolean) {

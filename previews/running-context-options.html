@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Foreman · Running context animations</title>
+<style>
+  :root { color-scheme: light; --page:#ebe6dc; --surface:#f4f0e7; --text:#221e17; --muted:#7d7465; --secondary:#554d40; --line:#d8d1c5; --accent:#5257dc; --track:rgba(82,87,220,.15); --percent:5%; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--page); color:var(--text); font:14px/1.5 'Segoe UI',Arial,sans-serif; }
+  body.dark { color-scheme:dark; --page:#17191f; --surface:#22252d; --text:#ececf2; --muted:#999baa; --secondary:#c0c1ce; --line:#393c48; --accent:#9298ff; --track:rgba(146,152,255,.17); }
+  main { max-width:1080px; margin:auto; padding:58px 36px 40px; }
+  .eyebrow { color:var(--muted); font-size:11px; font-weight:600; letter-spacing:2px; text-transform:uppercase; }
+  h1 { font-size:34px; font-weight:550; letter-spacing:-1.1px; line-height:1.2; margin:12px 0; }
+  .intro { color:var(--secondary); max-width:650px; margin:0; }
+  .toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:16px 28px; padding:20px 0; margin:26px 0 22px; border-block:1px solid var(--line); }
+  .slider { display:flex; align-items:center; gap:12px; }
+  input[type=range] { width:160px; accent-color:var(--accent); }
+  output { min-width:36px; font-variant-numeric:tabular-nums; color:var(--accent); }
+  button,select { font:inherit; color:var(--secondary); background:var(--surface); border:1px solid var(--line); border-radius:7px; padding:7px 12px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button:focus-visible,select:focus-visible,input:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
+  .toolbar button { margin-left:auto; min-width:125px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+  article { border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--surface); }
+  .option-head { padding:19px 22px 0; display:flex; align-items:center; gap:10px; }
+  .number { font:11px/1.4 ui-monospace,Consolas,monospace; color:var(--muted); }
+  h2 { font-size:15px; font-weight:600; margin:0; }
+  .tag { margin-left:auto; color:var(--accent); background:var(--track); font-size:10px; padding:3px 7px; border-radius:5px; }
+  .stage { min-height:152px; display:grid; place-items:center; padding:26px 20px; }
+  .agent { width:315px; max-width:100%; display:grid; grid-template-columns:26px minmax(0,1fr); gap:5px 10px; padding:10px; border-radius:10px; border:1px solid var(--line); background:var(--surface); }
+  .provider { width:23px; height:23px; background:#d97757; color:#fff8f0; border-radius:50%; display:grid; place-items:center; font-size:25px; line-height:1; }
+  .title { font-size:12px; font-weight:500; align-self:center; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .meta { grid-column:2; display:flex; gap:8px; align-items:center; font-size:11.5px; color:var(--muted); }
+  .status { display:flex; gap:6px; align-items:center; color:var(--text); }
+  .status-dot { width:8px; height:8px; border-radius:50%; background:var(--accent); }
+  .clock { width:12px; height:12px; border:1px solid var(--muted); border-radius:50%; position:relative; margin-left:2px; }
+  .clock:before { content:''; position:absolute; width:3px; height:4px; top:2px; left:5px; border-left:1px solid var(--muted); border-bottom:1px solid var(--muted); }
+  .meter { grid-column:2; display:flex; gap:8px; align-items:center; }
+  .track { flex:1; height:5px; border-radius:6px; background:var(--track); position:relative; overflow:hidden; }
+  .fill { position:absolute; inset:0 auto 0 0; width:var(--percent); border-radius:6px; background:var(--accent); }
+  .value { min-width:34px; font-size:11.5px; text-align:right; color:var(--secondary); font-variant-numeric:tabular-nums; }
+  .description { border-top:1px solid var(--line); padding:15px 22px 18px; min-height:91px; }
+  .description p { margin:0; font-size:12px; color:var(--secondary); }
+  .description small { display:block; margin-top:6px; color:var(--muted); font-size:11px; }
+  /* Motion never changes the width representing actual context usage. */
+  .stripes .fill { background-image:repeating-linear-gradient(110deg,transparent 0 4px,rgba(255,255,255,.38) 4px 6px,transparent 6px 10px); background-size:11px 100%; animation:stripe-drift 1.25s linear infinite; }
+  @keyframes stripe-drift { to { background-position:11px 0; } }
+  .sweep .track:after { content:''; position:absolute; inset:0; background:linear-gradient(90deg,transparent, var(--accent),transparent); opacity:.27; transform:translateX(-100%); animation:sweep 2.8s ease-in-out infinite; }
+  @keyframes sweep { 0%,12% { transform:translateX(-100%); } 85%,100% { transform:translateX(100%); } }
+  .breathe .fill { animation:breathe 2.2s ease-in-out infinite; }
+  @keyframes breathe { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+  .tip .fill:after { content:''; position:absolute; right:0; top:0; width:min(3px,100%); height:100%; background:var(--surface); animation:tick 1.6s steps(1,end) infinite; }
+  @keyframes tick { 0%,65%,100% { opacity:0; } 35% { opacity:.8; } }
+  body.paused .animated,body.paused .track:after,body.paused .fill:after { animation-play-state:paused; }
+  footer { margin-top:25px; display:flex; flex-wrap:wrap; gap:8px 24px; color:var(--muted); font-size:11px; }
+  footer span:first-child { color:var(--secondary); }
+  @media(prefers-reduced-motion:reduce) { .animated,.track:after,.fill:after { animation:none!important; } .sweep .track:after,.tip .fill:after { display:none; } }
+  @media(max-width:720px) { main { padding:32px 18px; } h1 { font-size:28px; } .grid { grid-template-columns:1fr; } .toolbar button { margin-left:0; } .tag { font-size:9px; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">Foreman / Motion studies</div>
+  <h1>A quieter way to show running.</h1>
+  <p class="intro">Four replacements for the context bar glow. Same card, same usage, different motion. Compare them at your usual 5% or drag up to see more of the fill.</p>
+  <div class="toolbar" aria-label="Preview controls">
+    <label class="slider" for="context">Context <input id="context" type="range" min="0" max="100" value="5"><output id="usage" for="context">5%</output></label>
+    <label>Theme <select id="theme"><option value="cream">Cream</option><option value="dark">Dark</option></select></label>
+    <button id="pause" type="button" aria-pressed="false">Pause motion</button>
+  </div>
+  <div class="grid" id="options"></div>
+  <footer><span>Fill width always represents actual context usage.</span><span>No blur or glow · Reduced motion supported · Cards shown at app scale</span></footer>
+</main>
+<script>
+  const options = [
+    { id:'stripes', name:'Diagonal drift', tag:'Recommended', description:'Fine stripes travel through the filled portion. Clear activity with a steady silhouette.', note:'Contained and familiar. A small texture shift at 5%.' },
+    { id:'sweep', name:'Soft sweep', description:'A faint band crosses the track while the solid context fill stays fixed.', note:'Most visible at low usage; more movement across the card.' },
+    { id:'breathe', name:'Ink pulse', description:'Only the filled portion gently fades and returns. The track stays completely still.', note:'The quietest option, with no movement across the card.' },
+    { id:'tip', name:'Edge tick', description:'A tiny cut at the end of the fill blinks at a measured pace, like a cursor.', note:'Crisp activity at 5%; subtle when the context fill is long.' }
+  ];
+  document.querySelector('#options').innerHTML = options.map((option,index) => `
+    <article class="${option.id}">
+      <div class="option-head"><span class="number">0${index+1}</span><h2>${option.name}</h2>${option.tag ? `<span class="tag">${option.tag}</span>` : ''}</div>
+      <div class="stage"><div class="agent">
+        <div class="provider" aria-hidden="true">✳</div><div class="title">Redesign running cards</div>
+        <div class="meta"><span class="status"><i class="status-dot" aria-hidden="true"></i>Running</span><i class="clock" aria-hidden="true"></i><span>Work</span></div>
+        <div class="meter" role="meter" aria-label="Context used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="5"><div class="track"><div class="fill animated"></div></div><span class="value">5%</span></div>
+      </div></div>
+      <div class="description"><p>${option.description}</p><small>${option.note}</small></div>
+    </article>`).join('');
+  document.querySelector('#context').addEventListener('input', event => {
+    const value = event.target.value;
+    document.documentElement.style.setProperty('--percent',value+'%');
+    document.querySelector('#usage').textContent = value+'%';
+    document.querySelectorAll('.value').forEach(label => label.textContent = value+'%');
+    document.querySelectorAll('[role=meter]').forEach(meter => meter.setAttribute('aria-valuenow',value));
+  });
+  document.querySelector('#theme').addEventListener('change',event => document.body.classList.toggle('dark',event.target.value === 'dark'));
+  document.querySelector('#pause').addEventListener('click',event => {
+    const paused = document.body.classList.toggle('paused');
+    event.target.textContent = paused ? 'Resume motion' : 'Pause motion';
+    event.target.setAttribute('aria-pressed',String(paused));
+  });
+</script>
+</body>
+</html>

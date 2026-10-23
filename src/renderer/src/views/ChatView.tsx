@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { ChatImage, ChatMessage } from '@shared/types';
+import type { ChatImage, ChatMessage, SwitchCost } from '@shared/types';
 import { useVoiceInput } from '../voice/useVoiceInput';
 import { describeVoiceStatus } from '../voice/engine';
 import { IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_CHAT_IMAGES, validateChatImages } from '@shared/chatImages';
@@ -55,8 +55,8 @@ import { useApp } from '../store';
 import { commandLists, drafts, imageDrafts, loadChat, loadCommands, sendModes, useChats } from '../chats';
 import { commandToken, rankCommands } from '../commands';
 import { CopyButton, Markdown } from '../markdown';
-import { folderName, percent, usd } from '../format';
-import { ProviderIcon, Select, useFit } from '../ui';
+import { folderName, modelLabel, percent, usd } from '../format';
+import { Modal, ProviderIcon, Select, useFit } from '../ui';
 import { PERMISSIONS, effortOptions, modelOptions } from './LaunchDialog';
 import { ImageAttachments } from '../ImageAttachments';
 import { EffortControl } from '../EffortControl';
@@ -812,6 +812,8 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
   const annotations = useAnnotations((state) => state.drafts[agent.id] ?? NO_ANNOTATIONS);
   const [text, setText] = useState(() => drafts.get(agent.id) ?? '');
   const [sending, setSending] = useState(false);
+  const [modelSwitch, setModelSwitch] = useState<{ agentId: string; model: string; cost: SwitchCost | null } | null>(null);
+  const switchingModel = useRef(false);
   const [images, setImages] = useState<ChatImage[]>(() => imageDrafts.get(agent.id) ?? []);
   const [reading, setReading] = useState(false);
   const currentAgent = useRef(agent.id);
@@ -1037,16 +1039,47 @@ ${VOICE_NOTE}`;
   const models = modelOptions(agent.provider, profile?.cliDefaults, currentModel);
   // Once a level is in force there's no "default" to go back to mid-session.
   const efforts = effortOptions(agent.provider, profile?.cliDefaults.effort, currentEffort).filter((o) => o.value || !currentEffort);
-  const otherModels = models.filter((o) => o.value !== currentModel);
   const otherEfforts = efforts.filter((o) => o.value && o.value !== currentEffort);
-  const costs = useSwitchCosts(agent, [...otherModels.map((o) => ({ model: o.value })), ...otherEfforts.map((o) => ({ effort: o.value }))]);
-  const modelHints = new Map(otherModels.map((o, i) => [o.value, switchCostHint(costs[i])]));
-  const effortHints = new Map(otherEfforts.map((o, i) => [o.value, switchCostHint(costs[otherModels.length + i])]));
+  const costs = useSwitchCosts(agent, otherEfforts.map((o) => ({ effort: o.value })));
+  const effortHints = new Map(otherEfforts.map((o, i) => [o.value, switchCostHint(costs[i])]));
+  const switchModel = async (model: string) => {
+    if (model === currentModel || switchingModel.current) return;
+    switchingModel.current = true;
+    try {
+      // Capture the estimate against the old settings, then show it after a successful switch.
+      const cost = agent.telemetry?.lastUsage
+        ? await call('chat.switchCost', agent.id, [{ model }]).then((result) => result[0] ?? null, () => null)
+        : null;
+      await call('chat.configure', agent.id, { model });
+      if (agent.telemetry?.lastUsage && currentAgent.current === agent.id) {
+        const label = models.find((option) => option.value === model)?.label;
+        setModelSwitch({ agentId: agent.id, model: typeof label === 'string' ? label : modelLabel(model), cost });
+      }
+    } catch (error) {
+      toast('error', errorMessage(error));
+    } finally {
+      switchingModel.current = false;
+    }
+  };
 
   return (
     <div className="composer">
+      {modelSwitch?.agentId === agent.id ? (
+        <Modal
+          title={`Switched to ${modelSwitch.model}`}
+          onClose={() => setModelSwitch(null)}
+          footer={<button type="button" className="btn primary" autoFocus onClick={() => setModelSwitch(null)}>Got it</button>}
+        >
+          <p>{modelSwitch.cost
+            ? modelSwitch.cost.rebuild === 'none' && modelSwitch.cost.cacheWarm
+              ? 'This switch keeps the current prompt cache.'
+              : switchCostNotice(modelSwitch.cost, modelSwitch.model)
+            : 'A cost estimate is unavailable for this model switch.'}</p>
+          <p className="muted">Estimates cover the next message’s input at API list prices. Reply costs are additional; subscription billing may differ.</p>
+        </Modal>
+      ) : null}
       {queued.length ? <QueueTray agent={agent} items={queued} busy={midTurn} onEdit={(queuedText) => restore([queuedText])} /> : null}
-      {agent.cacheRebuild ? <CacheRebuildNotice agent={agent} /> : null}
+      {agent.cacheRebuild && agent.cacheRebuild.model === undefined ? <CacheRebuildNotice agent={agent} /> : null}
       <div className="composer-box" onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={(e) => {
         e.preventDefault();
         void attach(Array.from(e.dataTransfer.files));
@@ -1150,9 +1183,9 @@ ${VOICE_NOTE}`;
             heading="Model"
             aria-label="Model"
             value={currentModel}
-            options={models.map((o) => ({ ...o, hint: modelHints.get(o.value) ?? o.hint }))}
+            options={models}
             custom={{ placeholder: 'Other model id…' }}
-            onChange={(model) => configure({ model })}
+            onChange={switchModel}
           />
           <EffortControl
             model={currentModel}

@@ -267,8 +267,9 @@ export class AgentManager {
       lastActivityAt: now,
       lastOutputAt: null,
       lastModelActivityAt: options.resumeSessionId ? previous?.lastModelActivityAt ?? (previous?.telemetry?.requests ? previous.telemetry.updatedAt : null) : null,
+      completedAt: previous?.completedAt ?? null,
       commandLine: [cli.path, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' '),
-      telemetry: null,
+      telemetry: options.resumeSessionId ? previous?.telemetry ?? null : null,
       resources: null,
       usesScreen: false,
       prompt: options.prompt ?? previous?.prompt ?? null,
@@ -541,10 +542,10 @@ export class AgentManager {
           resumable = true;
         }
         // Codex names its thread only after launch: save it now, or an app that dies mid-run leaves nothing to resume.
-        if (resumable && !info.endedAt) this.archive(info);
         if (update.model !== undefined) info.model = update.model || null;
         if (update.permission) info.permission = update.permission;
         if (update.title && !session.titleLocked) info.title = update.title;
+        if (!info.endedAt && (resumable || update.title)) this.archive(info);
         this.markChanged(info.id);
       },
       turnComplete: () => {
@@ -631,25 +632,46 @@ export class AgentManager {
     const info = this.get(id);
     // Reprice saved conversations when opened, even when their process is gone.
     // Their persisted telemetry may predate a newly added model rate.
-    const file = info?.transcriptPath ?? info?.telemetry?.filePath;
-    if (info?.endedAt && file) {
-      try {
-        const telemetry = await this.deps.telemetry.sessionTelemetry(info.provider, info.profileId, file);
-        if (telemetry && this.get(id) === info) {
-          info.telemetry = telemetry;
-          this.history.replace({ agents: this.history.data.agents.map((agent) => agent.id === id ? { ...info } : agent) });
-          this.markChanged(id);
-        }
-      } catch {
-        // Keep the saved estimate if the original transcript is unavailable.
-      }
-    }
+    if (info?.endedAt) await this.refreshSavedMetadata(info);
     if (session?.chat) return session.chat.list();
     if (!info || !CONVERSATION_MODES.includes(info.mode)) return [];
     const profile = this.deps.profiles.list().find((p) => p.id === info.profileId);
     if (!profile) return [];
     const log = await this.historyLog(profile, info.telemetry?.sessionId ?? info.sessionId, info.transcriptPath);
     return log.list();
+  }
+
+  /** Repair historical cards from the worker without opening or resuming their conversations. */
+  async restoreHistory() {
+    const pending = this.history.data.agents.filter((info) => AGENT_MODES.includes(info.mode));
+    const restore = async () => {
+      for (let info = pending.shift(); info; info = pending.shift()) await this.refreshSavedMetadata(info);
+    };
+    await Promise.all([restore(), restore()]);
+  }
+
+  private async refreshSavedMetadata(info: AgentInfo) {
+    try {
+      let file: string | null | undefined = info.transcriptPath ?? info.telemetry?.filePath;
+      if (!file) {
+        const profile = this.deps.profiles.list().find((profile) => profile.id === info.profileId);
+        const sessionId = info.sessionId ?? info.telemetry?.sessionId;
+        if (profile && sessionId) file = await this.findTranscript(profile, sessionId);
+      }
+      if (!file) return;
+      const telemetry = await this.deps.telemetry.sessionTelemetry(info.provider, info.profileId, file);
+      // A resume, deletion or clear while the worker was reading must win.
+      if (!telemetry || this.get(info.id) !== info || !info.endedAt) return;
+      info.transcriptPath = file;
+      info.sessionId = telemetry.sessionId ?? info.sessionId;
+      info.telemetry = telemetry;
+      if (!info.titleCustom && telemetry.title) info.title = telemetry.title;
+      if (telemetry.model) info.model = telemetry.model;
+      this.archive(info);
+      this.markChanged(info.id);
+    } catch {
+      // Offline or removed transcripts retain their last saved metadata.
+    }
   }
 
   /**
@@ -922,6 +944,7 @@ export class AgentManager {
       status = failed ? 'failed' : 'done';
     } else status = exitCode === 0 ? 'done' : 'failed';
     info.status = status;
+    if (status === 'done') info.completedAt = info.endedAt;
     info.statusDetail = session.failure ? 'Failed to start' : session.stopping ? 'Stopped' : `Exited with code ${exitCode}`;
     if (session.chat) {
       session.chat.settle(session.stopping ? 'Stopped' : 'The process exited');
@@ -1013,6 +1036,7 @@ export class AgentManager {
       // A running chat also saves it in the CLI's session, where its own apps and resumes see it.
       if (session.driver && !session.info.endedAt) session.driver.rename?.(name);
       session.titleSynced = true;
+      this.archive(session.info);
       this.markChanged(id);
     } else {
       this.history.replace({ agents: this.history.data.agents.map((a) => (a.id === id ? { ...a, title: name, titleCustom: true } : a)) });
@@ -1040,6 +1064,7 @@ export class AgentManager {
       .then((title) => {
         if (!title || session.titleLocked) return;
         session.info.title = title;
+        this.archive(session.info);
         this.markChanged(session.info.id);
       })
       .catch(() => {});
@@ -1123,7 +1148,11 @@ export class AgentManager {
     if (info.mode === 'interactive' && status === 'idle' && (previous === 'working' || previous === 'needs-input')) {
       info.lastModelActivityAt = info.lastActivityAt;
     }
-    if (status === 'idle' && previous === 'working' && CONVERSATION_MODES.includes(info.mode)) this.onAttention(info, 'turn-complete');
+    if (status === 'idle' && previous === 'working' && CONVERSATION_MODES.includes(info.mode)) {
+      info.completedAt = info.lastActivityAt;
+      this.archive(info);
+      this.onAttention(info, 'turn-complete');
+    }
   }
 
   private handleHook(event: HookEvent) {
@@ -1211,7 +1240,10 @@ export class AgentManager {
     const snapshot = parseStatusPayload(payload);
     session.statusLine = snapshot;
     if (snapshot.limits) this.deps.profiles.applyReportedLimits(session.profile.id, snapshot.limits);
-    if (session.info.telemetry) this.applyStatusLine(session);
+    if (session.info.telemetry) {
+      this.applyStatusLine(session);
+      this.archive(session.info);
+    }
     const original = originalStatusLine(session.profile);
     if (original) {
       const env = this.deps.profiles.envFor(session.profile, cleanEnv());
@@ -1308,6 +1340,7 @@ export class AgentManager {
         this.updateStatus(session, telemetry.taskActive ? 'working' : 'idle', telemetry.taskActive ? undefined : null);
       }
     }
+    this.archive(info);
     this.changed.add(info.id);
   }
 

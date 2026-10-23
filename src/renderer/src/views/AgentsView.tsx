@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   FolderOpen,
+  FolderPlus,
   Globe,
   History,
   MessagesSquare,
@@ -28,6 +29,8 @@ import { isPanelOpen, useApp } from '../store';
 import { compact, folderName, modelLabel, percent, shortPath, usd } from '../format';
 import { AccountChip, Empty, Meter, MiniMeter, ProviderIcon, StatusPill, confirmDialog, useFit, useTicker } from '../ui';
 import { mountTerminal, terminalBackground } from '../terminals';
+import { groupAgentsByProject, projectKey } from '../agentProjects';
+import { hasUnreadCompletion } from '../sessionUnread';
 
 export async function stopAgent(agent: AgentInfo) {
   const settings = useApp.getState().settings;
@@ -121,6 +124,7 @@ function SessionArchiveIcon({ restore = false }: { restore?: boolean }) {
 function AgentListItem({ agent, selected, onSelect, archived = false, onToggleArchived }: { agent: AgentInfo; selected: boolean; onSelect: () => void; archived?: boolean; onToggleArchived: () => void }) {
   const t = agent.telemetry;
   const browser = useApp((s) => s.browsers[agent.id]);
+  const unread = useApp((state) => hasUnreadCompletion(agent, state.readCompletions));
   const subagents = runningSubagents(agent);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(agent.title);
@@ -129,7 +133,8 @@ function AgentListItem({ agent, selected, onSelect, archived = false, onToggleAr
     if (name.trim() && name.trim() !== agent.title) await call('agents.rename', agent.id, name.trim());
   };
   return (
-    <div className={`agent-item ${selected ? 'on' : ''} ${agent.status === 'needs-input' ? 'attention' : ''}`} onClick={onSelect}>
+    <div className={`agent-item ${selected ? 'on' : ''} ${unread ? 'unread' : ''} ${agent.status === 'needs-input' ? 'attention' : ''}`} onClick={onSelect}>
+      {unread ? <span className="ai-unread" role="status" aria-label="Completed, unread" title="Completed, unread" /> : null}
       <ProviderIcon provider={agent.provider} size={24} />
       {editing ? (
         <input
@@ -167,7 +172,7 @@ function AgentListItem({ agent, selected, onSelect, archived = false, onToggleAr
         <SessionArchiveIcon restore={archived} />
       </button>
       <div className="ai-meta">
-        <StatusPill status={agent.status} />
+        <StatusPill status={agent.status} label={agent.status === 'working' && !agent.endedAt ? 'Running' : undefined} />
         {AGENT_MODES.includes(agent.mode) ? <PromptCacheBadge agent={agent} iconOnly /> : null}
         {agent.usesScreen ? <MousePointer2 size={12} color="var(--warning)" /> : null}
         {browser ? <Globe size={12} color={browser.busy ? 'var(--accent-strong)' : 'var(--text-muted)'} aria-label="Has a browser open" /> : null}
@@ -177,15 +182,61 @@ function AgentListItem({ agent, selected, onSelect, archived = false, onToggleAr
           </span>
         ) : null}
         <span className="ellipsis">{agent.mode === 'task' ? 'task' : CONVERSATION_MODES.includes(agent.mode) ? agent.profileLabel : agent.mode}</span>
-        {t?.cost.totalUsd != null ? <span style={{ marginLeft: 'auto' }} className="num">{usd(t.cost.reportedUsd ?? t.cost.totalUsd)}</span> : null}
+        {t?.cost.totalUsd != null ? <span style={{ marginLeft: 'auto' }} className="num ai-cost">{usd(t.cost.reportedUsd ?? t.cost.totalUsd)}</span> : null}
       </div>
       {t && t.contextPercent !== null && agent.mode !== 'shell' ? (
-        <div style={{ gridColumn: 2 }}>
+        <div className={agent.status === 'working' && !agent.endedAt ? 'ai-context running' : 'ai-context'} style={{ gridColumn: 2 }}>
           <MiniMeter value={t.contextPercent} title={`Context ${compact(t.contextUsedTokens)} / ${compact(t.contextWindow)}`} />
         </div>
       ) : null}
     </div>
   );
+}
+
+function ProjectSessions({ agents, selectedId, archived = false, projectFolders = [], onToggleArchived }: {
+  agents: AgentInfo[]; selectedId?: string; archived?: boolean; projectFolders?: string[]; onToggleArchived: (id: string) => void;
+}) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const openLauncher = useApp((state) => state.openLauncher);
+  const projects = groupAgentsByProject(agents, projectFolders);
+  if (!archived && !projects.some((project) => project.key === 'no-project')) {
+    projects.push({ key: 'no-project', path: '', label: 'This Computer', agents: [] });
+  }
+  return projects.map((project) => (
+    <details className="agent-project" key={project.key} open={!collapsed.has(project.key)} onToggle={(event) => {
+      const open = event.currentTarget.open;
+      setCollapsed((previous) => {
+        if (previous.has(project.key) === !open) return previous;
+        const next = new Set(previous);
+        if (open) next.delete(project.key);
+        else next.add(project.key);
+        return next;
+      });
+    }}>
+      <summary className="agent-project-heading" title={project.path || 'Standalone conversations'}>
+        <FolderOpen size={12} />
+        <span className="ellipsis">{project.label}</span>
+        <button
+          type="button"
+          className="btn ghost sm icon agent-project-add"
+          aria-label={project.path ? `New session in ${project.label}` : 'New session without a project'}
+          title={project.path ? `New session in ${project.label}` : 'New session without a project'}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            openLauncher({ cwd: project.path, projectless: !project.path, mode: 'chat' });
+          }}
+        >
+          <Plus size={14} />
+        </button>
+      </summary>
+      {project.path && !project.agents.length ? <div className="agent-project-empty">No sessions yet</div> : null}
+      {project.agents.map((agent) => (
+        <AgentListItem key={agent.id} agent={agent} archived={archived} selected={selectedId === agent.id}
+          onSelect={() => useApp.setState({ selectedAgentId: agent.id })} onToggleArchived={() => onToggleArchived(agent.id)} />
+      ))}
+    </details>
+  ));
 }
 
 function TerminalHost({ agent }: { agent: AgentInfo }) {
@@ -379,6 +430,25 @@ export function AgentsView() {
   const agents = useApp((s) => s.agents);
   const selectedId = useApp((s) => s.selectedAgentId);
   const openLauncher = useApp((s) => s.openLauncher);
+  const projectFolders = useApp((state) => state.settings?.projectFolders);
+  const [addingProject, setAddingProject] = useState(false);
+  const addProject = async () => {
+    if (addingProject) return;
+    setAddingProject(true);
+    try {
+      const folder = await call('dialog.pickDirectory');
+      if (!folder) return;
+      const previous = useApp.getState().settings?.projectFolders ?? [];
+      const next = [folder, ...previous.filter((item) => projectKey(item) !== projectKey(folder))];
+      const settings = await call('settings.update', { projectFolders: next });
+      useApp.setState({ settings });
+      setQuery('');
+    } catch (error) {
+      useApp.getState().toast('error', errorMessage(error));
+    } finally {
+      setAddingProject(false);
+    }
+  };
   const [query, setQuery] = useState('');
   const [archivedIds, setArchivedIds] = useState<string[]>(() => {
     try {
@@ -411,6 +481,7 @@ export function AgentsView() {
   }, [agents, query]);
   const live = filtered.filter((a) => !a.endedAt && !archivedIds.includes(a.id));
   const ended = filtered.filter((a) => a.endedAt && !archivedIds.includes(a.id));
+  const visible = filtered.filter((a) => !archivedIds.includes(a.id));
   const archived = filtered.filter((a) => archivedIds.includes(a.id));
   const selected = agents.find((a) => a.id === selectedId) ?? live[0] ?? null;
   const preferred = useDisplay((s) => (selected ? s[selected.id] : undefined));
@@ -424,9 +495,12 @@ export function AgentsView() {
     <div className="agents-layout" style={{ ['--agent-list-width' as string]: `${listWidth}px` }}>
       <div className="agent-list" ref={listRef}>
         <div className="agent-list-head">
-          <button className="btn primary" onClick={() => openLauncher()}>
-            <Plus size={15} /> New agent
-          </button>
+          <div className="agent-list-toolbar">
+            <span>Projects</span>
+            <button type="button" className="btn ghost sm" disabled={addingProject} onClick={addProject}>
+              <FolderPlus size={14} /> New project
+            </button>
+          </div>
           <div className="row" style={{ position: 'relative' }}>
             <Search size={14} className="muted" style={{ position: 'absolute', left: 10 }} />
             <input className="input" style={{ paddingLeft: 30, height: 30 }} placeholder="Filter agents" value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -443,32 +517,20 @@ export function AgentsView() {
               No agents yet. Start one with <span className="kbd">Ctrl</span>+<span className="kbd">N</span>.
             </div>
           ) : null}
-          {live.length ? (
-            <div className="agent-group">
-              <span>Running</span>
-              <span>{live.length}</span>
-            </div>
-          ) : null}
-          {live.map((a) => (
-            <AgentListItem key={a.id} agent={a} selected={selected?.id === a.id} onSelect={() => useApp.setState({ selectedAgentId: a.id })} onToggleArchived={() => toggleArchived(a.id)} />
-          ))}
           {ended.length ? (
-            <div className="agent-group">
-              <span>Recent</span>
+            <div className="agent-list-actions">
               <button className="btn ghost sm" style={{ height: 18, fontSize: 11 }} onClick={() => call('agents.clearFinished')}>
-                Clear
+                Clear finished
               </button>
             </div>
           ) : null}
-          {ended.slice(0, 40).map((a) => (
-            <AgentListItem key={a.id} agent={a} selected={selected?.id === a.id} onSelect={() => useApp.setState({ selectedAgentId: a.id })} onToggleArchived={() => toggleArchived(a.id)} />
-          ))}
+          <ProjectSessions agents={visible} selectedId={selected?.id}
+            projectFolders={(projectFolders ?? []).filter((folder) => !query.trim() || folder.toLowerCase().includes(query.trim().toLowerCase()))}
+            onToggleArchived={toggleArchived} />
           {archived.length ? (
             <details className="archived-agents">
               <summary>Archived ({archived.length})</summary>
-              {archived.map((a) => (
-                <AgentListItem key={a.id} agent={a} archived selected={selected?.id === a.id} onSelect={() => useApp.setState({ selectedAgentId: a.id })} onToggleArchived={() => toggleArchived(a.id)} />
-              ))}
+              <ProjectSessions agents={archived} archived selectedId={selected?.id} onToggleArchived={toggleArchived} />
             </details>
           ) : null}
         </div>

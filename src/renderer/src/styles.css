@@ -1614,6 +1614,19 @@ table.table {
   padding: 0 8px 14px;
   flex: 1;
 }
+.agent-list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.agent-project-empty {
+  margin: 6px 10px 10px 34px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
 .agent-group {
   margin: 12px 6px 6px;
   font-size: 11px;
@@ -1632,6 +1645,77 @@ table.table {
   cursor: pointer;
   border: 1px solid transparent;
   position: relative;
+}
+.agent-project + .agent-project {
+  margin-top: 10px;
+}
+.agent-project-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 10px 3px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px 0;
+  list-style: none;
+}
+.agent-project-heading::-webkit-details-marker {
+  display: none;
+}
+.agent-project-add {
+  margin-left: auto;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+}
+.agent-project-heading::before {
+  content: '›';
+  transform: rotate(0deg);
+  font-size: 15px;
+}
+.agent-project[open] > .agent-project-heading::before {
+  transform: rotate(90deg);
+}
+.agent-list-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 6px;
+}
+.agent-item .ai-cost {
+  opacity: 0;
+}
+.agent-item .ai-unread {
+  position: absolute;
+  top: 17px;
+  right: 38px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.agent-item.unread .ai-title {
+  padding-right: 48px;
+}
+.agent-item:hover .ai-cost,
+.agent-item:focus-within .ai-cost {
+  opacity: 1;
+}
+.ai-context.running .meter-track {
+  animation: running-context-glow 2s ease-in-out infinite;
+}
+@keyframes running-context-glow {
+  0%, 100% { box-shadow: 0 0 4px color-mix(in srgb, var(--meter-color, var(--accent)) 30%, transparent); }
+  50% { box-shadow: 0 0 9px color-mix(in srgb, var(--meter-color, var(--accent)) 65%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-context.running .meter-track {
+    animation: none;
+    box-shadow: 0 0 5px color-mix(in srgb, var(--meter-color, var(--accent)) 40%, transparent);
+  }
 }
 .agent-item:hover {
   background: var(--surface-1);
