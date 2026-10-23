@@ -1704,17 +1704,24 @@ table.table {
 .agent-item:focus-within .ai-cost {
   opacity: 1;
 }
-.ai-context.running .meter-track {
-  animation: running-context-glow 2s ease-in-out infinite;
+.ai-context.running .meter-track::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--meter-color, var(--accent)), transparent);
+  opacity: 0.27;
+  transform: translateX(-100%);
+  animation: running-context-sweep 2.8s ease-in-out infinite;
 }
-@keyframes running-context-glow {
-  0%, 100% { box-shadow: 0 0 4px color-mix(in srgb, var(--meter-color, var(--accent)) 30%, transparent); }
-  50% { box-shadow: 0 0 9px color-mix(in srgb, var(--meter-color, var(--accent)) 65%, transparent); }
+@keyframes running-context-sweep {
+  0%, 12% { transform: translateX(-100%); }
+  85%, 100% { transform: translateX(100%); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .ai-context.running .meter-track {
+  .ai-context.running .meter-track::after {
+    display: none;
     animation: none;
-    box-shadow: 0 0 5px color-mix(in srgb, var(--meter-color, var(--accent)) 40%, transparent);
   }
 }
 .agent-item:hover {
