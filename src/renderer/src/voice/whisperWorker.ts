@@ -48,8 +48,23 @@ async function create(modelId: string, device: 'webgpu' | 'wasm') {
   const options: any = { device, progress_callback: onProgress };
   options.dtype = device === 'webgpu' ? { encoder_model: model.gpu[0], decoder_model_merged: model.gpu[1] } : 'q8';
   const run = await pipeline('automatic-speech-recognition', model.id, options);
-  if (device === 'webgpu') await run(new Float32Array(16000), { task: 'transcribe' }); // compile the shaders now, not on the first recording
+  if (device === 'webgpu') {
+    // Compile the shaders now, not on the first recording. A GPU that stalls here must not block setup forever.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const stalled = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('WebGPU warm-up timed out')), WARMUP_TIMEOUT_MS); });
+    try { await Promise.race([run(new Float32Array(16000), { task: 'transcribe' }), stalled]); } finally { clearTimeout(timer); }
+  }
   return run;
+}
+
+const WARMUP_TIMEOUT_MS = 60_000;
+
+/** Real hardware only: software adapters (remote desktops, servers) are slower than the CPU path and can stall. */
+async function hasGpu(): Promise<boolean> {
+  try {
+    const adapter = await (self as any).navigator?.gpu?.requestAdapter();
+    return !!adapter && !adapter.isFallbackAdapter;
+  } catch { return false; }
 }
 
 // One model is held at a time; choosing another in Settings replaces it.
@@ -60,7 +75,7 @@ const load = (model: string) => {
   current = model;
   const run = (async () => {
     let loaded: any;
-    if ((self as any).navigator?.gpu) {
+    if (await hasGpu()) {
       try { loaded = await create(model, 'webgpu'); } catch { files.clear(); }
     }
     loaded ??= await create(model, 'wasm');

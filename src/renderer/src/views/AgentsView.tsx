@@ -289,7 +289,7 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
           </div>
         )}
         <div className="meta" ref={meta}>
-          <StatusPill status={agent.status} detail={agent.statusDetail} />
+          <StatusPill status={agent.status} detail={agent.statusDetail} label={agent.status === 'working' ? 'Running' : undefined} />
           <span data-fit="2">
             <AccountChip label={agent.profileLabel} color={agent.profileColor} />
           </span>

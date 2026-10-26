@@ -151,6 +151,7 @@ const agents = new AgentManager({
   settings,
   userDataDir: userData,
   appVersion: app.getVersion(),
+  openExternal: (url) => shell.openExternal(url),
   browserArgs: (agentId, provider) => {
     const s = settings();
     if (!s.browserEnabled || !browserMcp.running) return [];

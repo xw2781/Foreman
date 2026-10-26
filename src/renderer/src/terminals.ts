@@ -5,6 +5,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import type { Provider } from '@shared/types';
 import { call, listen, resizeAgent, writeToAgent } from './api';
+import { wrappedLinkProvider } from './terminalLinks';
 
 /**
  * One xterm per agent, created on first view and kept alive (detached from
@@ -161,6 +162,9 @@ function create(id: string, provider: Provider | null): Entry {
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
+  term.registerLinkProvider(wrappedLinkProvider(
+    () => term.buffer.active, () => term.cols, (url) => call('shell.openExternal', url)
+  ));
   term.loadAddon(new WebLinksAddon((_event, url) => call('shell.openExternal', url)));
   const element = document.createElement('div');
   element.className = 'term-mount';

@@ -40,6 +40,7 @@ import { promptTitle } from './telemetry/jsonl';
 import { JsonStore, cleanEnv, exists } from './util';
 import { SubagentTracker, settleSubagents } from './subagents';
 import { savedSession } from './savedSession';
+import { claudeLoginUrl } from './loginUrl';
 import { defaultStatusText, originalStatusLine, parseStatusPayload, runStatusCommand, type StatusSnapshot } from './statusLine';
 
 const BUFFER_LIMIT = 2_500_000;
@@ -57,6 +58,7 @@ const APPROVAL_PATTERNS = [
 ];
 
 interface Session {
+  loginBrowserOpened?: boolean;
   info: AgentInfo;
   options: LaunchOptions;
   profile: Profile;
@@ -97,6 +99,7 @@ interface Session {
 }
 
 export interface AgentManagerDeps {
+  openExternal?: (url: string) => Promise<void>;
   profiles: ProfileService;
   telemetry: TelemetryClient;
   hooks: HookServer;
@@ -866,6 +869,16 @@ export class AgentManager {
     if (info.mode === 'interactive' || info.mode === 'login') {
       const plain = data.replace(ANSI, '');
       session.tail = (session.tail + plain).slice(-TAIL_LIMIT);
+      if (info.mode === 'login' && info.provider === 'claude' && !session.loginBrowserOpened && this.deps.openExternal) {
+        // Parse accumulated raw output so ANSI sequences split across chunks survive.
+        const url = claudeLoginUrl(session.chunks.join('').slice(-16_000));
+        if (url) {
+          session.loginBrowserOpened = true;
+          void this.deps.openExternal(url).catch(() => {
+            this.appendOutput(session, '\r\nCould not open the default browser. Click the sign-in link above.\r\n');
+          });
+        }
+      }
       if (!session.needsInput) {
         const compact = session.tail.slice(-2500).replace(/\s+/g, '');
         if (APPROVAL_PATTERNS.some((pattern) => pattern.test(compact))) {
