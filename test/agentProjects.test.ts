@@ -5,6 +5,19 @@ import { groupAgentsByProject, projectKey } from '../src/renderer/src/agentProje
 const agent = (id: string, cwd: string, projectless = false) => ({ id, cwd, projectless } as AgentInfo);
 
 describe('session project groups', () => {
+  it('hides removed projects even when existing sessions would recreate them', () => {
+    const sessions = [agent('a', 'c:/repos/app/'), agent('b', 'C:/Repos/Other'), agent('c', 'C:/Repos/App', true)];
+    const groups = groupAgentsByProject(sessions, ['C:/Repos/App', 'C:/Repos/Empty'], ['C:\\Repos\\App', 'c:/repos/empty/']);
+    expect(groups.map((group) => [group.label, group.agents.map((item) => item.id)])).toEqual([
+      ['Other', ['b']], ['This Computer', ['c']]
+    ]);
+    expect(sessions.map((item) => item.id)).toEqual(['a', 'b', 'c']);
+  });
+  it('restores a project with its existing sessions after it is added again', () => {
+    const sessions = [agent('a', 'C:/Repos/App')];
+    expect(groupAgentsByProject(sessions, [], ['c:/repos/app/'])).toEqual([]);
+    expect(groupAgentsByProject(sessions, ['C:/Repos/App'], []).map((group) => group.agents.map((item) => item.id))).toEqual([['a']]);
+  });
   it('keeps added projects visible before they have sessions and merges matching folders', () => {
     const groups = groupAgentsByProject([agent('a', 'c:/repos/foreman/')], [
       'C:\\Repos\\NewApp', 'C:\\Repos\\Foreman', 'c:/repos/newapp/'

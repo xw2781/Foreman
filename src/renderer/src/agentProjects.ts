@@ -8,14 +8,16 @@ export function projectKey(folder: string): string {
 }
 
 /** Retain explicitly added projects even before their first session, then group sessions in recency order. */
-export function groupAgentsByProject(agents: AgentInfo[], projectFolders: string[] = []) {
+export function groupAgentsByProject(agents: AgentInfo[], projectFolders: string[] = [], hiddenProjectFolders: string[] = []) {
+  const hidden = new Set(hiddenProjectFolders.map(projectKey));
   const groups = new Map<string, { key: string; path: string; label: string; agents: AgentInfo[] }>();
   for (const folder of projectFolders) {
     const key = projectKey(folder);
-    if (key !== 'no-project' && !groups.has(key)) groups.set(key, { key, path: folder, label: folderName(folder), agents: [] });
+    if (key !== 'no-project' && !hidden.has(key) && !groups.has(key)) groups.set(key, { key, path: folder, label: folderName(folder), agents: [] });
   }
   for (const agent of agents) {
     const key = agent.projectless ? 'no-project' : projectKey(agent.cwd);
+    if (key !== 'no-project' && hidden.has(key)) continue;
     if (!groups.has(key)) groups.set(key, {
       key, path: key === 'no-project' ? '' : agent.cwd,
       label: key === 'no-project' ? 'This Computer' : folderName(agent.cwd), agents: []

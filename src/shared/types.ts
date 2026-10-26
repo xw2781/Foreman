@@ -283,6 +283,8 @@ export interface SubagentInfo {
   status: SubagentStatus;
   /** Runs on while its parent carries on (Claude's run_in_background; every Codex child). */
   background: boolean;
+  /** A background command (Claude's Bash, PowerShell or Monitor), not a subagent: `kind` is the tool, `prompt` the command. */
+  shell?: boolean;
   startedAt: string;
   endedAt: string | null;
   /** What it's doing now, while running. */
@@ -613,6 +615,8 @@ export interface AppSettings {
   recentCwds: string[];
   /** Project folders added to the session panel, including projects without sessions yet. */
   projectFolders?: string[];
+  /** Projects removed from the panel, including folders inferred from existing sessions. */
+  hiddenProjectFolders?: string[];
   theme: 'dark' | 'light' | 'system';
   /** Which palette "light" means (also used by "system" when the OS is light). */
   lightPalette: LightPalette;

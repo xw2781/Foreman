@@ -93,7 +93,7 @@ function useBootstrap() {
         const known = new Map(store().agents.map((a) => [a.id, new Set((a.subagents ?? []).map((n) => n.id))]));
         for (const agent of agents) {
           const before = known.get(agent.id);
-          if (before && agent.subagents?.some((n) => n.status === 'running' && !before.has(n.id))) store().showPanel(agent.id, 'subagents');
+          if (before && agent.subagents?.some((n) => n.status === 'running' && !n.shell && !before.has(n.id))) store().showPanel(agent.id, 'subagents');
         }
         for (const old of store().agents) {
           const run = runs.get(old.id);

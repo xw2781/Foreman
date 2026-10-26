@@ -15,11 +15,17 @@ Nothing is sent anywhere: the app reads local session files and talks to the CLI
 
 ## Install
 
-```powershell
-npm run dist          # builds dist\Foreman-Setup-<version>.exe
-```
+1. Open the [latest GitHub release](https://github.com/xw2781/Foreman/releases/latest) and download **Foreman-Setup-<version>.exe** under **Assets**.
+2. Run the installer, choose an installation folder if desired, and launch **Foreman** from the Start menu or desktop shortcut. Installation is per-user and does not need administrator rights.
+3. Open **Settings → Command-line tools → Install for Foreman** to install Claude Code and Codex, then sign in to your accounts.
 
-Run the installer (per-user, no admin rights). The app finds the CLIs automatically — on `PATH`, the native Claude installer, the VS Code extensions, the Codex desktop app, or npm — and Settings lets you point at a specific one.
+Requires **Windows 10 or 11, x64**. Node.js, npm, Git, and VS Code are not required. Internet access and an appropriate Claude or OpenAI account are needed to download and use the command-line tools. macOS, Linux, and native Windows ARM64 installers are not currently provided.
+
+The installer is currently unsigned, so Windows may show a publisher or SmartScreen prompt. Verify that the download came from this repository's release before proceeding. Each release includes `SHA256SUMS.txt` to check the downloaded installer with PowerShell's `Get-FileHash`.
+
+The app finds existing CLIs automatically — on `PATH`, the native Claude installer, the VS Code extensions, the Codex desktop app, or npm — and Settings lets you point at a specific one. Installed copies check GitHub releases for updates; **Settings** shows update status. To uninstall, use **Windows Settings → Apps → Installed apps → Foreman**.
+
+To build the installer from source, follow the development setup below and run `npm run dist`. The output is `dist\Foreman-Setup-<version>.exe`.
 
 ## Accounts and switching
 

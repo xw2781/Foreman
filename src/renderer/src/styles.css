@@ -1614,12 +1614,12 @@ table.table {
   padding: 0 8px 14px;
   flex: 1;
 }
-.agent-list-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--text-secondary);
+.btn.agent-new-project {
+  width: calc(100% - 8px);
+  margin: 8px 4px 0;
+  justify-content: center;
+  border-color: var(--border-strong);
+  padding: 0 10px;
   font-size: 12px;
 }
 .agent-project-empty {
@@ -1670,6 +1670,27 @@ table.table {
   flex-shrink: 0;
   width: 22px;
   height: 22px;
+  opacity: 0;
+}
+.agent-project-menu {
+  flex-shrink: 0;
+  opacity: 0;
+}
+.agent-project-heading:hover .agent-project-add,
+.agent-project-heading:focus-within .agent-project-add,
+.agent-project-heading:hover .agent-project-menu,
+.agent-project-heading:focus-within .agent-project-menu,
+.agent-project-menu[aria-expanded='true'] {
+  opacity: 1;
+}
+.agent-project-popover {
+  position: fixed;
+  width: 200px;
+  z-index: 200;
+}
+.agent-project-popover .pop-item:focus-visible {
+  outline: 1px solid var(--accent);
+  background: var(--surface-2);
 }
 .agent-project-heading::before {
   content: '›';
@@ -1678,11 +1699,6 @@ table.table {
 }
 .agent-project[open] > .agent-project-heading::before {
   transform: rotate(90deg);
-}
-.agent-list-actions {
-  display: flex;
-  justify-content: flex-end;
-  padding: 4px 6px;
 }
 .agent-item .ai-cost {
   opacity: 0;

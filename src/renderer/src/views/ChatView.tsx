@@ -925,8 +925,24 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.35))}px`;
+    const resize = () => {
+      const style = window.getComputedStyle(el);
+      const maxHeight = Math.ceil(parseFloat(style.lineHeight) * 3 + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom));
+      el.style.overflowY = 'hidden';
+      el.style.height = 'auto';
+      const height = el.scrollHeight;
+      el.style.height = `${Math.min(height, maxHeight)}px`;
+      el.style.overflowY = height > maxHeight ? 'auto' : 'hidden';
+    };
+    resize();
+    let width = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      resize();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [text, fontSize]);
 
   const update = (value: string) => {

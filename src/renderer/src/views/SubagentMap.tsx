@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, Network } from 'lucide-react';
+import { ChevronDown, ChevronRight, Network, SquareTerminal } from 'lucide-react';
 import type { AgentInfo, SubagentInfo, SubagentStatus } from '@shared/types';
-import { runningSubagents, subagentTree, type SubagentBranch as Branch } from '@shared/subagents';
+import { describeSubagents, runningSubagents, subagentTree, type SubagentBranch as Branch } from '@shared/subagents';
 import { isPanelOpen, useApp } from '../store';
 import { compact, duration, elapsed, modelLabel } from '../format';
-import { ProviderIcon, StatusPill, Switch, useTicker } from '../ui';
+import { AgentStatusPill, ProviderIcon, Switch, useTicker } from '../ui';
 
 /** Subagent statuses drawn with the agent status dots. */
 const DOT: Record<SubagentStatus, string> = { running: 'working', done: 'done', failed: 'failed', stopped: 'stopped' };
@@ -20,7 +20,9 @@ export function SubagentPill({ agent }: { agent: AgentInfo }) {
   const total = agent.subagents?.length ?? 0;
   if (!total) return null;
   const running = runningSubagents(agent);
-  const tooltip = `${running ? `${plural(running, 'subagent')} running, ` : ''}${total} in this conversation. ${open ? 'Hide' : 'Show'} the subagent map.`;
+  const shells = agent.subagents!.filter((n) => n.shell).length;
+  const noun = shells === total ? 'command' : shells ? 'task' : 'subagent';
+  const tooltip = `${running ? `${describeSubagents(agent)} running. ` : ''}${describeSubagents(agent, false)} in this conversation. ${open ? 'Hide' : 'Show'} the subagent map.`;
   return (
     <button
       type="button"
@@ -32,7 +34,7 @@ export function SubagentPill({ agent }: { agent: AgentInfo }) {
       onClick={() => useApp.getState().togglePanel(agent.id, 'subagents')}
     >
       <Network size={12} aria-hidden="true" />
-      <span>{running ? `${running} active` : plural(total, 'subagent')}</span>
+      <span>{running ? `${running} active` : plural(total, noun)}</span>
     </button>
   );
 }
@@ -62,7 +64,7 @@ export function SubagentMapPane({ agent }: { agent: AgentInfo }) {
   return (
     <div className="sp-pane subagent-pane">
       <div className="sp-bar">
-        <span className="sp-bar-text">{running ? `${running} running · ${nodes.length} total` : plural(nodes.length, 'subagent')}</span>
+        <span className="sp-bar-text">{running ? `${running} running · ${nodes.length} total` : describeSubagents(agent, false) || plural(0, 'subagent')}</span>
         <label className="subagent-pane-switch" title="Show subagents that have finished">
           <Switch on={finished} onChange={toggleFinished} />
           <span className="secondary">Finished</span>
@@ -112,7 +114,7 @@ function AgentTree({ agent, showFinished }: { agent: AgentInfo; showFinished: bo
             <ProviderIcon provider={agent.provider} size={18} />
             <span className="map-agent-title">{agent.title}</span>
           </div>
-          <StatusPill status={agent.status} detail={agent.statusDetail} />
+          <AgentStatusPill agent={agent} />
         </div>
         {tree.length ? <Children branches={tree} /> : null}
       </div>
@@ -152,11 +154,12 @@ function SubagentCard({ node }: { node: SubagentInfo }) {
   ].filter(Boolean);
   return (
     <div className={`map-card sub ${node.status}`}>
-      <button className="map-card-toggle" onClick={() => setOpen(!open)} aria-expanded={open} title={open ? 'Hide the prompt and result' : 'Show the prompt and result'}>
+      <button className="map-card-toggle" onClick={() => setOpen(!open)} aria-expanded={open} title={`${open ? 'Hide' : 'Show'} the ${node.shell ? 'command' : 'prompt'} and result`}>
         <span className="map-card-head">
           <span className={`status ${DOT[node.status]}`} title={LABEL[node.status]}>
             <span className="dot" />
           </span>
+          {node.shell ? <SquareTerminal size={13} className="muted" aria-label="Background command" /> : null}
           <span className="map-kind">{node.kind}</span>
           <span className="map-time num">{time}</span>
           {open ? <ChevronDown size={14} className="muted" /> : <ChevronRight size={14} className="muted" />}
@@ -169,7 +172,7 @@ function SubagentCard({ node }: { node: SubagentInfo }) {
         <div className="map-card-more">
           {node.prompt ? (
             <>
-              <div className="map-more-label">Prompt</div>
+              <div className="map-more-label">{node.shell ? 'Command' : 'Prompt'}</div>
               <pre className="map-more-text">{node.prompt}</pre>
             </>
           ) : null}

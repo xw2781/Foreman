@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
   FolderOpen,
-  FolderPlus,
   Globe,
   History,
   MessagesSquare,
+  MoreHorizontal,
   MousePointer2,
   Network,
   PanelRightClose,
@@ -23,11 +24,11 @@ import { AGENT_MODES, CONVERSATION_MODES, LIVE_STATUSES, type AgentInfo, type Ag
 import { ChatView } from './ChatView';
 import { PromptCacheBadge } from '../PromptCacheBadge';
 import { SidePanel, usePanelTab } from './SidePanel';
-import { runningSubagents } from '@shared/subagents';
+import { describeSubagents, runningSubagents } from '@shared/subagents';
 import { call, errorMessage } from '../api';
 import { isPanelOpen, useApp } from '../store';
 import { compact, folderName, modelLabel, percent, shortPath, usd } from '../format';
-import { AccountChip, Empty, Meter, MiniMeter, ProviderIcon, StatusPill, confirmDialog, useFit, useTicker } from '../ui';
+import { AccountChip, AgentStatusPill, Empty, Meter, MiniMeter, ProviderIcon, confirmDialog, useFit, useTicker } from '../ui';
 import { mountTerminal, terminalBackground } from '../terminals';
 import { groupAgentsByProject, projectKey } from '../agentProjects';
 import { hasUnreadCompletion } from '../sessionUnread';
@@ -172,12 +173,12 @@ function AgentListItem({ agent, selected, onSelect, archived = false, onToggleAr
         <SessionArchiveIcon restore={archived} />
       </button>
       <div className="ai-meta">
-        <StatusPill status={agent.status} label={agent.status === 'working' && !agent.endedAt ? 'Running' : undefined} />
+        <AgentStatusPill agent={agent} detail={false} label={agent.status === 'working' && !agent.endedAt ? 'Running' : undefined} />
         {AGENT_MODES.includes(agent.mode) ? <PromptCacheBadge agent={agent} iconOnly /> : null}
         {agent.usesScreen ? <MousePointer2 size={12} color="var(--warning)" /> : null}
         {browser ? <Globe size={12} color={browser.busy ? 'var(--accent-strong)' : 'var(--text-muted)'} aria-label="Has a browser open" /> : null}
         {subagents ? (
-          <span className="ai-subagents" title={`${subagents} subagent${subagents === 1 ? '' : 's'} running`}>
+          <span className="ai-subagents" title={`${describeSubagents(agent)} running`}>
             <Network size={12} /> {subagents}
           </span>
         ) : null}
@@ -193,49 +194,111 @@ function AgentListItem({ agent, selected, onSelect, archived = false, onToggleAr
   );
 }
 
-function ProjectSessions({ agents, selectedId, archived = false, projectFolders = [], onToggleArchived }: {
+function ProjectMenu({ path, label, onRemove }: { path: string; label: string; onRemove: (path: string) => void }) {
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!position) return;
+    menu.current?.querySelector('button')?.focus();
+    const outside = (event: PointerEvent) => {
+      if (!menu.current?.contains(event.target as Node) && !trigger.current?.contains(event.target as Node)) setPosition(null);
+    };
+    const close = () => setPosition(null);
+    window.addEventListener('pointerdown', outside, true);
+    window.addEventListener('resize', close);
+    window.addEventListener('scroll', close, true);
+    return () => {
+      window.removeEventListener('pointerdown', outside, true);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', close, true);
+    };
+  }, [position]);
+  return (
+    <>
+      <button ref={trigger} type="button" className="btn ghost sm icon agent-project-menu"
+        aria-label={`Project options for ${label}`} title="Project options" aria-haspopup="menu" aria-expanded={!!position}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const rect = event.currentTarget.getBoundingClientRect();
+          setPosition(position ? null : { top: Math.min(rect.bottom + 4, window.innerHeight - 64), left: Math.max(8, rect.right - 200) });
+        }}>
+        <MoreHorizontal size={14} />
+      </button>
+      {position ? createPortal(
+        <div ref={menu} className="popover agent-project-popover" role="menu" aria-label={`Options for ${label}`} style={position}
+          onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' || event.key === 'Tab') {
+              event.preventDefault();
+              event.stopPropagation();
+              setPosition(null);
+              trigger.current?.focus();
+            }
+          }}>
+          <button type="button" className="pop-item" role="menuitem" onClick={() => { setPosition(null); onRemove(path); }}>
+            <Trash2 size={14} /><span>Remove project</span>
+          </button>
+        </div>, document.body
+      ) : null}
+    </>
+  );
+}
+
+function ProjectSessions({ agents, selectedId, archived = false, projectFolders = [], hiddenProjectFolders = [], onToggleArchived, onAddProject, onRemoveProject, addingProject = false }: {
   agents: AgentInfo[]; selectedId?: string; archived?: boolean; projectFolders?: string[]; onToggleArchived: (id: string) => void;
+  onAddProject?: () => void; addingProject?: boolean;
+  hiddenProjectFolders?: string[]; onRemoveProject?: (path: string) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const openLauncher = useApp((state) => state.openLauncher);
-  const projects = groupAgentsByProject(agents, projectFolders);
+  const projects = groupAgentsByProject(agents, projectFolders, hiddenProjectFolders);
   if (!archived && !projects.some((project) => project.key === 'no-project')) {
     projects.push({ key: 'no-project', path: '', label: 'This Computer', agents: [] });
   }
   return projects.map((project) => (
-    <details className="agent-project" key={project.key} open={!collapsed.has(project.key)} onToggle={(event) => {
-      const open = event.currentTarget.open;
-      setCollapsed((previous) => {
-        if (previous.has(project.key) === !open) return previous;
-        const next = new Set(previous);
-        if (open) next.delete(project.key);
-        else next.add(project.key);
-        return next;
-      });
-    }}>
-      <summary className="agent-project-heading" title={project.path || 'Standalone conversations'}>
-        <FolderOpen size={12} />
-        <span className="ellipsis">{project.label}</span>
-        <button
-          type="button"
-          className="btn ghost sm icon agent-project-add"
-          aria-label={project.path ? `New session in ${project.label}` : 'New session without a project'}
-          title={project.path ? `New session in ${project.label}` : 'New session without a project'}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            openLauncher({ cwd: project.path, projectless: !project.path, mode: 'chat' });
-          }}
-        >
-          <Plus size={14} />
+    <Fragment key={project.key}>
+      {project.key === 'no-project' && onAddProject ? (
+        <button type="button" className="btn ghost agent-new-project" disabled={addingProject} onClick={onAddProject}>
+          <Plus size={14} /> New project
         </button>
-      </summary>
-      {project.path && !project.agents.length ? <div className="agent-project-empty">No sessions yet</div> : null}
-      {project.agents.map((agent) => (
-        <AgentListItem key={agent.id} agent={agent} archived={archived} selected={selectedId === agent.id}
-          onSelect={() => useApp.setState({ selectedAgentId: agent.id })} onToggleArchived={() => onToggleArchived(agent.id)} />
-      ))}
-    </details>
+      ) : null}
+      <details className="agent-project" open={!collapsed.has(project.key)} onToggle={(event) => {
+        const open = event.currentTarget.open;
+        setCollapsed((previous) => {
+          if (previous.has(project.key) === !open) return previous;
+          const next = new Set(previous);
+          if (open) next.delete(project.key);
+          else next.add(project.key);
+          return next;
+        });
+      }}>
+        <summary className="agent-project-heading" title={project.path || 'Standalone conversations'}>
+          <FolderOpen size={12} />
+          <span className="ellipsis">{project.label}</span>
+          <button
+            type="button"
+            className="btn ghost sm icon agent-project-add"
+            aria-label={project.path ? `New session in ${project.label}` : 'New session without a project'}
+            title={project.path ? `New session in ${project.label}` : 'New session without a project'}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              openLauncher({ cwd: project.path, projectless: !project.path, mode: 'chat' });
+            }}
+          >
+            <Plus size={14} />
+          </button>
+          {project.path && onRemoveProject ? <ProjectMenu path={project.path} label={project.label} onRemove={onRemoveProject} /> : null}
+        </summary>
+        {project.path && !project.agents.length ? <div className="agent-project-empty">No sessions yet</div> : null}
+        {project.agents.map((agent) => (
+          <AgentListItem key={agent.id} agent={agent} archived={archived} selected={selectedId === agent.id}
+            onSelect={() => useApp.setState({ selectedAgentId: agent.id })} onToggleArchived={() => onToggleArchived(agent.id)} />
+        ))}
+      </details>
+    </Fragment>
   ));
 }
 
@@ -289,7 +352,7 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
           </div>
         )}
         <div className="meta" ref={meta}>
-          <StatusPill status={agent.status} detail={agent.statusDetail} label={agent.status === 'working' ? 'Running' : undefined} />
+          <AgentStatusPill agent={agent} label={agent.status === 'working' ? 'Running' : undefined} />
           <span data-fit="2">
             <AccountChip label={agent.profileLabel} color={agent.profileColor} />
           </span>
@@ -431,6 +494,7 @@ export function AgentsView() {
   const selectedId = useApp((s) => s.selectedAgentId);
   const openLauncher = useApp((s) => s.openLauncher);
   const projectFolders = useApp((state) => state.settings?.projectFolders);
+  const hiddenProjectFolders = useApp((state) => state.settings?.hiddenProjectFolders);
   const [addingProject, setAddingProject] = useState(false);
   const addProject = async () => {
     if (addingProject) return;
@@ -440,13 +504,32 @@ export function AgentsView() {
       if (!folder) return;
       const previous = useApp.getState().settings?.projectFolders ?? [];
       const next = [folder, ...previous.filter((item) => projectKey(item) !== projectKey(folder))];
-      const settings = await call('settings.update', { projectFolders: next });
+      const hidden = useApp.getState().settings?.hiddenProjectFolders ?? [];
+      const settings = await call('settings.update', {
+        projectFolders: next,
+        hiddenProjectFolders: hidden.filter((item) => projectKey(item) !== projectKey(folder))
+      });
       useApp.setState({ settings });
       setQuery('');
     } catch (error) {
       useApp.getState().toast('error', errorMessage(error));
     } finally {
       setAddingProject(false);
+    }
+  };
+  const removeProject = async (folder: string) => {
+    try {
+      const current = useApp.getState();
+      const key = projectKey(folder);
+      const hidden = current.settings?.hiddenProjectFolders ?? [];
+      const settings = await call('settings.update', {
+        projectFolders: (current.settings?.projectFolders ?? []).filter((item) => projectKey(item) !== key),
+        hiddenProjectFolders: [...hidden.filter((item) => projectKey(item) !== key), folder]
+      });
+      const selected = useApp.getState().agents.find((agent) => agent.id === useApp.getState().selectedAgentId);
+      useApp.setState({ settings, ...(selected && !selected.projectless && projectKey(selected.cwd) === key ? { selectedAgentId: null } : {}) });
+    } catch (error) {
+      useApp.getState().toast('error', errorMessage(error));
     }
   };
   const [query, setQuery] = useState('');
@@ -477,10 +560,10 @@ export function AgentsView() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return agents.filter((a) => !q || `${a.title} ${a.cwd} ${a.profileLabel} ${a.model ?? ''}`.toLowerCase().includes(q));
-  }, [agents, query]);
+    const hidden = new Set((hiddenProjectFolders ?? []).map(projectKey));
+    return agents.filter((a) => (a.projectless || !hidden.has(projectKey(a.cwd))) && (!q || `${a.title} ${a.cwd} ${a.profileLabel} ${a.model ?? ''}`.toLowerCase().includes(q)));
+  }, [agents, query, hiddenProjectFolders]);
   const live = filtered.filter((a) => !a.endedAt && !archivedIds.includes(a.id));
-  const ended = filtered.filter((a) => a.endedAt && !archivedIds.includes(a.id));
   const visible = filtered.filter((a) => !archivedIds.includes(a.id));
   const archived = filtered.filter((a) => archivedIds.includes(a.id));
   const selected = agents.find((a) => a.id === selectedId) ?? live[0] ?? null;
@@ -495,12 +578,6 @@ export function AgentsView() {
     <div className="agents-layout" style={{ ['--agent-list-width' as string]: `${listWidth}px` }}>
       <div className="agent-list" ref={listRef}>
         <div className="agent-list-head">
-          <div className="agent-list-toolbar">
-            <span>Projects</span>
-            <button type="button" className="btn ghost sm" disabled={addingProject} onClick={addProject}>
-              <FolderPlus size={14} /> New project
-            </button>
-          </div>
           <div className="row" style={{ position: 'relative' }}>
             <Search size={14} className="muted" style={{ position: 'absolute', left: 10 }} />
             <input className="input" style={{ paddingLeft: 30, height: 30 }} placeholder="Filter agents" value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -517,20 +594,15 @@ export function AgentsView() {
               No agents yet. Start one with <span className="kbd">Ctrl</span>+<span className="kbd">N</span>.
             </div>
           ) : null}
-          {ended.length ? (
-            <div className="agent-list-actions">
-              <button className="btn ghost sm" style={{ height: 18, fontSize: 11 }} onClick={() => call('agents.clearFinished')}>
-                Clear finished
-              </button>
-            </div>
-          ) : null}
           <ProjectSessions agents={visible} selectedId={selected?.id}
             projectFolders={(projectFolders ?? []).filter((folder) => !query.trim() || folder.toLowerCase().includes(query.trim().toLowerCase()))}
-            onToggleArchived={toggleArchived} />
+            hiddenProjectFolders={hiddenProjectFolders} onRemoveProject={removeProject}
+            onToggleArchived={toggleArchived} onAddProject={addProject} addingProject={addingProject} />
           {archived.length ? (
             <details className="archived-agents">
               <summary>Archived ({archived.length})</summary>
-              <ProjectSessions agents={archived} archived selectedId={selected?.id} onToggleArchived={toggleArchived} />
+              <ProjectSessions agents={archived} archived selectedId={selected?.id} hiddenProjectFolders={hiddenProjectFolders}
+                onRemoveProject={removeProject} onToggleArchived={toggleArchived} />
             </details>
           ) : null}
         </div>

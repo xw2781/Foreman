@@ -1,7 +1,7 @@
 // The subagents an agent has started, for the agent map. Three sources feed
 // it: Claude Code's stream-json (chat mode: `Task`/`Agent` tool calls, the
 // subagent's own messages tagged with `parent_tool_use_id`, and the
-// `task_*` system events of background agents), Claude Code's hooks
+// `task_*` system events of background agents and commands), Claude Code's hooks
 // (terminal and task modes: the same tool calls, with less detail), and
 // Codex's app-server (`collabAgentToolCall` items and the child threads'
 // notifications). Pure apart from the clock: tested on its own.
@@ -12,6 +12,10 @@ import { clipText } from './chat/log';
 
 /** Claude Code's tools that start a subagent (renamed from Task to Agent in 2.x). */
 const AGENT_TOOLS = new Set(['Task', 'Agent']);
+/** Claude Code's tools whose command can go on in the background: their result then carries a `backgroundTaskId`. */
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell', 'Monitor']);
+/** Shell calls remembered until their result says whether they went to the background. */
+const SHELL_CALL_LIMIT = 100;
 /** Oldest finished ones go first beyond this. */
 const NODE_LIMIT = 60;
 
@@ -34,8 +38,10 @@ export function settleSubagents(nodes: SubagentInfo[], at = new Date().toISOStri
 
 export class SubagentTracker {
   private nodes = new Map<string, SubagentInfo>();
-  /** Claude background agents: task id → tool_use id. */
+  /** Claude background agents and commands: task id → tool_use id. */
   private tasks = new Map<string, string>();
+  /** The agent's own shell calls by tool_use id, until their result arrives. */
+  private shellCalls = new Map<string, { tool: string; input: any; parent: string | null }>();
 
   constructor(previous: SubagentInfo[] = [], private onChange: () => void = () => {}, private now = () => new Date().toISOString()) {
     for (const node of settleSubagents(previous)) this.nodes.set(node.id, node);
@@ -64,11 +70,16 @@ export class SubagentTracker {
         if (block?.type !== 'tool_use' || typeof block.id !== 'string') continue;
         if (AGENT_TOOLS.has(block.name)) this.claudeStart(block.id, block.input, parent);
         else if (parent) this.claudeStep(parent, String(block.name ?? 'tool'), block.input);
+        if (SHELL_TOOLS.has(block.name)) this.rememberShell(block.id, block.name, block.input, parent);
       }
     } else if (event.type === 'user') {
-      for (const block of Array.isArray(event.message?.content) ? event.message.content : []) {
+      const content = event.message?.content;
+      if (typeof content === 'string') this.claudeNotification(content);
+      for (const block of Array.isArray(content) ? content : []) {
+        if (block?.type === 'text' && typeof block.text === 'string') this.claudeNotification(block.text);
         if (block?.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue;
-        this.claudeResult(block.tool_use_id, Boolean(block.is_error), toolResultText(block.content), event.tool_use_result);
+        if (this.shellCalls.has(block.tool_use_id)) this.claudeShellResult(block.tool_use_id, event.tool_use_result);
+        else this.claudeResult(block.tool_use_id, Boolean(block.is_error), toolResultText(block.content), event.tool_use_result);
       }
     } else if (event.type === 'system') {
       this.claudeTask(event);
@@ -148,6 +159,53 @@ export class SubagentTracker {
       const status: SubagentStatus = event.status === 'completed' ? 'done' : event.status === 'failed' ? 'failed' : 'stopped';
       this.finish(node, status, typeof event.summary === 'string' ? event.summary : null, stats);
     }
+  }
+
+  private rememberShell(id: string, tool: string, input: any, parent: string | null) {
+    this.shellCalls.set(id, { tool, input, parent });
+    if (this.shellCalls.size > SHELL_CALL_LIMIT) this.shellCalls.delete(this.shellCalls.keys().next().value!);
+  }
+
+  /** A shell call's result: a node only when the command went on in the background (asked for, or after its timeout). */
+  private claudeShellResult(id: string, meta: any) {
+    const call = this.shellCalls.get(id)!;
+    this.shellCalls.delete(id);
+    const taskId = text(meta?.backgroundTaskId ?? meta?.taskId, 80);
+    if (!taskId) return;
+    this.tasks.set(taskId, id);
+    const command = text(call.input?.command, 4000);
+    const parent = call.parent;
+    this.put({
+      id,
+      parentId: parent && this.nodes.has(parent) ? parent : null,
+      kind: call.tool,
+      description: text(call.input?.description, 200),
+      prompt: command,
+      model: null,
+      status: 'running',
+      background: true,
+      shell: true,
+      startedAt: this.now(),
+      endedAt: null,
+      activity: command ? clipText(command.split('\n')[0], 160) : null,
+      toolUses: 0,
+      tokens: null,
+      durationMs: null,
+      result: null
+    });
+  }
+
+  /**
+   * The `<task-notification>` the CLI hands the model when background work ends:
+   * a fallback for CLIs that don't send the `task_notification` system event.
+   */
+  private claudeNotification(content: string) {
+    if (!content.includes('<task-notification>')) return;
+    const tag = (name: string) => content.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1]?.trim() ?? null;
+    const node = this.nodes.get(tag('tool-use-id') ?? this.tasks.get(tag('task-id') ?? '') ?? '');
+    if (!node || node.status !== 'running') return;
+    const status = tag('status');
+    this.finish(node, status === 'completed' ? 'done' : status === 'failed' ? 'failed' : 'stopped', tag('summary'), {});
   }
 
   // -------------------------------------------------------------------------

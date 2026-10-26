@@ -4,7 +4,7 @@ import { AGENT_MODES, LIVE_STATUSES, PROVIDER_LABEL, type AgentInfo, type Extern
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
 import { STATUS_LABEL, ago, compact, duration, folderName, modelLabel, usd } from '../format';
-import { AccountChip, Empty, MiniMeter, ProviderIcon, Segmented, StatusPill, confirmDialog, useFit, useTicker } from '../ui';
+import { AccountChip, AgentStatusPill, Empty, MiniMeter, ProviderIcon, Segmented, confirmDialog, useFit, useTicker } from '../ui';
 import { canResume, resumeAgent, stopAgent } from './AgentsView';
 
 type SortKey = 'status' | 'title' | 'account' | 'context' | 'cost' | 'cpu' | 'memory' | 'started';
@@ -281,7 +281,7 @@ export function TaskManagerView() {
                   return (
                     <tr key={a.id} className="clickable" onClick={() => open(a)}>
                       <td>
-                        <StatusPill status={a.status} detail={a.statusDetail} />
+                        <AgentStatusPill agent={a} />
                       </td>
                       <td style={{ maxWidth: 360 }}>
                         <div className="row">

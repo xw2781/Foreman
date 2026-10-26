@@ -28,6 +28,27 @@ export function subagentTree(nodes: SubagentInfo[], visible: (n: SubagentInfo) =
   return roots;
 }
 
+/** Running nodes on the map: subagents and background commands. */
 export function runningSubagents(agent: Pick<AgentInfo, 'subagents'>) {
   return agent.subagents?.filter((s) => s.status === 'running').length ?? 0;
+}
+
+function plural(count: number, word: string) {
+  return `${count} ${word}${count === 1 ? '' : 's'}`;
+}
+
+/** "2 subagents and 1 background command", for what's running (or for every node); empty when there's none. */
+export function describeSubagents(agent: Pick<AgentInfo, 'subagents'>, onlyRunning = true) {
+  const nodes = (agent.subagents ?? []).filter((n) => !onlyRunning || n.status === 'running');
+  const shells = nodes.filter((n) => n.shell).length;
+  const agents = nodes.length - shells;
+  return [agents ? plural(agents, 'subagent') : '', shells ? plural(shells, 'background command') : ''].filter(Boolean).join(' and ');
+}
+
+/**
+ * An idle agent whose subagents or background commands still run isn't finished:
+ * the CLI starts a new turn when they end. It shows as working in the background.
+ */
+export function backgroundWork(agent: Pick<AgentInfo, 'status' | 'subagents'>) {
+  return agent.status === 'idle' && runningSubagents(agent) > 0;
 }

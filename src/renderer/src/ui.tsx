@@ -2,8 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import { createPortal } from 'react-dom';
 import { create } from 'zustand';
 import { AlertCircle, AlertTriangle, Check, CheckCircle2, ChevronDown, Info, X, XCircle } from 'lucide-react';
-import type { AgentStatus, LimitWindow, Provider } from '@shared/types';
+import type { AgentInfo, AgentStatus, LimitWindow, Provider } from '@shared/types';
 import { PROVIDER_LABEL } from '@shared/types';
+import { backgroundWork, describeSubagents } from '@shared/subagents';
 import { STATUS_LABEL, colorVar, isStale, percent, resetAt, resetIn, severity } from './format';
 import { useApp } from './store';
 import codexIcon from './assets/codex.png';
@@ -37,6 +38,14 @@ export function StatusPill({ status, detail, label }: { status: AgentStatus; det
       <span className="label">{label ?? STATUS_LABEL[status]}</span>
     </span>
   );
+}
+
+/** An agent's status; idle with subagents or background commands still running reads as working in the background. */
+export function AgentStatusPill({ agent, detail = true, label }: { agent: AgentInfo; detail?: boolean; label?: string }) {
+  if (backgroundWork(agent)) {
+    return <StatusPill status="working" label="Background" detail={`Turn ended; ${describeSubagents(agent)} still running. The agent picks up again when they finish.`} />;
+  }
+  return <StatusPill status={agent.status} detail={detail ? agent.statusDetail : undefined} label={label} />;
 }
 
 export function AccountChip({ label, color }: { label: string; color: string | null }) {

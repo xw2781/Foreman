@@ -1,7 +1,7 @@
 {
   "name": "agent-task-center",
   "productName": "Foreman",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "Run Claude Code and Codex side by side, watch every agent in one task manager, track context and cost, switch accounts, and let agents use the computer.",
   "main": "out/main/index.js",
   "author": "xwei",
@@ -14,7 +14,7 @@
     "launch": "node scripts/start.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "dist": "node scripts/build.mjs && electron-builder --win --x64",
+    "dist": "node scripts/build.mjs && electron-builder --win --x64 --publish never",
     "dist:dir": "node scripts/build.mjs && electron-builder --win --x64 --dir"
   },
   "dependencies": {

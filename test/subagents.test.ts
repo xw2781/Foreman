@@ -85,6 +85,44 @@ describe('SubagentTracker: Claude Code stream', () => {
     t.claude({ type: 'result', subtype: 'error_during_execution' });
     expect(t.list()[0].status).toBe('stopped');
   });
+
+  const bashCall = (id: string, input: Record<string, unknown>) => ({
+    type: 'assistant',
+    parent_tool_use_id: null,
+    message: { id: `m-${id}`, content: [{ type: 'tool_use', id, name: 'Bash', input }] }
+  });
+
+  it('follows a background command from its launch to its task notification', () => {
+    const { t } = tracker();
+    t.claude(bashCall('sh', { command: 'npm run dev', description: 'Start the dev server', run_in_background: true }));
+    expect(t.list()).toEqual([]);
+    t.claude(toolResult('sh', 'Command running in background with ID: b1', { stdout: '', backgroundTaskId: 'b1' }));
+    t.claude({ type: 'result', subtype: 'success' });
+    expect(t.list()).toMatchObject([{ id: 'sh', kind: 'Bash', shell: true, background: true, status: 'running', description: 'Start the dev server', prompt: 'npm run dev', activity: 'npm run dev' }]);
+    expect(runningSubagents({ subagents: t.list() })).toBe(1);
+
+    t.claude({ type: 'system', subtype: 'task_notification', task_id: 'b1', status: 'failed', summary: 'Background command "Start the dev server" failed with exit code 1' });
+    expect(t.list()[0]).toMatchObject({ status: 'failed', activity: null, result: expect.stringContaining('exit code 1') });
+  });
+
+  it('tracks a command moved to the background after its timeout, finishing it from the notification message', () => {
+    const { t } = tracker();
+    t.claude(bashCall('slow', { command: 'npm test' }));
+    t.claude(toolResult('slow', 'moved to the background', { backgroundTaskId: 'b2', timedOutAfterMs: 120000 }));
+    expect(t.list()[0]).toMatchObject({ status: 'running', shell: true });
+    t.claude({
+      type: 'user',
+      message: { role: 'user', content: '<task-notification>\n<task-id>b2</task-id>\n<status>completed</status>\n<summary>Background command completed (exit code 0)</summary>\n</task-notification>' }
+    });
+    expect(t.list()[0]).toMatchObject({ status: 'done', result: 'Background command completed (exit code 0)' });
+  });
+
+  it('ignores commands that finish in the foreground', () => {
+    const { t } = tracker();
+    t.claude(bashCall('fg', { command: 'ls' }));
+    t.claude(toolResult('fg', 'a.txt', { stdout: 'a.txt', stderr: '' }));
+    expect(t.list()).toEqual([]);
+  });
 });
 
 describe('SubagentTracker: Claude Code hooks', () => {
