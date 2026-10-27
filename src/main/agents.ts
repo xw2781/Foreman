@@ -192,6 +192,7 @@ export class AgentManager {
     options = resolveChatWorkspace(options, id, this.deps.userDataDir);
     if (!exists(options.cwd)) throw new Error(`Folder not found: ${options.cwd}`);
     if (options.mode === 'task' && !options.prompt?.trim()) throw new Error('A background task needs a prompt.');
+    if (AGENT_MODES.includes(options.mode) && !options.projectless) this.deps.profiles.prepareProject(profile, options.cwd);
     const settings = this.deps.settings();
     const cli = await locateCli(profile.provider, settings.cliPath[profile.provider]);
     if (!cli.path) throw new Error(cli.error ?? 'CLI not found');

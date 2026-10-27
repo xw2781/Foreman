@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { ModelCatalog, type CatalogModel } from './modelCatalog';
+import { shareClaudeMemory } from './claudeMemory';
 import type {
   CliDefaults,
   LimitWindow,
@@ -172,6 +173,16 @@ export class ProfileService {
     }
     if (!profile.builtin) env[name] = profile.configDir;
     return env;
+  }
+
+  /** Before an agent starts in `cwd`: an isolated Claude account uses the primary account's project memory. */
+  prepareProject(profile: Profile, cwd: string) {
+    if (profile.provider !== 'claude' || profile.builtin) return;
+    try {
+      shareClaudeMemory(defaultClaudeDir(), profile.configDir, cwd);
+    } catch {
+      // Best-effort: the account keeps its own memory.
+    }
   }
 
   // -------------------------------------------------------------------------

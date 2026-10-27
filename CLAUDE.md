@@ -20,6 +20,7 @@ $env:PATH = "$PWD\.tools\node;$env:PATH" # PowerShell
 ## Invariants
 
 - Child agents get `cleanEnv()` (src/main/util.ts): it strips `CLAUDECODE`, `CLAUDE_CODE_*`, `VSCODE_*`, `ELECTRON_RUN_AS_NODE`, and any inherited `CLAUDE_CONFIG_DIR`/`CODEX_HOME`. Then `ProfileService.envFor` sets the account's variable — or leaves it unset for the built-in account, because Claude Code only uses `~/.claude.json` when `CLAUDE_CONFIG_DIR` is unset.
+- Isolated Claude accounts share project memory: before an agent starts, `<account>/projects/<project>/memory` is junctioned to the primary account's (`src/main/claudeMemory.ts`), with any notes the account already had moved over first.
 - Never copy credentials between account folders (refresh tokens rotate). Removing an account uses `removeTree`, which unlinks junctions instead of following them into the shared primary folders.
 - The per-agent `--settings` file may contain only documented keys; an invalid one makes Claude Code show an error dialog.
 - Chat drivers (`src/main/chat`) must answer every control request / server request they receive, even unsupported ones (with an error): the CLI blocks until it gets a reply.
