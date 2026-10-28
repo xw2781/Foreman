@@ -22,6 +22,8 @@ import {
   Image,
   Info,
   Mic,
+  MessageCircleQuestion,
+  Clock3,
   ListChecks,
   ListEnd,
   LoaderCircle,
@@ -329,7 +331,6 @@ function Reasoning({ item }: { item: Item<'reasoning'> }) {
 }
 
 function Questions({ questions, values, onChange }: { questions: ChatQuestion[]; values: Record<string, string[]>; onChange: (next: Record<string, string[]>) => void }) {
-  const [other, setOther] = useState<Record<string, string>>({});
   return (
     <div className="questions">
       {questions.map((q) => {
@@ -339,15 +340,15 @@ function Questions({ questions, values, onChange }: { questions: ChatQuestion[];
           onChange({ ...values, [q.id]: next });
         };
         return (
-          <div key={q.id} className="question">
-            {q.header ? <div className="q-header">{q.header}</div> : null}
+          <div key={q.id} className="question" role="group" aria-label={q.question}>
+            {q.header ? <div className="q-header">{q.header.replace(/\s*\((?:optional|required)\)\s*$/i, '')}</div> : null}
             <div className="q-text">{q.question}</div>
             <div className="q-options">
               {q.options.map((option) => (
-                <button type="button" key={option.label} className={`q-option ${chosen.includes(option.label) ? 'on' : ''}`} onClick={() => toggle(option.label)}>
+                <button type="button" key={option.label} aria-pressed={chosen.includes(option.label)} className={`q-option ${chosen.includes(option.label) ? 'on' : ''}`} onClick={() => toggle(option.label)}>
                   <span className={`q-mark ${q.multiSelect ? 'box' : 'radio'}`}>{chosen.includes(option.label) ? <Check size={11} /> : null}</span>
                   <span>
-                    <span className="q-label">{option.label}</span>
+                    <span className="q-label">{option.label.replace(/\s*\(recommended\)/i, '')} {/\(recommended\)/i.test(option.label) ? <span className="q-recommended">Recommended</span> : null}</span>
                     {option.description ? <span className="q-desc">{option.description}</span> : null}
                   </span>
                 </button>
@@ -355,13 +356,15 @@ function Questions({ questions, values, onChange }: { questions: ChatQuestion[];
               {q.allowOther ? (
                 <input
                   className="input"
+                  type={q.isSecret ? 'password' : 'text'}
+                  autoComplete="off"
+                  aria-label={q.options.length ? `Other answer: ${q.question}` : q.question}
                   placeholder={q.options.length ? 'Other…' : 'Your answer'}
-                  value={other[q.id] ?? ''}
+                  value={chosen.filter((value) => !q.options.some((option) => option.label === value)).join(', ')}
                   onChange={(event) => {
                     const text = event.target.value;
-                    setOther({ ...other, [q.id]: text });
                     const kept = chosen.filter((c) => q.options.some((o) => o.label === c));
-                    onChange({ ...values, [q.id]: text.trim() ? (q.multiSelect ? [...kept, text.trim()] : [text.trim()]) : kept });
+                    onChange({ ...values, [q.id]: text ? (q.multiSelect ? [...kept, text] : [text]) : kept });
                   }}
                 />
               ) : null}
@@ -373,11 +376,23 @@ function Questions({ questions, values, onChange }: { questions: ChatQuestion[];
   );
 }
 
+function QuestionCountdown({ deadline }: { deadline: number }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(timer);
+  }, [deadline]);
+  return <span className="question-countdown"><Clock3 size={12} /> Continues in {Math.max(0, Math.ceil((deadline - now) / 1000))}s</span>;
+}
+
 function ApprovalCard({ item, agent }: { item: Item<'approval'>; agent: AgentInfo }) {
   const toast = useApp((s) => s.toast);
   const [note, setNote] = useState('');
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const [busy, setBusy] = useState(false);
+  const [questionIndex, setQuestionIndex] = useState(0);
+  const isQuestion = Boolean(item.questions?.length);
+  const currentQuestion = item.questions?.[questionIndex];
   if (item.state !== 'pending') {
     const denied = /^(Denied|Declined|Skipped|Kept planning)/.test(item.resolution ?? '');
     return (
@@ -396,16 +411,22 @@ function ApprovalCard({ item, agent }: { item: Item<'approval'>; agent: AgentInf
       await call('chat.respond', agent.id, item.id, { optionId, message: optionId === 'deny' || optionId === 'cancel' ? note.trim() || undefined : undefined, answers: joined });
     } catch (error) {
       toast('error', errorMessage(error));
+    } finally {
       setBusy(false);
     }
   };
-  const unanswered = item.questions?.some((q) => !(answers[q.id]?.length));
+  const unanswered = item.questions?.some((q) => !answers[q.id]?.some((value) => value.trim()));
   return (
-    <div className="approval">
+    <div className={`approval ${isQuestion ? 'question-card' : ''}`}>
       <div className="approval-head">
-        <ShieldAlert size={16} color="var(--warning)" />
+        {isQuestion ? <MessageCircleQuestion size={17} /> : <ShieldAlert size={16} color="var(--warning)" />}
         <span>{item.title}</span>
+        {isQuestion ? <span className="question-kind">{item.questionOptional ? 'Optional' : 'Response needed'}</span> : null}
       </div>
+      {isQuestion ? <div className="question-status">
+        {item.questionTimeoutAt ? <QuestionCountdown deadline={item.questionTimeoutAt} /> : <span>{item.questionOptional ? 'Kept open for your answer' : 'The agent will wait for your answer'}</span>}
+        {item.questionTimeoutAt ? <button type="button" className="btn ghost sm" disabled={busy} onClick={() => answer('wait')}>Keep open</button> : null}
+      </div> : null}
       {item.detail ? <div className="approval-detail">{item.detail}</div> : null}
       {item.body ? (
         item.bodyKind === 'markdown' ? (
@@ -417,17 +438,28 @@ function ApprovalCard({ item, agent }: { item: Item<'approval'>; agent: AgentInf
         )
       ) : null}
       {item.files?.length ? <DiffView files={item.files} /> : null}
-      {item.questions?.length ? <Questions questions={item.questions} values={answers} onChange={setAnswers} /> : null}
+      {currentQuestion ? <>
+        {item.questions!.length > 1 ? <div className="question-progress">Question {questionIndex + 1} of {item.questions!.length}</div> : null}
+        <Questions key={currentQuestion.id} questions={[currentQuestion]} values={answers} onChange={(next) => {
+          setAnswers(next);
+          // Give someone who has begun answering time to finish.
+          if (item.questionTimeoutAt) void answer('wait');
+        }} />
+      </> : null}
       <div className="approval-actions">
+        {questionIndex > 0 ? <button type="button" className="btn sm" disabled={busy} onClick={() => setQuestionIndex(questionIndex - 1)}>Back</button> : null}
         {item.options.map((option) => (
           <button
             key={option.id}
             type="button"
             className={`btn sm ${option.tone === 'primary' ? 'primary' : option.tone === 'danger' ? 'danger' : ''}`}
-            disabled={busy || (option.id === 'answer' && unanswered)}
-            onClick={() => answer(option.id)}
+            disabled={busy || (option.id === 'answer' && (currentQuestion && questionIndex < item.questions!.length - 1 ? !answers[currentQuestion.id]?.some((value) => value.trim()) : unanswered))}
+            onClick={() => {
+              if (option.id === 'answer' && questionIndex < (item.questions?.length ?? 0) - 1) setQuestionIndex(questionIndex + 1);
+              else void answer(option.id);
+            }}
           >
-            {option.label}
+            {option.id === 'answer' && questionIndex < (item.questions?.length ?? 0) - 1 ? 'Next question' : option.label}
           </button>
         ))}
         {item.acceptsFeedback ? (
@@ -521,7 +553,8 @@ function renderEntries(items: ChatItem[], agent: AgentInfo, activeTail: boolean,
         nodes.push(<Reasoning key={item.id} item={item} />);
         break;
       case 'approval':
-        nodes.push(<ApprovalCard key={item.id} item={item} agent={agent} />);
+        // Pending questions live in the persistent queue above the composer.
+        if (!(item.state === 'pending' && item.questions?.length)) nodes.push(<ApprovalCard key={item.id} item={item} agent={agent} />);
         break;
       case 'notice':
         nodes.push(<Notice key={item.id} item={item} />);
@@ -1369,8 +1402,10 @@ export function ChatView({ agent }: { agent: AgentInfo }) {
   };
 
   const pendingApproval = items.some((i) => i.kind === 'approval' && i.state === 'pending');
+  const pendingQuestions = items.filter((i): i is Item<'approval'> => i.kind === 'approval' && i.state === 'pending' && Boolean(i.questions?.length));
+  const question = pendingQuestions[0];
   return (
-    <div className="chat">
+    <div className={`chat ${question ? 'has-question' : ''}`}>
       <AnnotationSelection agentId={agent.id} container={scrollRef} />
       <div className="chat-scroll" ref={scrollRef} onScroll={onScroll}>
         <div className="chat-column">
@@ -1409,6 +1444,13 @@ export function ChatView({ agent }: { agent: AgentInfo }) {
           <ArrowDown size={14} /> Latest
         </button>
       ) : null}
+      {question ? <section className="question-dock" aria-label="Agent questions">
+        <div className="question-queue-label" role="status">
+          <span>Your input</span>
+          <span>{pendingQuestions.length > 1 ? `${pendingQuestions.length - 1} waiting` : 'Choose an option or write your own answer'}</span>
+        </div>
+        <div className="question-dock-body"><ApprovalCard key={`${agent.id}:${question.id}`} item={question} agent={agent} /></div>
+      </section> : null}
       <Composer agent={agent} queued={queued} />
     </div>
   );

@@ -10,6 +10,7 @@ import { normalizeCodexUsage, subtractUsage } from '../telemetry/codexRollout';
 import { codexItemEntry, codexPermission } from './codexItems';
 import type { ChatDriver, ChatHost } from './driver';
 import { clipText, TEXT_LIMIT } from './log';
+import { optionalHeaders, OPTIONAL_QUESTION_MS, QuestionQueue, questionInstructions } from './questions';
 
 interface PendingServerRequest {
   rpcId: number | string;
@@ -65,6 +66,7 @@ export class CodexChat implements ChatDriver {
   private nextId = 1;
   private calls = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   private requests = new Map<string, PendingServerRequest>();
+  private questionQueue: QuestionQueue;
   private threadId: string | null = null;
   private turnId: string | null = null;
   /** The running turn's id, once `turn/start` answers (null if it didn't start one). */
@@ -86,7 +88,9 @@ export class CodexChat implements ChatDriver {
   private knownSkills: CodexSkill[] = [];
   busy = false;
 
-  constructor(private host: ChatHost, private write: (message: object) => void, private options: CodexChatOptions) {}
+  constructor(private host: ChatHost, private write: (message: object) => void, private options: CodexChatOptions) {
+    this.questionQueue = new QuestionQueue(host.log, () => host.changed());
+  }
 
   async start(prompt?: string, images?: ChatImage[]) {
     this.initialized = this.call('initialize', { clientInfo: { name: 'foreman', title: 'Foreman', version: this.options.appVersion }, capabilities: null });
@@ -100,7 +104,11 @@ export class CodexChat implements ChatDriver {
       sandbox: permission.sandbox ?? null,
       // Only sent when set: older app-servers don't know the field.
       ...(permission.approvalsReviewer ? { approvalsReviewer: permission.approvalsReviewer } : {}),
-      config: this.options.effort ? { model_reasoning_effort: this.options.effort } : null
+      developerInstructions: questionInstructions('request_user_input'),
+      config: {
+        'features.default_mode_request_user_input': true,
+        ...(this.options.effort ? { model_reasoning_effort: this.options.effort } : {})
+      }
     };
     const result = this.options.resumeThreadId
       ? await this.call('thread/resume', { threadId: this.options.resumeThreadId, ...params, excludeTurns: true })
@@ -243,7 +251,12 @@ export class CodexChat implements ChatDriver {
   respond(itemId: string, answer: ChatAnswer) {
     const request = this.requests.get(itemId);
     if (!request) return;
+    if (answer.optionId === 'wait' && request.method === 'item/tool/requestUserInput') {
+      this.questionQueue.hold(itemId);
+      return;
+    }
     this.requests.delete(itemId);
+    this.questionQueue.remove(itemId);
     let result: Record<string, unknown>;
     let resolution: string;
     switch (request.method) {
@@ -258,7 +271,9 @@ export class CodexChat implements ChatDriver {
           for (const [id, value] of Object.entries(answer.answers ?? {})) if (value) answers[id] = { answers: [value] };
         }
         result = { answers };
-        resolution = answer.optionId === 'answer' ? Object.values(answer.answers ?? {}).filter(Boolean).join(' · ') || 'Answered' : 'Skipped';
+        resolution = answer.optionId === 'answer' ? Object.entries(answer.answers ?? {}).map(([id, value]) =>
+          request.params?.questions?.some((q: any) => q.id === id && q.isSecret) ? '••••••' : value
+        ).filter(Boolean).join(' · ') || 'Answered' : 'Skipped';
         break;
       }
       case 'item/permissions/requestApproval': {
@@ -282,6 +297,7 @@ export class CodexChat implements ChatDriver {
     this.write({ id: request.rpcId, result });
     this.host.log.update(itemId, 'approval', () => ({ state: 'resolved', resolution }));
     if (this.requests.size === 0) this.host.status('working', null);
+    this.restoreInputStatus();
     this.host.changed();
   }
 
@@ -306,11 +322,19 @@ export class CodexChat implements ChatDriver {
     }
     if (message.id !== undefined) this.onServerRequest(message);
     else if (message.method) this.onNotification(message.method, message.params ?? {});
+    this.restoreInputStatus();
     this.host.changed();
+  }
+
+  private restoreInputStatus() {
+    const blocking = [...this.requests.keys()].map((id) => this.host.log.get(id)).find((i) => i?.kind === 'approval' && i.state === 'pending' && !i.questionOptional);
+    if (blocking?.kind === 'approval') this.host.status('needs-input', blocking.title);
+    else if (this.requests.size) this.host.status('working', 'Optional question');
   }
 
   /** Fails every call still waiting (the process exited). */
   dispose(reason: string) {
+    this.questionQueue.clear();
     for (const call of this.calls.values()) call.reject(new Error(reason));
     this.calls.clear();
   }
@@ -380,8 +404,10 @@ export class CodexChat implements ChatDriver {
         for (const [itemId, request] of this.requests) {
           if (request.rpcId !== params.requestId) continue;
           this.requests.delete(itemId);
+          this.questionQueue.remove(itemId);
           this.host.log.update(itemId, 'approval', () => ({ state: 'cancelled', resolution: 'Resolved' }));
         }
+        if (!this.requests.size && this.busy) this.host.status('working', null);
         break;
       case 'thread/tokenUsage/updated':
         this.onTokenUsage(params.tokenUsage);
@@ -438,6 +464,7 @@ export class CodexChat implements ChatDriver {
     if (!ok) this.host.log.settle(interrupted ? 'Interrupted' : 'Turn failed');
     for (const [itemId] of this.requests) this.host.log.update(itemId, 'approval', () => ({ state: 'cancelled', resolution: 'Turn ended' }));
     this.requests.clear();
+    this.questionQueue.clear();
     this.host.log.upsert({
       kind: 'turn',
       id: `turn-${turn.id}`,
@@ -489,8 +516,9 @@ export class CodexChat implements ChatDriver {
           header: String(q.header ?? ''),
           question: String(q.question ?? ''),
           multiSelect: false,
+          isSecret: Boolean(q.isSecret),
           options: (Array.isArray(q.options) ? q.options : []).map((o: any) => ({ label: String(o.label), description: o.description || undefined })),
-          allowOther: Boolean(q.isOther) || !Array.isArray(q.options) || q.options.length === 0
+          allowOther: true
         }));
         options = [
           { id: 'answer', label: 'Submit', tone: 'primary' },
@@ -513,6 +541,10 @@ export class CodexChat implements ChatDriver {
         return;
     }
     this.requests.set(itemId, { rpcId, method, params });
+    // Explicitly blocking requests always win over a model's optional-header hint.
+    const optional = method === 'item/tool/requestUserInput' && params.isBlocking !== true &&
+      !(questions ?? []).some((q) => /\(required\)\s*$/i.test(q.header)) &&
+      (params.isBlocking === false || optionalHeaders(questions ?? []));
     this.host.log.upsert({
       kind: 'approval',
       id: itemId,
@@ -524,11 +556,17 @@ export class CodexChat implements ChatDriver {
       files,
       options,
       questions,
+      questionOptional: optional,
       acceptsFeedback: false,
       state: 'pending',
       resolution: null
     });
-    this.host.status('needs-input', title);
+    if (questions) {
+      const duration = typeof params.autoResolutionMs === 'number' && Number.isFinite(params.autoResolutionMs) && params.autoResolutionMs > 0
+        ? Math.min(params.autoResolutionMs, 2_147_483_647) : OPTIONAL_QUESTION_MS;
+      this.questionQueue.add(itemId, optional, () => this.respond(itemId, { optionId: 'deny' }), duration);
+    }
+    this.host.status(optional ? 'working' : 'needs-input', optional ? 'Optional question' : title);
   }
 
   private notice(tone: 'info' | 'warning' | 'error', text: string) {

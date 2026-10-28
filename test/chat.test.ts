@@ -6,6 +6,7 @@ import { codexCommand, codexItemEntry } from '../src/main/chat/codexItems';
 import { claudeHistory, codexHistory } from '../src/main/chat/history';
 import type { ChatHost } from '../src/main/chat/driver';
 import type { ChatItem } from '../src/shared/types';
+import { questionInstructions } from '../src/main/chat/questions';
 
 function fakeHost() {
   const log = new ChatLog();
@@ -78,7 +79,8 @@ describe('Claude chat protocol', () => {
   it('builds the SDK command line', () => {
     expect(claudeChatArgs({ sessionId: 's-1', model: 'opus', permission: 'plan' })).toEqual([
       '--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json', '--include-partial-messages',
-      '--permission-prompt-tool', 'stdio', '--session-id', 's-1', '--model', 'opus', '--permission-mode', 'plan'
+      '--permission-prompt-tool', 'stdio', '--session-id', 's-1', '--model', 'opus', '--permission-mode', 'plan',
+      '--append-system-prompt', questionInstructions('AskUserQuestion')
     ]);
     expect(claudeChatArgs({ sessionId: null, resumeSessionId: 'old' })).toContain('--resume');
   });
@@ -433,6 +435,8 @@ describe('Codex chat protocol', () => {
     await Promise.resolve();
     expect(sent[1]).toEqual({ method: 'initialized' });
     expect(sent[2]).toMatchObject({ method: 'thread/start', params: { cwd: 'C:\\r', approvalPolicy: 'on-request', sandbox: 'workspace-write' } });
+    expect(sent[2].params.config).toMatchObject({ 'features.default_mode_request_user_input': true });
+    expect(sent[2].params.developerInstructions).toContain('request_user_input');
     chat.receive(JSON.stringify({ id: sent[2].id, result: { thread: { id: 'th-1', path: 'C:\\rollout.jsonl' }, model: 'gpt-6-astra' } }));
     await ready;
     expect(sessions[0]).toEqual({ sessionId: 'th-1', transcriptPath: 'C:\\rollout.jsonl', model: 'gpt-6-astra' });

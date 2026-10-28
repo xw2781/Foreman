@@ -9,6 +9,7 @@ import { call, errorMessage } from './api';
 import { useApp } from './store';
 import { chatLinkKind } from '@shared/chatLinks';
 import { normalizeDisplayMath } from './displayMath';
+import { HighlightedCode } from './HighlightedCode';
 
 function textOf(node: ReactNode): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -77,7 +78,7 @@ const components: Components = {
           <CopyButton text={text} />
         </div>
         <pre>
-          <code>{text}</code>
+          <HighlightedCode text={text} language={language} />
         </pre>
       </div>
     );

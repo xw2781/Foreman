@@ -101,7 +101,7 @@ export function SidePanel({ agent, expanded, onExpand }: { agent: AgentInfo; exp
         ) : tab === 'browser' ? (
           <BrowserPanel agent={agent} state={browser} />
         ) : tab === 'files' ? (
-          <FilesPanel key={agent.id} agent={agent} />
+          <FilesPanel key={agent.id} agent={agent} expanded={expanded} onExpand={onExpand} />
         ) : (
           <AgentDetails agent={agent} />
         )}

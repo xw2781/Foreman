@@ -2292,11 +2292,34 @@ table.table {
   color: var(--text-secondary);
 }
 
-/* Files: the tree beside the preview, or above it in a narrow panel. */
+/* A selected file fills the panel; its tree can be brought back from the toolbar. */
 .files-pane {
   display: grid;
-  grid-template-columns: minmax(200px, 34%) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
+}
+.files-pane.previewing.tree-visible {
+  grid-template-columns: minmax(180px, 26%) minmax(0, 1fr);
+}
+.files-pane.previewing.tree-visible.resizable {
+  grid-template-columns: minmax(100px, var(--file-tree-width)) 6px minmax(0, 1fr);
+}
+.files-resize {
+  cursor: col-resize;
+  touch-action: none;
+  background: var(--surface-2);
+}
+.files-resize:hover, .files-resize:focus-visible, .files-resize:active {
+  background: var(--accent-soft);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.files-pane.previewing:not(.tree-visible) > .ft,
+.files-pane > .fp-placeholder {
+  display: none;
+}
+.fp-head {
+  flex-wrap: wrap;
 }
 .ft {
   display: flex;
@@ -2438,8 +2461,9 @@ table.table {
   color: var(--text-primary);
 }
 .fp-markdown {
-  padding: 14px 18px;
+  padding: 20px clamp(16px, 4cqw, 40px);
   max-width: 860px;
+  margin-inline: auto;
 }
 .fp-image {
   display: grid;
@@ -2466,19 +2490,22 @@ table.table {
   font-size: 12.5px;
 }
 @container (max-width: 620px) {
-  .files-pane {
+  .files-pane.previewing.tree-visible {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(100px, 25%) minmax(0, 1fr);
   }
+  .files-pane.previewing.tree-visible.resizable {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(80px, var(--file-tree-height)) 6px minmax(0, 1fr);
+  }
+  .files-resize { cursor: row-resize; }
   .ft {
     border-right: none;
   }
   .files-pane .fp-placeholder {
     display: none;
   }
-  .files-pane.previewing {
-    grid-template-rows: minmax(120px, 38%) minmax(0, 1fr);
-  }
-  .files-pane.previewing .fp {
+  .files-pane.previewing.tree-visible .fp {
     border-top: 1px solid var(--border);
   }
   .fp-meta {

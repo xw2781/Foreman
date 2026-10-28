@@ -1,0 +1,41 @@
+/* Atom One Dark / One Light palettes, based on Highlight.js themes by Daniel Gamage. */
+:root {
+  --syntax-bg: #282c34;
+  --syntax-fg: #abb2bf;
+  --syntax-comment: #818896;
+  --syntax-purple: #c678dd;
+  --syntax-red: #e06c75;
+  --syntax-cyan: #56b6c2;
+  --syntax-green: #98c379;
+  --syntax-orange: #d19a66;
+  --syntax-blue: #61aeee;
+  --syntax-yellow: #e6c07b;
+}
+:root[data-theme='cream'], :root[data-theme='grey'] {
+  --syntax-bg: #fafafa;
+  --syntax-fg: #383a42;
+  --syntax-comment: #686b77;
+  --syntax-purple: #a626a4;
+  --syntax-red: #e45649;
+  --syntax-cyan: #0184bb;
+  --syntax-green: #50a14f;
+  --syntax-orange: #986801;
+  --syntax-blue: #4078f2;
+  --syntax-yellow: #c18401;
+}
+.fp-code, .md-code pre { background: var(--syntax-bg); color: var(--syntax-fg); }
+.fp-code { min-height: 100%; }
+.fp-code .fp-text, .md-code pre .syntax { color: var(--syntax-fg); }
+.fp-code .syntax { font: inherit; }
+.fp-code .fp-gutter { background: var(--syntax-bg); color: var(--syntax-comment); }
+.syntax .hljs-comment, .syntax .hljs-quote { color: var(--syntax-comment); font-style: italic; }
+.syntax .hljs-doctag, .syntax .hljs-keyword, .syntax .hljs-formula { color: var(--syntax-purple); }
+.syntax .hljs-section, .syntax .hljs-name, .syntax .hljs-selector-tag, .syntax .hljs-deletion, .syntax .hljs-subst { color: var(--syntax-red); }
+.syntax .hljs-literal { color: var(--syntax-cyan); }
+.syntax .hljs-string, .syntax .hljs-regexp, .syntax .hljs-addition, .syntax .hljs-attribute, .syntax .hljs-meta .hljs-string { color: var(--syntax-green); }
+.syntax .hljs-attr, .syntax .hljs-variable, .syntax .hljs-template-variable, .syntax .hljs-type, .syntax .hljs-selector-class, .syntax .hljs-selector-attr, .syntax .hljs-selector-pseudo, .syntax .hljs-number { color: var(--syntax-orange); }
+.syntax .hljs-symbol, .syntax .hljs-bullet, .syntax .hljs-link, .syntax .hljs-meta, .syntax .hljs-selector-id, .syntax .hljs-title { color: var(--syntax-blue); }
+.syntax .hljs-built_in, .syntax .hljs-title.class_, .syntax .hljs-class .hljs-title { color: var(--syntax-yellow); }
+.syntax .hljs-emphasis { font-style: italic; }
+.syntax .hljs-strong { font-weight: bold; }
+.syntax .hljs-link { text-decoration: underline; }

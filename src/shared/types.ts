@@ -327,6 +327,7 @@ export interface ChatQuestion {
   options: Array<{ label: string; description?: string }>;
   /** Accepts a free-text answer besides the options. */
   allowOther: boolean;
+  isSecret?: boolean;
 }
 
 export interface ChatOption {
@@ -387,6 +388,9 @@ export type ChatEntry =
       files: ChatFileChange[] | null;
       options: ChatOption[];
       questions: ChatQuestion[] | null;
+      /** Optional questions expire unanswered; permissions never do. */
+      questionOptional?: boolean;
+      questionTimeoutAt?: number | null;
       /** Deny can carry a note back to the agent ("do it this way instead"). */
       acceptsFeedback: boolean;
       state: 'pending' | 'resolved' | 'cancelled';

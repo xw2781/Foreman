@@ -10,6 +10,7 @@ import { parseStatusPayload } from '../statusLine';
 import { claudeFileChanges, claudeToolEntry, claudeToolTitle, toolResultText } from './claudeTools';
 import type { ChatDriver, ChatHost } from './driver';
 import { clipText } from './log';
+import { optionalHeaders, QuestionQueue, questionInstructions } from './questions';
 
 interface Block {
   id: string;
@@ -40,6 +41,7 @@ export function claudeChatArgs(options: {
   if (options.effort) args.push('--effort', options.effort);
   if (options.permission && options.permission !== 'default') args.push('--permission-mode', options.permission);
   args.push(...(options.extraArgs ?? []));
+  args.push('--append-system-prompt', questionInstructions('AskUserQuestion'));
   return args;
 }
 
@@ -73,6 +75,7 @@ export class ClaudeChat implements ChatDriver {
   private blocks = new Map<number, Block>();
   private blockCounters = new Map<string, number>();
   private pending = new Map<string, PendingPermission>();
+  private questionQueue: QuestionQueue;
   private toolStarts = new Map<string, number>();
   private declined = new Set<string>();
   private requestCounter = 0;
@@ -95,7 +98,9 @@ export class ClaudeChat implements ChatDriver {
   busy = false;
 
   /** `permission`: the mode asked for at launch, to notice when the CLI starts in another. */
-  constructor(private host: ChatHost, private write: (message: object) => void, private permission?: string) {}
+  constructor(private host: ChatHost, private write: (message: object) => void, private permission?: string) {
+    this.questionQueue = new QuestionQueue(host.log, () => host.changed());
+  }
 
   async start(prompt?: string, images?: ChatImage[]) {
     // As the SDK does; the reply lists the session's slash commands and skills.
@@ -151,7 +156,12 @@ export class ClaudeChat implements ChatDriver {
   respond(itemId: string, answer: ChatAnswer) {
     const pending = this.pending.get(itemId);
     if (!pending) return;
+    if (answer.optionId === 'wait' && pending.tool === 'AskUserQuestion') {
+      this.questionQueue.hold(itemId);
+      return;
+    }
     this.pending.delete(itemId);
+    this.questionQueue.remove(itemId);
     let response: Record<string, unknown>;
     let resolution: string;
     switch (answer.optionId) {
@@ -179,7 +189,7 @@ export class ClaudeChat implements ChatDriver {
       }
       default: {
         const note = answer.message?.trim();
-        const fallback = pending.tool === 'AskUserQuestion' ? 'The user skipped the question.' : pending.tool === 'ExitPlanMode' ? 'The user wants to keep planning.' : 'The user declined this action.';
+        const fallback = pending.tool === 'AskUserQuestion' ? 'No answer was provided. Continue with a reasonable assumption only if this was optional; no consent or permission was granted.' : pending.tool === 'ExitPlanMode' ? 'The user wants to keep planning.' : 'The user declined this action.';
         response = { behavior: 'deny', message: note || fallback };
         resolution = `${pending.tool === 'ExitPlanMode' ? 'Kept planning' : pending.tool === 'AskUserQuestion' ? 'Skipped' : 'Denied'}${note ? ` — ${note}` : ''}`;
         if (pending.toolUseId) this.declined.add(pending.toolUseId);
@@ -188,6 +198,7 @@ export class ClaudeChat implements ChatDriver {
     this.write({ type: 'control_response', response: { subtype: 'success', request_id: pending.requestId, response } });
     this.host.log.update(itemId, 'approval', () => ({ state: 'resolved', resolution }));
     if (this.pending.size === 0) this.host.status('working', null);
+    this.restoreInputStatus();
     this.host.changed();
   }
 
@@ -204,7 +215,7 @@ export class ClaudeChat implements ChatDriver {
     }
     this.host.subagents?.claude(event);
     // Messages of a subagent (Task tool) belong to that tool call, not the main conversation.
-    if (event.parent_tool_use_id) return;
+    if (event.parent_tool_use_id && !['control_request', 'control_cancel_request', 'control_response'].includes(event.type)) return;
     switch (event.type) {
       case 'stream_event':
         this.onStream(event.event);
@@ -239,7 +250,14 @@ export class ClaudeChat implements ChatDriver {
       default:
         return;
     }
+    this.restoreInputStatus();
     this.host.changed();
+  }
+
+  private restoreInputStatus() {
+    const blocking = [...this.pending.keys()].map((id) => this.host.log.get(id)).find((i) => i?.kind === 'approval' && i.state === 'pending' && !i.questionOptional);
+    if (blocking?.kind === 'approval') this.host.status('needs-input', blocking.title);
+    else if (this.pending.size) this.host.status('working', 'Optional question');
   }
 
   private onStream(event: any) {
@@ -395,6 +413,7 @@ export class ClaudeChat implements ChatDriver {
     if (!ok) this.host.log.settle(interrupted ? 'Interrupted' : 'Turn ended');
     for (const [itemId] of this.pending) this.host.log.update(itemId, 'approval', () => ({ state: 'cancelled', resolution: 'Turn ended' }));
     this.pending.clear();
+    this.questionQueue.clear();
     this.host.log.upsert({
       kind: 'turn',
       id: `turn-${event.uuid ?? Date.now()}`,
@@ -471,18 +490,25 @@ export class ClaudeChat implements ChatDriver {
       files: claudeFileChanges(tool, input),
       options,
       questions,
+      questionOptional: tool === 'AskUserQuestion' && optionalHeaders(questions ?? []),
       acceptsFeedback: tool !== 'AskUserQuestion',
       state: 'pending',
       resolution: null
     });
-    this.host.status('needs-input', title);
+    if (tool === 'AskUserQuestion') {
+      const optional = optionalHeaders(questions ?? []);
+      this.questionQueue.add(itemId, optional, () => this.respond(itemId, { optionId: 'deny' }));
+      this.host.status(optional ? 'working' : 'needs-input', optional ? 'Optional question' : title);
+    } else this.host.status('needs-input', title);
   }
 
   private onCancel(requestId: string) {
     const itemId = `approval-${requestId}`;
     if (!this.pending.delete(itemId)) return;
+    this.questionQueue.remove(itemId);
     this.host.log.update(itemId, 'approval', () => ({ state: 'cancelled', resolution: 'No longer needed' }));
     if (this.pending.size === 0 && this.busy) this.host.status('working', null);
+    this.restoreInputStatus();
   }
 
   private onRateLimit(info: any) {
@@ -499,6 +525,7 @@ export class ClaudeChat implements ChatDriver {
   }
 
   dispose() {
+    this.questionQueue.clear();
     for (const reply of this.replies.values()) reply(null);
     this.replies.clear();
   }

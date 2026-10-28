@@ -72,6 +72,16 @@ New agents (chat, terminal and background tasks, both tools) get an MCP server o
 
 It is not your Chrome: extensions aren't available and some sites refuse embedded browsers (Google sign-in among them). The agent can still read and write your files as before; the browser separates the web session, not the computer.
 
+## Interactive questions in chat
+
+Claude Code's `AskUserQuestion` and Codex's `request_user_input` appear in a persistent card above the message composer. Foreman shows one question at a time, including batches within a single tool call. Other requests wait in order; a queued question's countdown starts only when it reaches the front.
+
+Optional questions continue unanswered after 30 seconds. Click **Keep open**, or start answering, to stop the countdown. Foreman returns no answer when a question expires; it never selects a recommendation for you. Required questions and tool permission approvals have no countdown.
+
+Foreman adds session instructions encouraging both agents to use their question tools. Agents mark low-stakes questions with ` (optional)` in every header, or required decisions with ` (required)`. Codex also supplies a native blocking flag, which Foreman respects; an explicit required header always prevents expiry. Foreman enables Codex's `features.default_mode_request_user_input` for its chat threads. Existing running chats need to be restarted to receive the new session instructions. Project instruction files and account settings are untouched.
+
+These cards apply to **Chat** mode. **Terminal** mode uses the CLI's own interaction UI. Models still decide when to call a tool, and older CLIs may not expose every interactive feature.
+
 ## Development
 
 Node isn't required on PATH: `.tools/node` holds a portable Node (not committed).
