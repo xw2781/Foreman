@@ -20,16 +20,17 @@ export function PromptCacheBadge({ agent, iconOnly = false }: { agent: AgentInfo
       document.removeEventListener('visibilitychange', refresh);
     };
   }, [cache.status, cache.expiresAt]);
+  if (cache.status === 'unknown') return null;
+
   // A model or effort change made since the last request: that request starts from a cold cache.
-  const rebuild = Boolean(agent.cacheRebuild) && cache.status !== 'active' && cache.status !== 'unknown';
+  const rebuild = Boolean(agent.cacheRebuild) && cache.status !== 'active';
   const status = rebuild ? 'expired' : cache.status;
   const label = rebuild ? 'Rebuilds' : cache.status === 'warm' ? `Warm · ${cache.minutes}m`
-    : cache.status === 'expired' ? 'Expired' : cache.status === 'active' ? 'Cache active' : 'Cache unknown';
+    : cache.status === 'expired' ? 'Expired' : 'Cache active';
   const detail = rebuild ? `The ${agent.cacheRebuild?.model !== undefined ? 'model' : 'effort'} changed since the last request, so the next one rebuilds the prompt cache.`
     : cache.status === 'warm' ? `Prompt cache estimated warm: ${cache.minutes} minute${cache.minutes === 1 ? '' : 's'} remaining.`
     : cache.status === 'expired' ? 'Prompt cache estimated expired.'
-      : cache.status === 'active' ? 'Session active. The cache countdown appears when it becomes inactive.'
-        : 'No previous model activity is available to estimate prompt-cache status.';
+      : 'Session active. The cache countdown appears when it becomes inactive.';
   const tooltip = `${iconOnly ? `${label}. ` : ''}${detail} Uses a 1-hour inactivity estimate, not live server cache status. Model or prompt changes can invalidate cached content sooner.`;
   return <span className={`prompt-cache ${status}${iconOnly ? ' icon-only' : ''}`} title={tooltip} aria-label={tooltip} tabIndex={0}>
     <Clock size={12} aria-hidden="true" />{iconOnly ? null : <span>{label}</span>}

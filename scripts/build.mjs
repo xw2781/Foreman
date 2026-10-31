@@ -91,6 +91,9 @@ if (!dev) {
   for (const options of bundles) {
     const ctx = await context({ ...options, plugins: [restartPlugin] });
     await ctx.watch();
+    // watch() starts compilation in the background; it does not await it.
+    // Keep initial onEnd callbacks gated until every bundle is ready.
+    await ctx.rebuild();
   }
   initialBuildDone = true;
   restart();

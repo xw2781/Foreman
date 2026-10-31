@@ -27,7 +27,7 @@ import { SidePanel, usePanelTab } from './SidePanel';
 import { describeSubagents, runningSubagents } from '@shared/subagents';
 import { call, errorMessage } from '../api';
 import { isPanelOpen, useApp } from '../store';
-import { compact, folderName, modelLabel, percent, shortPath, usd } from '../format';
+import { compact, folderName, modelLabel, percent, usd } from '../format';
 import { AccountChip, AgentStatusPill, Empty, Meter, MiniMeter, ProviderIcon, confirmDialog, useFit, useTicker } from '../ui';
 import { mountTerminal, terminalBackground } from '../terminals';
 import { groupAgentsByProject, projectKey } from '../agentProjects';
@@ -356,14 +356,21 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
           <span data-fit="2">
             <AccountChip label={agent.profileLabel} color={agent.profileColor} />
           </span>
-          <span className="mono" data-fit="3" title={agent.projectless ? 'Standalone conversation' : agent.cwd}>
-            {agent.projectless ? 'No project' : shortPath(agent.cwd)}
-          </span>
           {model ? (
             <span className="badge" data-fit="1" title={model}>
               {modelLabel(model)}
             </span>
           ) : null}
+          <span
+            className="mono"
+            data-fit="3"
+            data-tip={agent.projectless ? 'Standalone conversation' : 'Project folder'}
+            data-tip-note={agent.projectless ? undefined : agent.cwd}
+            data-tip-note-path={agent.projectless ? undefined : 'true'}
+            tabIndex={0}
+          >
+            {agent.projectless ? 'No project' : folderName(agent.cwd)}
+          </span>
         </div>
       </div>
       <div className="th-actions">

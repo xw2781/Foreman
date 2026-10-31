@@ -266,12 +266,13 @@ export function Empty({ icon, title, children, action }: { icon: ReactNode; titl
 
 /**
  * One hover card for every element that sets `data-tip` (the label), and optionally
- * `data-tip-note` (a second, quieter line) and `data-tip-key` (a shortcut). It opens below
+ * `data-tip-note` (a second, quieter line), `data-tip-note-path` (path formatting),
+ * and `data-tip-key` (a shortcut). It opens below
  * the element after a short pause, flips above when there's no room, and stays on screen.
  * Use it instead of `title` on icon-only buttons; keep `aria-label` for screen readers.
  */
 export function TipHost() {
-  const [tip, setTip] = useState<{ el: HTMLElement; label: string; note: string | null; key: string | null } | null>(null);
+  const [tip, setTip] = useState<{ el: HTMLElement; label: string; note: string | null; notePath: boolean; key: string | null } | null>(null);
   const [place, setPlace] = useState<{ left: number; top: number; above: boolean; arrow: number } | null>(null);
   const card = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -289,7 +290,7 @@ export function TipHost() {
       setTip(null);
       timer = window.setTimeout(() => {
         if (current !== el || !el.isConnected) return;
-        setTip({ el, label: el.dataset.tip ?? '', note: el.dataset.tipNote ?? null, key: el.dataset.tipKey ?? null });
+        setTip({ el, label: el.dataset.tip ?? '', note: el.dataset.tipNote ?? null, notePath: el.dataset.tipNotePath === 'true', key: el.dataset.tipKey ?? null });
       }, delay);
     };
     const target = (event: Event) => (event.target instanceof Element ? event.target.closest<HTMLElement>('[data-tip]') : null);
@@ -342,7 +343,7 @@ export function TipHost() {
         {tip.label}
         {tip.key ? <span className="kbd">{tip.key}</span> : null}
       </span>
-      {tip.note ? <span className="hover-tip-note">{tip.note}</span> : null}
+      {tip.note ? <span className={`hover-tip-note${tip.notePath ? ' path' : ''}`}>{tip.note}</span> : null}
     </div>,
     document.body
   );
