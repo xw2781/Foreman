@@ -26,7 +26,7 @@ import { listProjectDirectory, readProjectFile } from './projectFiles';
 import { AgentManager } from './agents';
 import { ComputerUseService } from './computerUse';
 import { forgetCli, locateCli } from './cliLocator';
-import { installCli, rollbackCli } from './cliInstall';
+import { installCli, rollbackCli, updateManagedCli } from './cliInstall';
 import { logoutCommand } from './commands';
 import { UpdateService } from './updater';
 import { GitHubSync } from './githubSync';
@@ -73,6 +73,7 @@ const userData = app.getPath('userData');
 const DEFAULT_SETTINGS: AppSettings = {
   activeProfile: { claude: 'claude-default', codex: 'codex-default' },
   cliPath: { claude: '', codex: '' },
+  autoUpdateClis: true,
   defaultCwd: HOME,
   recentCwds: [],
   projectFolders: [],
@@ -326,6 +327,7 @@ function registerIpc() {
       settingsStore.update({ cliPath: { ...settings().cliPath, [provider]: '' } });
       forgetCli(provider);
       emit('settings', settings());
+      profiles.refreshModels(provider).catch(() => {});
       return environment();
     });
   }
@@ -472,6 +474,13 @@ function registerIpc() {
   handle('chat.configure', (id, patch) => agents.chatConfigure(id, patch));
   handle('chat.switchCost', (id, changes) => agents.switchCosts(id, changes));
   handle('chat.commands', (id) => agents.chatCommands(id));
+  handle('chat.connectors', (id) => agents.chatConnectors(id));
+  handle('chat.connectorSignIn', async (id, name) => {
+    const url = await agents.chatConnectorSignIn(id, name);
+    await shell.openExternal(url);
+    return url;
+  });
+  handle('chat.connectorReconnect', (id, name) => agents.chatConnectorReconnect(id, name));
   ipcMain.on('agents.write', (_event, id: string, data: string) => agents.write(id, data));
   ipcMain.on('agents.resize', (_event, id: string, cols: number, rows: number) => agents.resize(id, cols, rows));
   ipcMain.on('theme.initial', (event) => {
@@ -636,6 +645,25 @@ function startLoops() {
     setTimeout(syncLoop, 4 * 60 * 60_000);
   };
   setTimeout(syncLoop, 60_000);
+
+  // Managed CLIs: new models usually ship with a new CLI release, and an older CLI isn't offered them.
+  const cliUpdateLoop = async () => {
+    for (const provider of PROVIDERS) {
+      // A chosen path means the managed copy isn't the one in use.
+      if (!settings().autoUpdateClis || settings().cliPath[provider]) continue;
+      try {
+        const version = await updateManagedCli(provider, (url, init) => net.fetch(url instanceof URL ? url.toString() : url, init));
+        if (!version) continue;
+        forgetCli(provider);
+        await profiles.refreshModels(provider);
+        toast('info', `${PROVIDER_LABEL[provider]} CLI updated to ${version}; new sessions use it.`);
+      } catch {
+        // Offline or a bad release: the installed version stays; tried again next pass.
+      }
+    }
+    setTimeout(cliUpdateLoop, 6 * 60 * 60_000);
+  };
+  setTimeout(cliUpdateLoop, 2 * 60_000);
 
   // An agent or the user may edit pricing.json at any time; polling survives editors that replace the file.
   fs.watchFile(pricingPath, { interval: 2000 }, (current, previous) => {

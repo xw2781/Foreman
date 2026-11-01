@@ -1,5 +1,5 @@
 import type { ChatImage } from '../../shared/types';
-import type { ChatAnswer, ChatCommand, ChatSettingsPatch, ProfileLimits } from '../../shared/types';
+import type { ChatAnswer, ChatCommand, ChatConnector, ChatSettingsPatch, ProfileLimits } from '../../shared/types';
 import type { ChatLog } from './log';
 import type { SubagentTracker } from '../subagents';
 
@@ -41,6 +41,12 @@ export interface ChatDriver {
   generateTitle?(description: string): Promise<string | null>;
   /** The slash commands and skills the session accepts. */
   commands?(): Promise<ChatCommand[]>;
+  /** The session's MCP servers and connectors with their state; null when the CLI didn't answer. */
+  connectors?(): Promise<ChatConnector[] | null>;
+  /** Starts sign-in for a connector: the page to open in the browser (null: nothing to open, or it failed). */
+  connectorSignIn?(name: string): Promise<{ url: string | null; error: string | null }>;
+  /** Connects a connector again (after signing in); the error when it still can't. */
+  connectorReconnect?(name: string): Promise<string | null>;
   readonly busy: boolean;
 }
 

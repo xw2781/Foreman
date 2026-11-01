@@ -3,7 +3,7 @@ import type { CliDefaults, Provider } from './types';
 /** Curated newest-first order; family aliases follow explicit versions. */
 export const MODELS: Record<Provider, string[]> = {
   claude: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1', 'claude-sonnet-5', 'claude-haiku-4-5', 'opus', 'opus[1m]', 'fable', 'sonnet', 'haiku'],
-  codex: ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']
+  codex: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']
 };
 
 function version(id: string): number[] {

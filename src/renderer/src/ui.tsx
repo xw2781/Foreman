@@ -423,6 +423,30 @@ export function useFit<T extends HTMLElement>(deps: unknown[]) {
   return ref;
 }
 
+/**
+ * Keeps a row on one line by compacting it in steps: adds `collapse-1` … `collapse-N` (cumulative)
+ * until it fits, and the stylesheet decides what each step hides. Re-fits when the row resizes or
+ * its contents change (labels, pills appearing), not just on `deps`.
+ */
+export function useCollapse<T extends HTMLElement>(steps: number) {
+  const [row, ref] = useState<T | null>(null);
+  useLayoutEffect(() => {
+    if (!row) return;
+    const fit = () => {
+      for (let step = 1; step <= steps; step++) row.classList.remove(`collapse-${step}`);
+      for (let step = 1; step <= steps && row.scrollWidth > row.clientWidth; step++) row.classList.add(`collapse-${step}`);
+    };
+    fit();
+    // Class changes are attributes, which aren't observed, so fitting can't trigger itself.
+    const resized = new ResizeObserver(fit);
+    resized.observe(row);
+    const changed = new MutationObserver(fit);
+    changed.observe(row, { childList: true, subtree: true, characterData: true });
+    return () => { resized.disconnect(); changed.disconnect(); };
+  }, [row, steps]);
+  return ref;
+}
+
 // ------------------------------------------------------------------ select
 
 export interface SelectOption {

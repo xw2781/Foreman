@@ -35,7 +35,7 @@ describe('model selection defaults', () => {
   it('uses the first listed model instead of an older CLI default', () => {
     const configured = { model: 'opus[1m]', effort: null, models: null };
     expect(defaultModel('claude', configured)).toBe('claude-opus-5-5');
-    expect(defaultModel('codex')).toBe('gpt-6-astra');
+    expect(defaultModel('codex')).toBe('gpt-6.1-sol');
     expect(modelChoices('claude', configured)).not.toContain('');
   });
   it('sorts allowed models newest first without promoting a custom selection', () => {

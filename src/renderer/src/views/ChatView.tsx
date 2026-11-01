@@ -58,15 +58,16 @@ import { commandLists, drafts, imageDrafts, loadChat, loadCommands, sendModes, u
 import { commandToken, rankCommands } from '../commands';
 import { CopyButton, Markdown } from '../markdown';
 import { folderName, modelLabel, percent, usd } from '../format';
-import { Modal, ProviderIcon, Select, useFit } from '../ui';
+import { Modal, ProviderIcon, Select, useCollapse, useFit } from '../ui';
 import { PERMISSIONS, effortOptions, modelOptions } from './LaunchDialog';
 import { ImageAttachments } from '../ImageAttachments';
 import { EffortControl } from '../EffortControl';
 import { AnnotationSelection, AnnotationTray } from '../ChatAnnotations';
 import { annotatedMessage, NO_ANNOTATIONS, restoreAnnotations, setAnnotations, useAnnotations } from '../annotations';
 import { PromptCacheBadge } from '../PromptCacheBadge';
-import { switchCostHint, switchCostNotice, useSwitchCosts } from '../switchCost';
+import { switchCostNotice, useSwitchCosts } from '../switchCost';
 import { SubagentPill } from './SubagentMap';
+import { ConnectorsMenu } from './ConnectorsMenu';
 import '../chat.css';
 
 type Item<K extends ChatItem['kind']> = Extract<ChatItem, { kind: K }>;
@@ -846,6 +847,7 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
   const [text, setText] = useState(() => drafts.get(agent.id) ?? '');
   const [sending, setSending] = useState(false);
   const [modelSwitch, setModelSwitch] = useState<{ agentId: string; model: string; cost: SwitchCost | null } | null>(null);
+  const [effortSwitch, setEffortSwitch] = useState<{ agentId: string; effort: string; label: string; cost: SwitchCost } | null>(null);
   const switchingModel = useRef(false);
   const [images, setImages] = useState<ChatImage[]>(() => imageDrafts.get(agent.id) ?? []);
   const [reading, setReading] = useState(false);
@@ -862,6 +864,7 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
   const name = PROVIDER_LABEL[agent.provider];
   const t = agent.telemetry;
   const hintRow = useFit<HTMLDivElement>([agent.id, midTurn, working, mode]);
+  const toolbar = useCollapse<HTMLDivElement>(3);
 
   // The command menu: opened by typing "/" (or "$" for a Codex skill), or from its button to browse.
   const [caret, setCaret] = useState(0);
@@ -1088,9 +1091,19 @@ ${VOICE_NOTE}`;
   const models = modelOptions(agent.provider, profile?.cliDefaults, currentModel);
   // Once a level is in force there's no "default" to go back to mid-session.
   const efforts = effortOptions(agent.provider, profile?.cliDefaults.effort, currentEffort).filter((o) => o.value || !currentEffort);
-  const otherEfforts = efforts.filter((o) => o.value && o.value !== currentEffort);
-  const costs = useSwitchCosts(agent, otherEfforts.map((o) => ({ effort: o.value })));
-  const effortHints = new Map(otherEfforts.map((o, i) => [o.value, switchCostHint(costs[i])]));
+  // An effort change that would throw away a warm prompt cache asks first, with what it costs.
+  const changeEffort = async (effort: string) => {
+    if (!effort || effort === currentEffort) return;
+    const cost = agent.telemetry?.lastUsage
+      ? await call('chat.switchCost', agent.id, [{ effort }]).then((result) => result[0] ?? null, () => null)
+      : null;
+    if (cost && cost.cacheWarm && cost.rebuild !== 'none' && currentAgent.current === agent.id) {
+      const label = efforts.find((option) => option.value === effort)?.label;
+      setEffortSwitch({ agentId: agent.id, effort, label: typeof label === 'string' ? label : effort, cost });
+    } else {
+      configure({ effort });
+    }
+  };
   const switchModel = async (model: string) => {
     if (model === currentModel || switchingModel.current) return;
     switchingModel.current = true;
@@ -1124,6 +1137,22 @@ ${VOICE_NOTE}`;
               ? 'This switch keeps the current prompt cache.'
               : switchCostNotice(modelSwitch.cost, modelSwitch.model)
             : 'A cost estimate is unavailable for this model switch.'}</p>
+          <p className="muted">Estimates cover the next message’s input at API list prices. Reply costs are additional; subscription billing may differ.</p>
+        </Modal>
+      ) : null}
+      {effortSwitch?.agentId === agent.id ? (
+        <Modal
+          title={`Switch to ${effortSwitch.label} effort?`}
+          onClose={() => setEffortSwitch(null)}
+          footer={<>
+            <button type="button" className="btn" onClick={() => setEffortSwitch(null)}>Cancel</button>
+            <button type="button" className="btn primary" autoFocus onClick={() => {
+              configure({ effort: effortSwitch.effort });
+              setEffortSwitch(null);
+            }}>Switch to {effortSwitch.label}</button>
+          </>}
+        >
+          <p>{switchCostNotice(effortSwitch.cost, null)}</p>
           <p className="muted">Estimates cover the next message’s input at API list prices. Reply costs are additional; subscription billing may differ.</p>
         </Modal>
       ) : null}
@@ -1183,7 +1212,7 @@ ${VOICE_NOTE}`;
             if (e.key === 'Escape' && working) stop();
           }}
         />
-        <div className="composer-bar">
+        <div className="composer-bar" ref={toolbar}>
           <button
             type="button"
             className={`composer-commands ${recording ? 'recording' : ''}`}
@@ -1216,6 +1245,7 @@ ${VOICE_NOTE}`;
           </button>
           <PromptCacheBadge agent={agent} />
           <SubagentPill agent={agent} />
+          <ConnectorsMenu agent={agent} />
           <Select
             variant="ghost"
             size="sm"
@@ -1231,6 +1261,7 @@ ${VOICE_NOTE}`;
             size="sm"
             heading="Model"
             aria-label="Model"
+            className="composer-model"
             value={currentModel}
             options={models}
             custom={{ placeholder: 'Other model id…' }}
@@ -1238,12 +1269,13 @@ ${VOICE_NOTE}`;
           />
           <EffortControl
             model={currentModel}
+            models={models}
+            onModelChange={switchModel}
             value={currentEffort}
             options={efforts}
-            hint={(effort) => effortHints.get(effort)}
-            onChange={(effort) => effort && configure({ effort })}
+            onChange={(effort) => void changeEffort(effort)}
           />
-          {/* Wraps to a line of its own rather than squeezing the controls' labels. */}
+          {/* Never wraps: when narrow, the toolbar compacts in steps (useCollapse, chat.css) instead. */}
           <div className="composer-send">
             {t && t.contextPercent !== null ? (
               <span className="composer-context" tabIndex={0} aria-label={`Context window ${percent(t.contextPercent)} used`}>

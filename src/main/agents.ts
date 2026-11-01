@@ -17,6 +17,7 @@ import {
   type AppSettings,
   type ChatAnswer,
   type ChatCommand,
+  type ChatConnector,
   type ChatItem,
   type ChatSendMode,
   type ChatSettingsPatch,
@@ -710,6 +711,29 @@ export class AgentManager {
       if (commands.length) session.commands = commands;
     }
     return session.commands;
+  }
+
+  /** The running session's connectors (empty when it has ended or its CLI has none to report). */
+  async chatConnectors(id: string): Promise<ChatConnector[]> {
+    const session = this.sessions.get(id);
+    if (!session?.driver?.connectors || session.info.endedAt) return [];
+    return (await session.driver.connectors()) ?? [];
+  }
+
+  /** Starts a connector's sign-in: the page the person finishes it on. */
+  async chatConnectorSignIn(id: string, name: string): Promise<string> {
+    const session = this.sessions.get(id);
+    if (!session?.driver?.connectorSignIn || session.info.endedAt) throw new Error('This conversation is no longer running.');
+    const { url, error } = await session.driver.connectorSignIn(name);
+    if (error) throw new Error(error);
+    if (!url) throw new Error(`Claude Code didn't return a sign-in page for ${name}.`);
+    return url;
+  }
+
+  async chatConnectorReconnect(id: string, name: string): Promise<string | null> {
+    const session = this.sessions.get(id);
+    if (!session?.driver?.connectorReconnect || session.info.endedAt) throw new Error('This conversation is no longer running.');
+    return session.driver.connectorReconnect(name);
   }
 
   /** A queued message sent right away (into the running turn, if there is one), or dropped. */

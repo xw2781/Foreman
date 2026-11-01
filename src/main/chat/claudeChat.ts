@@ -4,10 +4,11 @@ import type { ChatImage } from '../../shared/types';
 // and control requests go in on stdin; conversation events, streaming deltas
 // and permission requests (`can_use_tool`) come out on stdout.
 import { randomUUID } from 'node:crypto';
-import type { ChatAnswer, ChatCommand, ChatOption, ChatQuestion, ChatSettingsPatch } from '../../shared/types';
+import type { ChatAnswer, ChatCommand, ChatConnector, ChatOption, ChatQuestion, ChatSettingsPatch } from '../../shared/types';
 import { describeToolInput } from '../streamFormat';
 import { parseStatusPayload } from '../statusLine';
 import { claudeFileChanges, claudeToolEntry, claudeToolTitle, toolResultText } from './claudeTools';
+import { parseConnectors } from './connectors';
 import type { ChatDriver, ChatHost } from './driver';
 import { clipText } from './log';
 import { optionalHeaders, QuestionQueue, questionInstructions } from './questions';
@@ -555,12 +556,32 @@ export class ClaudeChat implements ChatDriver {
       }));
   }
 
+  async connectors(): Promise<ChatConnector[] | null> {
+    return parseConnectors(await this.ask({ subtype: 'mcp_status' }));
+  }
+
+  async connectorSignIn(name: string) {
+    const reply = await this.askResult({ subtype: 'mcp_authenticate', serverName: name });
+    if (!reply.ok) return { url: null, error: reply.error };
+    const url = typeof reply.response?.authUrl === 'string' && /^https:\/\//i.test(reply.response.authUrl) ? reply.response.authUrl : null;
+    return { url, error: null };
+  }
+
+  async connectorReconnect(name: string) {
+    const reply = await this.askResult({ subtype: 'mcp_reconnect', serverName: name });
+    if (!reply.ok) return reply.error;
+    const label = name.replace(/^claude\.ai /, '');
+    this.host.log.upsert({ kind: 'notice', id: `connector-${name}-${Date.now()}`, tone: 'info', text: `${label} connected. Its tools are available from your next message.` });
+    this.host.changed();
+    return null;
+  }
+
   /** The CLI's answer to one of our control requests. */
   private onControlResponse(response: any) {
     const reply = this.replies.get(response?.request_id);
     if (!reply) return;
     this.replies.delete(response.request_id);
-    reply(response.subtype === 'success' ? response.response : null);
+    reply(response);
   }
 
   private request(request: Record<string, unknown>) {
@@ -571,6 +592,16 @@ export class ClaudeChat implements ChatDriver {
 
   /** A control request whose reply we need: its response, or null on an error or exit. */
   private ask(request: Record<string, unknown>): Promise<any> {
-    return new Promise((resolve) => this.replies.set(this.request(request), resolve));
+    return this.askResult(request).then((reply) => (reply.ok ? reply.response : null));
+  }
+
+  /** A control request's outcome, with the CLI's error message when it refused. */
+  private askResult(request: Record<string, unknown>): Promise<{ ok: true; response: any } | { ok: false; error: string }> {
+    return new Promise((resolve) =>
+      this.replies.set(this.request(request), (response: any) => {
+        if (response?.subtype === 'success') resolve({ ok: true, response: response.response });
+        else resolve({ ok: false, error: response ? String(response.error ?? 'The request failed') : 'The session has ended' });
+      })
+    );
   }
 }

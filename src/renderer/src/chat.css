@@ -948,10 +948,11 @@
 .annotation-card .annotation-edit { min-height: 70px; margin: 6px 0; }
 .annotation-card .annotation-comment { min-height: 32px; background: var(--surface-1); }
 .annotation-chip { display: flex; align-items: center; justify-self: start; border: 1px solid var(--border-strong); border-radius: 9px; }
-/* Nothing here shrinks: when the controls don't fit on one line, the send group wraps to the next. */
+/* Always one line. Nothing here shrinks; when the controls don't fit, useCollapse adds collapse-1…3
+   and each step folds more labels away (the composer-bar.collapse-* rules below). */
 .composer-bar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -972,74 +973,131 @@
   gap: 6px;
   margin-left: auto;
 }
+/* 1: the model and effort fold into the brain icon; its popover holds both. */
+.composer-bar.collapse-1 .composer-model { display: none; }
+.composer-bar.collapse-1 .effort-trigger .sel-value,
+.composer-bar.collapse-1 .effort-trigger .sel-chev { display: none; }
+/* 2: the other pills keep only their icons (the label stays in each tooltip). */
+.composer-bar.collapse-2 .sel .sel-value,
+.composer-bar.collapse-2 .sel .sel-chev,
+.composer-bar.collapse-2 .prompt-cache > span,
+.composer-bar.collapse-2 .subagent-pill > span,
+.composer-bar.collapse-2 .connectors-pill > span { display: none; }
+/* 3: the context ring loses its percentage, and the voice status its text. */
+.composer-bar.collapse-3 .composer-context > span:last-child,
+.composer-bar.collapse-3 .voice-status { display: none; }
 .effort-popover {
   position: fixed;
   z-index: 300;
-  width: 320px;
+  width: 300px;
   max-width: calc(100vw - 16px);
-  padding: 14px;
+  padding: 14px 16px 16px;
   border: 1px solid var(--border-strong);
   border-radius: 20px;
   background: var(--surface-2);
   box-shadow: var(--shadow);
 }
 .effort-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
+  display: grid;
+  grid-template-columns: 28px 1fr 28px;
+  align-items: start;
+  margin-bottom: 14px;
 }
-.effort-heading > svg { margin-top: 5px; }
-.effort-heading > div { display: grid; gap: 3px; text-align: center; }
-.effort-heading strong { color: var(--accent-strong); font-size: 15px; }
-.effort-heading span { color: var(--text-muted); font-size: 11.5px; }
-.effort-heading .btn { width: 24px; height: 24px; }
+.effort-heading > svg { margin: 6px 0 0 4px; color: var(--text-muted); }
+.effort-heading > div { display: grid; gap: 2px; min-width: 0; text-align: center; }
+.effort-heading strong { color: var(--accent-strong); font-size: 16px; font-weight: 600; }
+.effort-heading span { overflow: hidden; color: var(--text-secondary); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+.effort-heading .btn { width: 28px; height: 28px; padding: 0; }
+.effort-heading .btn:disabled { opacity: 0.35; }
+.effort-model-link {
+  display: inline-flex;
+  align-items: center;
+  justify-self: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.effort-model-link:hover { color: var(--text-primary); }
+.effort-model-link:focus-visible { outline: 1px solid var(--accent); }
+.effort-models { display: grid; gap: 2px; max-height: 300px; margin: -4px -6px 0; overflow-y: auto; }
+.effort-model {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.effort-model small { display: block; margin-top: 1px; color: var(--text-muted); font-size: 11px; }
+.effort-model:hover,
+.effort-model:focus-visible { background: var(--surface-3); outline: none; }
+.effort-model.on { color: var(--accent-strong); }
+.effort-model.more { color: var(--text-muted); }
+/* A pill track the height of the 32px thumb; stops sit 16px in from each end, under the thumb's centre. */
 .effort-track {
   position: relative;
-  height: 30px;
-  border-radius: 18px;
+  height: 32px;
+  border-radius: 16px;
   background: var(--surface-3);
 }
 .effort-track::before {
   content: '';
   position: absolute;
-  inset: 0 15px;
-  background: linear-gradient(to right, var(--accent) var(--effort-progress), transparent var(--effort-progress));
+  inset: 0 auto 0 0;
+  width: calc(32px + (100% - 32px) * var(--effort-fraction));
+  border-radius: 16px;
+  background: var(--accent);
+  transition: width 140ms ease;
+  pointer-events: none;
 }
 .effort-stops {
   position: absolute;
-  inset: 0 15px;
+  inset: 0 14px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   pointer-events: none;
 }
 .effort-stops span { width: 4px; height: 4px; border-radius: 50%; background: var(--text-muted); }
+.effort-stops span.on { background: var(--accent-ink); opacity: 0.55; }
 .effort-track input {
   appearance: none;
   position: relative;
+  display: block;
   width: 100%;
-  height: 30px;
+  height: 32px;
   margin: 0;
   background: transparent;
   cursor: pointer;
   touch-action: none;
 }
-.effort-track input::-webkit-slider-runnable-track { height: 30px; background: transparent; }
+.effort-track input::-webkit-slider-runnable-track { height: 32px; background: transparent; }
 .effort-track input::-webkit-slider-thumb {
   appearance: none;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   background: #fff;
-  border: 1px solid #d4d4d4;
-  box-shadow: 0 1px 4px #0003;
+  box-shadow: 0 1px 2px #0002, 0 2px 6px #0002;
+  transition: transform 120ms ease;
 }
-.effort-track input:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 18px; }
-.effort-labels { display: flex; justify-content: space-between; gap: 4px; margin-top: 10px; }
-.effort-labels button { background: transparent; color: var(--text-muted); font-size: 10.5px; padding: 2px; cursor: pointer; }
-.effort-labels button.on { color: var(--accent-strong); }
+.effort-track input:active::-webkit-slider-thumb { transform: scale(1.06); }
+.effort-track input:focus { outline: none; }
+.effort-track input:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--accent-soft), 0 2px 6px #0002; }
 .composer-context {
   position: relative;
   display: flex;
@@ -1442,6 +1500,61 @@
 }
 
 /* What previewing another effort level adds to the next message (prompt-cache rebuild). */
-.effort-cost { min-height: 16px; margin-top: 8px; color: var(--text-muted); font-size: 11px; line-height: 1.4; text-align: center; }
 .cache-rebuild .queue-head { align-items: flex-start; color: var(--warning); }
 .cache-rebuild .queue-head > svg { flex: none; margin-top: 2px; }
+
+/* Connectors (claude.ai Microsoft 365, Gmail…): the composer pill and its menu. */
+.connectors-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  max-width: 220px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.connectors-pill > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connectors-pill:hover { background: var(--surface-3); color: var(--text-secondary); }
+.connectors-pill.attention { color: var(--text-primary); background: var(--warning-soft); box-shadow: inset 0 0 0 1px var(--warning); }
+.connectors-pill.on { box-shadow: inset 0 0 0 1px var(--accent); }
+.connectors-pill:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.connectors-menu {
+  position: fixed;
+  z-index: 300;
+  display: grid;
+  gap: 4px;
+  width: min(380px, calc(100vw - 16px));
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  box-shadow: var(--shadow);
+  font-size: 12.5px;
+}
+.connectors-head { display: flex; align-items: center; justify-content: space-between; }
+.connectors-empty { display: flex; gap: 7px; align-items: center; padding: 6px 9px 8px; color: var(--text-secondary); line-height: 1.45; }
+.connectors-list { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.connector-row { display: flex; align-items: flex-start; gap: 9px; padding: 7px 9px; border-radius: var(--radius-sm); }
+.connector-row[data-status='needs-auth'] { background: var(--warning-soft); }
+.connector-dot { flex: none; width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--text-muted); }
+.connector-dot.connected { background: var(--good); }
+.connector-dot.needs-auth { background: var(--warning); }
+.connector-dot.failed { background: var(--critical); }
+.connector-dot.pending { background: var(--accent); }
+.connector-text { display: grid; flex: 1; min-width: 0; gap: 2px; }
+.connector-name { color: var(--text-primary); font-weight: 500; overflow-wrap: anywhere; }
+.connector-sub { color: var(--text-muted); font-size: 11.5px; }
+.connector-help { color: var(--text-secondary); font-size: 11.5px; line-height: 1.45; }
+.connector-error { color: var(--critical); font-size: 11.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.connector-action { flex: none; display: flex; align-items: center; min-height: 26px; }
+.connectors-foot { display: grid; gap: 4px; padding: 7px 9px 5px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 11.5px; line-height: 1.45; }
+.connectors-link { display: inline-flex; align-items: center; gap: 4px; justify-self: start; padding: 0; border: 0; background: none; color: var(--accent-strong); font: inherit; cursor: pointer; }
+.connectors-link:hover { text-decoration: underline; }

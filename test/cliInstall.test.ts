@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { c as pack } from 'tar';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { contained, installCli, managedCli, rollbackCli, safeEntry, verifyArchive } from '../src/main/cliInstall';
+import { contained, installCli, managedCli, rollbackCli, safeEntry, updateManagedCli, verifyArchive } from '../src/main/cliInstall';
 import { run } from '../src/main/util';
 
 vi.mock('../src/main/util', async (original) => ({ ...await original<object>(), run: vi.fn() }));
@@ -54,5 +54,22 @@ describe('managed CLI installation', () => {
     expect(second).not.toBe(first);
     expect(await rollbackCli('claude', managedRoot)).toBe(first);
     expect(managedCli('claude', managedRoot)).toBe(first);
+    // A rollback holds the version until the person updates by hand.
+    version = '1.0.2';
+    expect(await updateManagedCli('claude', fetcher, managedRoot)).toBeNull();
+    expect(managedCli('claude', managedRoot)).toBe(first);
+    const third = await installCli('claude', fetcher, managedRoot);
+    version = '1.0.3';
+    expect(await updateManagedCli('claude', fetcher, managedRoot)).toBe('1.0.3');
+    expect(await updateManagedCli('claude', fetcher, managedRoot)).toBeNull();
+    // Only the active and previous versions stay on disk.
+    const kept = fs.readdirSync(path.join(managedRoot, 'claude')).filter((name) => name !== 'active.json');
+    expect(kept.sort()).toEqual([path.relative(managedRoot, third).split(path.sep)[1], path.relative(managedRoot, managedCli('claude', managedRoot)!).split(path.sep)[1]].sort());
+  });
+
+  it('does not install a CLI the person never installed for Foreman', async () => {
+    const fetcher = vi.fn();
+    expect(await updateManagedCli('codex', fetcher, path.join(root, 'tools'))).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });

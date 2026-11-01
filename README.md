@@ -72,6 +72,10 @@ New agents (chat, terminal and background tasks, both tools) get an MCP server o
 
 It is not your Chrome: extensions aren't available and some sites refuse embedded browsers (Google sign-in among them). The agent can still read and write your files as before; the browser separates the web session, not the computer.
 
+## Connectors (email, calendar, files)
+
+Claude chats can use the claude.ai connectors of their account (Microsoft 365, Gmail, Google Drive…). The **Connectors** button under the message box lists them with their state, read from Claude Code's `mcp_status`; one that needs sign-in turns it amber. **Sign in** opens the connector's claude.ai authorization page (`mcp_authenticate`), and Foreman reconnects it (`mcp_reconnect`) when you come back, without restarting the chat. Step-by-step guide: [docs/connectors.md](docs/connectors.md).
+
 ## Interactive questions in chat
 
 Claude Code's `AskUserQuestion` and Codex's `request_user_input` appear in a persistent card above the message composer. Foreman shows one question at a time, including batches within a single tool call. Other requests wait in order; a queued question's countdown starts only when it reaches the front.

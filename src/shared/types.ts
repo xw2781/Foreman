@@ -427,6 +427,20 @@ export interface ChatCommand {
   aliases: string[];
 }
 
+/** An MCP server a Claude session can use: a claude.ai connector (Microsoft 365, Gmail…) or one configured locally. */
+export interface ChatConnector {
+  /** The CLI's server name, e.g. "claude.ai Microsoft 365". */
+  name: string;
+  /** Without the "claude.ai " prefix. */
+  label: string;
+  /** connected · needs-auth (sign-in required) · pending (still connecting) · failed · disabled. */
+  status: 'connected' | 'needs-auth' | 'pending' | 'failed' | 'disabled';
+  /** claude.ai connectors are authorized in the person's claude.ai account; local ones by the CLI itself. */
+  source: 'claudeai' | 'local';
+  tools: number;
+  error: string | null;
+}
+
 export interface ChatSettingsPatch {
   permission?: string;
   model?: string;
@@ -615,6 +629,8 @@ export type LightPalette = 'cream' | 'grey';
 export interface AppSettings {
   activeProfile: Record<Provider, string>;
   cliPath: Record<Provider, string>;
+  /** Keep CLIs that Foreman installed on their latest release (new models often need a newer CLI). */
+  autoUpdateClis: boolean;
   defaultCwd: string;
   recentCwds: string[];
   /** Project folders added to the session panel, including projects without sessions yet. */

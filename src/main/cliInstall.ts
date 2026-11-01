@@ -8,7 +8,8 @@ import { cleanEnv, readJsonFile, run, writeJsonFileAtomic } from './util';
 
 export const toolsRoot = () => path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'), 'Foreman', 'tools');
 interface Release { version: string; executable: string }
-interface Installation { current: Release; previous?: Release }
+/** `held`: the person rolled back, so automatic updates leave this version alone until they update by hand. */
+interface Installation { current: Release; previous?: Release; held?: boolean }
 const registry = 'https://registry.npmjs.org/';
 const packages = { claude: '@anthropic-ai/claude-code', codex: '@openai/codex' };
 
@@ -85,7 +86,10 @@ async function install(provider: Provider, fetcher: typeof fetch, root: string):
   const meta = await metadata(nativePackage, nativeVersion);
   if (meta.name !== nativePackage || meta.version !== nativeVersion) throw new Error('Unexpected native package metadata.');
   const old = readJsonFile<Installation>(manifest(provider, root));
-  if (old?.current.version === parent.version && managedCli(provider, root)) return managedCli(provider, root)!;
+  if (old && old.current.version === parent.version && managedCli(provider, root)) {
+    if (old.held) writeJsonFileAtomic(manifest(provider, root), { current: old.current, previous: old.previous });
+    return managedCli(provider, root)!;
+  }
   const bytes = await download(meta.dist.tarball, 350 * 1024 * 1024);
   verifyArchive(bytes, meta.dist.integrity);
   const folder = contained(root, `${provider}/${parent.version}-${randomUUID()}`);
@@ -107,7 +111,9 @@ async function install(provider: Provider, fetcher: typeof fetch, root: string):
     const checked = await run(executable, ['--version'], { env: { ...cleanEnv(), DISABLE_AUTOUPDATER: '1' }, timeout: 30_000 });
     if (checked.code !== 0 || !checked.stdout.includes(parent.version)) throw new Error('Downloaded CLI failed its version check. Previous installation is unchanged.');
     fs.unlinkSync(archive);
-    writeJsonFileAtomic(manifest(provider, root), { current: { version: parent.version, executable: path.relative(root, executable) }, previous: old?.current });
+    const current = { version: parent.version, executable: path.relative(root, executable) };
+    writeJsonFileAtomic(manifest(provider, root), { current, previous: old?.current });
+    prune(provider, root, [current, old?.current]);
     return executable;
   } catch (error) {
     fs.rmSync(folder, { recursive: true, force: true });
@@ -122,6 +128,39 @@ export async function rollbackCli(provider: Provider, root = toolsRoot()): Promi
   const file = contained(root, old.previous.executable);
   const checked = await run(file, ['--version'], { env: { ...cleanEnv(), DISABLE_AUTOUPDATER: '1' } });
   if (checked.code !== 0) throw new Error('Previous version could not be started.');
-  writeJsonFileAtomic(manifest(provider, root), { current: old.previous, previous: old.current });
+  writeJsonFileAtomic(manifest(provider, root), { current: old.previous, previous: old.current, held: true });
   return file;
+}
+
+/**
+ * Brings a Foreman-installed CLI up to the latest release; new models often
+ * need a newer CLI to be listed at all. Returns the new version, or null when
+ * nothing changed (not managed, rolled back, or already current).
+ */
+export async function updateManagedCli(provider: Provider, fetcher: typeof fetch = fetch, root = toolsRoot()): Promise<string | null> {
+  const before = readJsonFile<Installation>(manifest(provider, root));
+  if (!before || before.held || !managedCli(provider, root)) return null;
+  await installCli(provider, fetcher, root);
+  const after = readJsonFile<Installation>(manifest(provider, root));
+  return after && after.current.version !== before.current.version ? after.current.version : null;
+}
+
+/**
+ * Removes installed versions other than `keep`. A version still running is
+ * locked: renaming its folder fails, so it is left for a later update.
+ */
+function prune(provider: Provider, root: string, keep: Array<Release | undefined>) {
+  const dir = path.join(root, provider);
+  const kept = new Set(keep.flatMap((release) => release ? [path.normalize(release.executable).split(path.sep)[1]] : []));
+  for (const name of fs.readdirSync(dir)) {
+    if (name === 'active.json' || kept.has(name)) continue;
+    const full = path.join(dir, name);
+    try {
+      const trash = name.endsWith('.trash') ? full : `${full}.trash`;
+      if (trash !== full) fs.renameSync(full, trash);
+      fs.rmSync(trash, { recursive: true, force: true });
+    } catch {
+      // In use, or partly removed: tried again after the next update.
+    }
+  }
 }

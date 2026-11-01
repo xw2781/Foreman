@@ -25,7 +25,7 @@ export function PromptCacheBadge({ agent, iconOnly = false }: { agent: AgentInfo
   // A model or effort change made since the last request: that request starts from a cold cache.
   const rebuild = Boolean(agent.cacheRebuild) && cache.status !== 'active';
   const status = rebuild ? 'expired' : cache.status;
-  const label = rebuild ? 'Rebuilds' : cache.status === 'warm' ? `Warm · ${cache.minutes}m`
+  const label = rebuild ? 'Rebuilds' : cache.status === 'warm' ? `${cache.minutes}m`
     : cache.status === 'expired' ? 'Expired' : 'Cache active';
   const detail = rebuild ? `The ${agent.cacheRebuild?.model !== undefined ? 'model' : 'effort'} changed since the last request, so the next one rebuilds the prompt cache.`
     : cache.status === 'warm' ? `Prompt cache estimated warm: ${cache.minutes} minute${cache.minutes === 1 ? '' : 's'} remaining.`

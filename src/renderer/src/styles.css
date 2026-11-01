@@ -12,9 +12,10 @@
   white-space: nowrap;
   cursor: default;
 }
-.prompt-cache.warm { color: var(--good); background: var(--good-soft); }
+.prompt-cache.warm { color: var(--text-muted); }
 .prompt-cache.expired { color: var(--serious); }
 .prompt-cache.icon-only { padding: 0; background: none; }
+.prompt-cache.warm.icon-only { color: var(--good); }
 .prompt-cache:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 
 :root {

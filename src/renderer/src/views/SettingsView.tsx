@@ -139,6 +139,9 @@ export function SettingsView() {
             </Setting>
           );
         })}
+        <Setting title="Keep installed tools up to date" description="Checks every few hours for a new release of tools installed for Foreman, so new models show up. Rolling back pauses this until you update by hand.">
+          <Switch on={settings.autoUpdateClis} onChange={(v) => update({ autoUpdateClis: v })} />
+        </Setting>
         <Setting title="Launch isolated Codex accounts without the shared daemon" description="Passes --no-daemon so a second account never attaches to a background app-server started under another account.">
           <Switch on={settings.codexNoDaemonForIsolated} onChange={(v) => update({ codexNoDaemonForIsolated: v })} />
         </Setting>

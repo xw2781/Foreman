@@ -8,6 +8,7 @@ import type {
   BrowserState,
   ChatAnswer,
   ChatCommand,
+  ChatConnector,
   ChatItem,
   ChatSendMode,
   ChatSettingsPatch,
@@ -85,6 +86,12 @@ export interface InvokeMap {
   'chat.switchCost': (id: string, changes: SettingsChange[]) => Array<SwitchCost | null>;
   /** The slash commands and skills the session accepts (the last known ones once it has ended). */
   'chat.commands': (id: string) => ChatCommand[];
+  /** The running Claude session's connectors (claude.ai Microsoft 365, Gmail…) and MCP servers, with their state. */
+  'chat.connectors': (id: string) => ChatConnector[];
+  /** Starts sign-in for a connector and opens its page in the browser; returns the page. */
+  'chat.connectorSignIn': (id: string, name: string) => string;
+  /** Connects it again once signed in; the reason when it still can't (null: connected). */
+  'chat.connectorReconnect': (id: string, name: string) => string | null;
 
   /** A folder of the agent's project, relative to its cwd ('' is the root). */
   'files.list': (id: string, dir: string) => { entries: ProjectFileEntry[]; omitted: number };
@@ -170,6 +177,7 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'agents.list', 'agents.launch', 'agents.write', 'agents.resize', 'agents.stop', 'agents.remove', 'agents.clearFinished',
   'agents.rename', 'agents.resume', 'agents.buffer',
   'chat.file', 'chat.items', 'chat.send', 'chat.interrupt', 'chat.respond', 'chat.configure', 'chat.switchCost', 'chat.commands', 'chat.queued',
+  'chat.connectors', 'chat.connectorSignIn', 'chat.connectorReconnect',
   'files.list', 'files.read',
   'processes.external', 'processes.kill',
   'usage.report', 'usage.export', 'usage.import', 'usage.forgetMachine', 'pricing.status', 'pricing.edit',

@@ -273,6 +273,13 @@ export class ProfileService {
     this.onChanged();
   }
 
+  /** After the tool's CLI changed: a different version can offer different models. */
+  async refreshModels(provider: Provider) {
+    const targets = this.list().filter((profile) => profile.provider === provider);
+    await Promise.all(targets.map((profile) => this.modelCatalog.refresh(this.catalogKey(profile), true, () => this.modelsLoader(profile))));
+    this.onChanged();
+  }
+
   /** Claude's global config: ~/.claude.json for the built-in account, <dir>/.claude.json otherwise. */
   private claudeGlobalConfig(profile: Profile) {
     return profile.builtin ? path.join(HOME, '.claude.json') : path.join(profile.configDir, '.claude.json');

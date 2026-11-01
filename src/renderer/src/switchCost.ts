@@ -33,15 +33,6 @@ function signed(value: number) {
   return `${value < 0 ? '−' : '+'}${usd(Math.abs(value))}`;
 }
 
-/** One line for a model or effort menu: what choosing it adds to the next message. */
-export function switchCostHint(cost: SwitchCost | null | undefined): string | undefined {
-  if (!cost || cost.extraUsd === null) return undefined;
-  if (cost.rebuild === 'none') return cost.cacheWarm ? 'Keeps the prompt cache' : undefined;
-  const tokens = compact(cost.contextTokens);
-  if (!cost.cacheWarm) return `Cache expired · ${signed(cost.extraUsd)} to rebuild ${tokens} tokens here`;
-  return `${signed(cost.extraUsd)} next message · re-caches ${cost.rebuild === 'full' ? '' : 'up to '}${tokens} tokens`;
-}
-
 /** The notice for a change already made: what the next message's input costs because of it. */
 export function switchCostNotice(cost: SwitchCost, model: string | null | undefined): string {
   const tokens = compact(cost.contextTokens);

@@ -13,7 +13,7 @@
     "A copy named pricing.json in Foreman's data folder (Settings > Context & cost > Model prices) overrides this table without an app update:",
     "for each model, the entry from whichever file has the later pricingDate wins; models found in only one file are always used. Foreman reloads it on save."
   ],
-  "pricingDate": "2026-10-02",
+  "pricingDate": "2026-10-28",
   "sources": {
     "claude": "https://platform.claude.com/docs/en/about-claude/pricing",
     "sonnet55": "https://platform.claude.com/docs/en/models/sonnet-5-5/overview",
@@ -22,7 +22,8 @@
   "models": [
     { "model": "gpt-6-astra", "provider": "codex", "input": 10, "cachedInput": 1, "output": 50, "cacheWrite": 12.5, "longContext": true, "longContextOutputMultiplier": 1.5 },
     { "model": "gpt-6.1-sol", "provider": "codex", "input": 2, "cachedInput": 0.1, "output": 10, "cacheWrite": 2.5, "longContext": true, "longContextOutputMultiplier": 1.5 },
-    { "model": "gpt-6-sol", "provider": "codex", "input": 2, "cachedInput": 0.2, "output": 10, "cacheWrite": 2.5, "longContext": true },
+    { "model": "gpt-6.1-terra", "provider": "codex", "input": 1, "cachedInput": 0.05, "output": 5, "cacheWrite": 1.25, "longContext": true, "longContextOutputMultiplier": 1.5 },
+    { "model": "gpt-6-sol", "provider": "codex", "input": 2, "cachedInput": 0.2, "output": 10, "cacheWrite": 2.5, "longContext": true, "longContextOutputMultiplier": 1.5 },
     { "model": "gpt-6-luna", "provider": "codex", "input": 0.1, "cachedInput": 0.01, "output": 0.5, "cacheWrite": 0.125, "longContext": true, "longContextOutputMultiplier": 1.5 },
     { "model": "gpt-5.6-sol", "provider": "codex", "aliases": ["gpt-5.6"], "input": 4, "cachedInput": 0.4, "output": 20, "cacheWrite": 5, "longContext": true, "longContextOutputMultiplier": 1.5 },
     { "model": "gpt-5.6-terra", "provider": "codex", "input": 2, "cachedInput": 0.2, "output": 12, "cacheWrite": 2.5, "longContext": true },
