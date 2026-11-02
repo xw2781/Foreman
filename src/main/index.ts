@@ -91,6 +91,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   codexNoDaemonForIsolated: true,
   shellForTerminals: 'powershell.exe',
   claudeStatusLine: true,
+  claudeIdleMode: 'compact',
+  claudeIdleCompactMinTokens: 0,
   chatSendMode: 'steer',
   voiceModel: 'Xenova/whisper-base',
   browserEnabled: true,
@@ -481,6 +483,13 @@ function registerIpc() {
     return url;
   });
   handle('chat.connectorReconnect', (id, name) => agents.chatConnectorReconnect(id, name));
+  handle('chat.contextUsage', (id) => agents.chatContextUsage(id));
+  handle('chat.setKeepWarm', (id, hours) => agents.setKeepWarm(id, Number(hours)));
+  handle('chat.setIdleMode', (id, mode) => {
+    if (mode !== 'compact' && mode !== 'off') throw new Error('Unknown idle mode');
+    agents.setIdleMode(id, mode);
+  });
+  handle('agents.setArchived', (ids) => agents.setArchived(Array.isArray(ids) ? ids.filter((i) => typeof i === 'string') : []));
   ipcMain.on('agents.write', (_event, id: string, data: string) => agents.write(id, data));
   ipcMain.on('agents.resize', (_event, id: string, cols: number, rows: number) => agents.resize(id, cols, rows));
   ipcMain.on('theme.initial', (event) => {

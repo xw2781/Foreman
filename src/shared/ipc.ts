@@ -1,6 +1,7 @@
 import type { ChatImage, ChatMessage } from './types';
 import type {
   AgentInfo,
+  IdleMode,
   AgentMode,
   AppSettings,
   BrowserCommand,
@@ -9,6 +10,7 @@ import type {
   ChatAnswer,
   ChatCommand,
   ChatConnector,
+  ContextUsage,
   ChatItem,
   ChatSendMode,
   ChatSettingsPatch,
@@ -88,6 +90,14 @@ export interface InvokeMap {
   'chat.commands': (id: string) => ChatCommand[];
   /** The running Claude session's connectors (claude.ai Microsoft 365, Gmail…) and MCP servers, with their state. */
   'chat.connectors': (id: string) => ChatConnector[];
+  /** What the running Claude session's context window holds, by part (null for other sessions). */
+  'chat.contextUsage': (id: string) => ContextUsage | null;
+  /** Whether Claude Code may compact this session while it sits idle (a running chat switches at once). */
+  'chat.setIdleMode': (id: string, mode: IdleMode) => void;
+  /** How many hours a Claude chat's prompt cache is kept warm after its last reply (0: off). */
+  'chat.setKeepWarm': (id: string, hours: number) => void;
+  /** The agents archived in the session list: keep-warm skips them. */
+  'agents.setArchived': (ids: string[]) => void;
   /** Starts sign-in for a connector and opens its page in the browser; returns the page. */
   'chat.connectorSignIn': (id: string, name: string) => string;
   /** Connects it again once signed in; the reason when it still can't (null: connected). */
@@ -177,7 +187,8 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'agents.list', 'agents.launch', 'agents.write', 'agents.resize', 'agents.stop', 'agents.remove', 'agents.clearFinished',
   'agents.rename', 'agents.resume', 'agents.buffer',
   'chat.file', 'chat.items', 'chat.send', 'chat.interrupt', 'chat.respond', 'chat.configure', 'chat.switchCost', 'chat.commands', 'chat.queued',
-  'chat.connectors', 'chat.connectorSignIn', 'chat.connectorReconnect',
+  'chat.connectors', 'chat.connectorSignIn', 'chat.connectorReconnect', 'chat.contextUsage',
+  'chat.setIdleMode', 'chat.setKeepWarm', 'agents.setArchived',
   'files.list', 'files.read',
   'processes.external', 'processes.kill',
   'usage.report', 'usage.export', 'usage.import', 'usage.forgetMachine', 'pricing.status', 'pricing.edit',

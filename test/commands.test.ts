@@ -1,11 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { claudeCommand, codexCommand, splitArgs } from '../src/main/commands';
+import { claudeCommand, claudeIdleCompaction, codexCommand, splitArgs } from '../src/main/commands';
 import { parseStatusPayload, defaultStatusText } from '../src/main/statusLine';
 import { ClaudeStreamFormatter } from '../src/main/streamFormat';
 import type { Profile } from '../src/shared/types';
 
 const isolated: Profile = { id: 'codex-work', provider: 'codex', label: 'Work', color: 'slot-5', configDir: 'C:\\p', builtin: false, createdAt: '' };
 const builtin: Profile = { ...isolated, id: 'codex-default', builtin: true };
+
+describe('idle compaction', () => {
+  it('leaves Claude Code alone by default', () => {
+    expect(claudeIdleCompaction('compact', { claudeIdleCompactMinTokens: 0 })).toEqual({ settings: {}, env: {} });
+  });
+
+  it('turns it off through the settings file and passes a raised floor as env', () => {
+    expect(claudeIdleCompaction('off', { claudeIdleCompactMinTokens: 400_000 })).toEqual({ settings: { idleCompaction: false }, env: {} });
+    expect(claudeIdleCompaction('compact', { claudeIdleCompactMinTokens: 400_000 }).env).toEqual({ CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS: '400000' });
+    expect(claudeIdleCompaction('compact', { claudeIdleCompactMinTokens: 50_000 }).env).toEqual({ CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS: '100000' });
+  });
+});
 
 describe('command lines', () => {
   it('pins a Claude session id and injects the hook settings file', () => {

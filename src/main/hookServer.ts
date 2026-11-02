@@ -89,7 +89,7 @@ export class HookServer {
    * answers with the text of the user's own status line so nothing changes
    * on screen. curl.exe ships with Windows 10 1803 and later.
    */
-  settingsFileFor(agentId: string, statusLine: { refreshInterval?: number } | null = null): string | null {
+  settingsFileFor(agentId: string, statusLine: { refreshInterval?: number } | null = null, extra: Record<string, unknown> = {}): string | null {
     if (!this.url) return null;
     // Only documented keys: an invalid settings file makes Claude Code show an error dialog.
     const hook = { type: 'http', url: `${this.url}/hook/${agentId}`, headers: { 'X-ATC-Token': this.token } };
@@ -97,7 +97,7 @@ export class HookServer {
     for (const event of EVENTS) {
       hooks[event] = [TOOL_EVENTS.has(event) ? { matcher: '*', hooks: [hook] } : { hooks: [hook] }];
     }
-    const settings: Record<string, unknown> = { hooks };
+    const settings: Record<string, unknown> = { ...extra, hooks };
     if (statusLine) {
       const curl = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'curl.exe').replace(/\\/g, '/');
       // An unquoted program path runs in bash, cmd and PowerShell alike (PowerShell
@@ -109,7 +109,13 @@ export class HookServer {
         ...(statusLine.refreshInterval ? { refreshInterval: statusLine.refreshInterval } : {})
       };
     }
+    return this.writeSettingsFile(agentId, settings);
+  }
+
+  /** A per-agent settings file without hooks (chats get their events over stdio). */
+  writeSettingsFile(agentId: string, settings: Record<string, unknown>): string {
     const file = path.join(this.settingsDir, `${agentId}.json`);
+    fs.mkdirSync(this.settingsDir, { recursive: true });
     fs.writeFileSync(file, JSON.stringify(settings, null, 2), 'utf8');
     return file;
   }

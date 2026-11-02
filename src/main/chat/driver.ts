@@ -1,5 +1,5 @@
 import type { ChatImage } from '../../shared/types';
-import type { ChatAnswer, ChatCommand, ChatConnector, ChatSettingsPatch, ProfileLimits } from '../../shared/types';
+import type { ChatAnswer, ChatCommand, ChatConnector, ChatSettingsPatch, ContextUsage, ProfileLimits } from '../../shared/types';
 import type { ChatLog } from './log';
 import type { SubagentTracker } from '../subagents';
 
@@ -47,6 +47,15 @@ export interface ChatDriver {
   connectorSignIn?(name: string): Promise<{ url: string | null; error: string | null }>;
   /** Connects a connector again (after signing in); the error when it still can't. */
   connectorReconnect?(name: string): Promise<string | null>;
+  /** What the context window holds, by part; null when the CLI didn't answer. */
+  contextUsage?(): Promise<ContextUsage | null>;
+  /**
+   * Asks a one-off question about the conversation without adding to it (Claude Code's
+   * side question: no tools, not written to the transcript, read from the prompt cache).
+   */
+  sideQuestion?(question: string): Promise<{ ok: true; text: string } | { ok: false; error: string }>;
+  /** Lets Claude Code compact the conversation while it sits idle, or stops it (flag settings, from now on). */
+  setIdleCompaction?(on: boolean): void;
   readonly busy: boolean;
 }
 

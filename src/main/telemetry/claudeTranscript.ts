@@ -35,6 +35,8 @@ export interface ClaudeTranscriptState {
   model: string | null;
   effort: string | null;
   lastUsage: TokenUsage | null;
+  /** Context size Claude Code reported right after the latest compaction; null once a request has run since. */
+  contextAfterCompaction: number | null;
   totals: TokenUsage;
   requests: number;
   byModel: Map<string, ModelAccumulator>;
@@ -65,6 +67,7 @@ function initialState(filePath: string): ClaudeTranscriptState {
     model: null,
     effort: null,
     lastUsage: null,
+    contextAfterCompaction: null,
     totals: emptyUsage(),
     requests: 0,
     byModel: new Map(),
@@ -226,6 +229,7 @@ export class ClaudeTranscriptParser {
       s.model = model ?? s.model;
       s.effort = text(record.effort) ?? s.effort;
       s.lastUsage = delta;
+      s.contextAfterCompaction = null;
     }
     // Claude Code writes one line per content block, each repeating the
     // response's usage; bill each API request once.
@@ -242,11 +246,15 @@ export class ClaudeTranscriptParser {
 
   // A compaction leaves a compact_boundary system record and then the summary
   // user record whose parentUuid points at it. Count either, never both.
+  // Compactions can run while the session sits idle, with no request after them
+  // for a while: the boundary's postTokens is then the only current context size.
   private applyCompaction(record: any, boundary: boolean) {
     const s = this.state;
     if (boundary) {
       const uuid = text(record.uuid);
       if (uuid) this.compactBoundaryIds.add(uuid);
+      const after = Number(object(record.compactMetadata)?.postTokens);
+      s.contextAfterCompaction = Number.isFinite(after) && after >= 0 ? after : null;
     } else {
       const parent = text(record.parentUuid);
       if (parent && this.compactBoundaryIds.has(parent)) return;

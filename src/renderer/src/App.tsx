@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { AGENT_MODES, LIVE_STATUSES, PROVIDERS, PROVIDER_LABEL, type Provider } from '@shared/types';
 import { call, errorMessage, listen, pageTheme } from './api';
-import { useApp, type View } from './store';
+import { useApp, type PanelTab, type View } from './store';
 import { colorVar, limitSummary, signedOutLabel } from './format';
 import { ConfirmHost, LimitMeters, ProviderIcon, TipHost, Toasts } from './ui';
 import { configureTerminals, disposeTerminal } from './terminals';
@@ -42,6 +42,11 @@ function useBootstrap() {
   useEffect(() => {
     const store = useApp.getState;
     const set = useApp.setState;
+    // The session list keeps its archive in local storage; keep-warm skips archived chats from the start.
+    try {
+      const archived: unknown = JSON.parse(localStorage.getItem('archivedAgentIds') ?? '[]');
+      if (Array.isArray(archived)) call('agents.setArchived', archived.filter((id): id is string => typeof id === 'string')).catch(() => {});
+    } catch { /* Storage unavailable. */ }
     const load = async () => {
       try {
         const [env, settings, profiles, agents, computerUse] = await Promise.all([
@@ -384,6 +389,7 @@ function Nav() {
 (window as any).__atcDev = (view: string) => {
   const state = useApp.getState();
   if (view.startsWith('select:')) useApp.setState({ selectedAgentId: view.slice(7), view: 'agents', launcher: null });
+  else if (view.startsWith('panel:') && state.selectedAgentId) state.showPanel(state.selectedAgentId, view.slice(6) as PanelTab);
   else if (view === 'launcher') state.openLauncher();
   else {
     state.closeLauncher();

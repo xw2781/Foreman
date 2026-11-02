@@ -982,7 +982,6 @@
 .composer-bar.collapse-2 .sel .sel-chev,
 .composer-bar.collapse-2 .prompt-cache > span,
 .composer-bar.collapse-2 .subagent-pill > span,
-.composer-bar.collapse-2 .connectors-pill > span { display: none; }
 /* 3: the context ring loses its percentage, and the voice status its text. */
 .composer-bar.collapse-3 .composer-context > span:last-child,
 .composer-bar.collapse-3 .voice-status { display: none; }
@@ -1503,43 +1502,8 @@
 .cache-rebuild .queue-head { align-items: flex-start; color: var(--warning); }
 .cache-rebuild .queue-head > svg { flex: none; margin-top: 2px; }
 
-/* Connectors (claude.ai Microsoft 365, Gmail…): the composer pill and its menu. */
-.connectors-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 22px;
-  max-width: 220px;
-  padding: 0 7px;
-  border: 0;
-  border-radius: 4px;
-  background: none;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-}
-.connectors-pill > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.connectors-pill:hover { background: var(--surface-3); color: var(--text-secondary); }
-.connectors-pill.attention { color: var(--text-primary); background: var(--warning-soft); box-shadow: inset 0 0 0 1px var(--warning); }
-.connectors-pill.on { box-shadow: inset 0 0 0 1px var(--accent); }
-.connectors-pill:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
-.connectors-menu {
-  position: fixed;
-  z-index: 300;
-  display: grid;
-  gap: 4px;
-  width: min(380px, calc(100vw - 16px));
-  padding: 5px;
-  overflow-y: auto;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface-2);
-  box-shadow: var(--shadow);
-  font-size: 12.5px;
-}
-.connectors-head { display: flex; align-items: center; justify-content: space-between; }
+/* Connectors (claude.ai Microsoft 365, Gmail…): the side panel's Connectors tab. */
+.connectors-body { display: grid; align-content: start; gap: 4px; padding: 6px; overflow-y: auto; font-size: 12.5px; }
 .connectors-empty { display: flex; gap: 7px; align-items: center; padding: 6px 9px 8px; color: var(--text-secondary); line-height: 1.45; }
 .connectors-list { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
 .connector-row { display: flex; align-items: flex-start; gap: 9px; padding: 7px 9px; border-radius: var(--radius-sm); }

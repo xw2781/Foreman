@@ -67,7 +67,6 @@ import { annotatedMessage, NO_ANNOTATIONS, restoreAnnotations, setAnnotations, u
 import { PromptCacheBadge } from '../PromptCacheBadge';
 import { switchCostNotice, useSwitchCosts } from '../switchCost';
 import { SubagentPill } from './SubagentMap';
-import { ConnectorsMenu } from './ConnectorsMenu';
 import '../chat.css';
 
 type Item<K extends ChatItem['kind']> = Extract<ChatItem, { kind: K }>;
@@ -1245,7 +1244,6 @@ ${VOICE_NOTE}`;
           </button>
           <PromptCacheBadge agent={agent} />
           <SubagentPill agent={agent} />
-          <ConnectorsMenu agent={agent} />
           <Select
             variant="ghost"
             size="sm"

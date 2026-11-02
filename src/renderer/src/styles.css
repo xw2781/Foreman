@@ -1913,6 +1913,224 @@ table.table {
   letter-spacing: -0.4px;
 }
 
+/* The side panel's Details tab. */
+.details section + section {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.details-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  margin-bottom: 8px;
+}
+.details-head h3 {
+  margin: 0;
+}
+.details-head > :not(h3) {
+  margin-left: auto;
+}
+.details-aside {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.ctx-total {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.ctx-total strong {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+}
+.ctx-pct {
+  margin-left: auto;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+/* Used parts from the left, the autocompact buffer at the right end, free space between (the track). */
+.ctx-bar {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  margin: 8px 0 10px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface-3);
+}
+.ctx-seg {
+  flex: none;
+  min-width: 3px;
+  transition: opacity 0.12s;
+}
+.ctx-free {
+  flex: 1;
+  min-width: 0;
+}
+.ctx-buffer,
+.ctx-swatch.buffer {
+  background: repeating-linear-gradient(135deg, var(--text-muted) 0 1.5px, transparent 1.5px 4px);
+}
+.ctx-seg.dim,
+.ctx-legend li.dim {
+  opacity: 0.4;
+}
+.ctx-legend,
+.ctx-fold ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+.ctx-legend li,
+.ctx-fold li,
+.ctx-fold summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+  transition: opacity 0.12s;
+}
+.ctx-swatch {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+.ctx-swatch.free {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  background: var(--surface-3);
+}
+.ctx-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.ctx-sub {
+  color: var(--text-muted);
+}
+.ctx-num {
+  flex: none;
+  min-width: 42px;
+  text-align: right;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.ctx-num.muted {
+  color: var(--text-muted);
+}
+.ctx-count {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.ctx-note {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.ctx-lists {
+  display: grid;
+  margin-top: 10px;
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+}
+.ctx-fold summary {
+  list-style: none;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+.ctx-fold summary::-webkit-details-marker {
+  display: none;
+}
+.ctx-fold summary:hover .ctx-name {
+  color: var(--text-primary);
+}
+.ctx-fold summary:focus-visible {
+  outline: 1px solid var(--accent);
+}
+.ctx-fold .chev {
+  flex: none;
+  color: var(--text-muted);
+  transition: transform 0.12s;
+}
+.ctx-fold[open] > summary .chev {
+  transform: rotate(90deg);
+}
+.ctx-fold ul {
+  margin: 2px 0 6px 21px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.ctx-fold li .ctx-num {
+  color: var(--text-secondary);
+}
+.ctx-fold.command {
+  margin-top: 10px;
+}
+.command-line {
+  margin: 4px 0 6px 21px;
+  font-size: 11px;
+  word-break: break-all;
+}
+.ctx-fold.command .btn {
+  margin-left: 15px;
+}
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.stat {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  min-width: 0;
+}
+.stat-label {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+.stat-value {
+  margin-top: 2px;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.stat-sub {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.details-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.details-copy:hover {
+  color: var(--accent-strong);
+}
+
 /* ---------------------------------------------------------- accounts view */
 
 .account-columns {
@@ -2239,6 +2457,10 @@ table.table {
   line-height: 16px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+.sp-badge.attention {
+  background: var(--warning-soft);
+  color: var(--text-primary);
 }
 .sp-live {
   width: 6px;

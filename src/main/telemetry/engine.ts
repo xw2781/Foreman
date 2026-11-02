@@ -211,9 +211,13 @@ export class TelemetryEngine {
     );
     let contextWindow = window;
     let contextWindowAssumed = assumed;
-    let used = state.lastUsage ? state.lastUsage.inputTokens : 0;
-    let percent: number | null = contextWindow > 0 && state.lastUsage ? (used / contextWindow) * 100 : null;
-    const snapshotFresh = snapshot && parseTime(snapshot.capturedAt) >= parseTime(state.updatedAt) - 60_000;
+    let used = claudeContextUsed(state);
+    let percent: number | null = contextWindow > 0 && used !== null ? (used / contextWindow) * 100 : null;
+    used ??= 0;
+    // A status line from before the latest compaction still shows the old context.
+    const snapshotFresh = snapshot
+      && parseTime(snapshot.capturedAt) >= parseTime(state.updatedAt) - 60_000
+      && (!state.lastCompactionAt || parseTime(snapshot.capturedAt) >= parseTime(state.lastCompactionAt));
     if (snapshot && snapshotFresh && snapshot.contextWindow > 0) {
       contextWindow = snapshot.contextWindow;
       contextWindowAssumed = false;
@@ -520,7 +524,7 @@ export class TelemetryEngine {
       byModel: modelsRecord(state.byModel),
       tokens: state.totals.totalTokens,
       requests: state.requests,
-      contextPercent: state.lastUsage && window > 0 ? (state.lastUsage.inputTokens / window) * 100 : null,
+      contextPercent: claudeContextPercent(state, window),
       compactions: state.compactions,
       working: state.turn === 'working',
       limits: null
@@ -914,6 +918,16 @@ export class TelemetryEngine {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Tokens in context now: the last request's input, or what a compaction since then left. Null before either. */
+export function claudeContextUsed(state: Pick<ClaudeTranscriptState, 'lastUsage' | 'contextAfterCompaction'>): number | null {
+  return state.contextAfterCompaction ?? state.lastUsage?.inputTokens ?? null;
+}
+
+function claudeContextPercent(state: ClaudeTranscriptState, window: number): number | null {
+  const used = claudeContextUsed(state);
+  return used !== null && window > 0 ? (used / window) * 100 : null;
+}
 
 function pad(n: number) {
   return String(n).padStart(2, '0');

@@ -1,4 +1,4 @@
-import type { LaunchOptions, Profile } from '../shared/types';
+import type { AppSettings, IdleMode, LaunchOptions, Profile } from '../shared/types';
 
 export interface BuiltCommand {
   args: string[];
@@ -30,6 +30,26 @@ export function withBrowserArgs(args: string[], browser: string[]): string[] {
   if (!browser.length) return args;
   if (CODEX_SUBCOMMANDS.has(args[0])) return [args[0], ...browser, ...args.slice(1)];
   return [...browser, ...args];
+}
+
+/** Claude Code doesn't accept an idle-compaction floor below this (smaller values are raised to it). */
+export const IDLE_COMPACT_MIN_FLOOR = 100_000;
+
+/**
+ * Idle compaction: when a long conversation sits idle, Claude Code may compact it
+ * shortly before the prompt cache expires (rolled out by Anthropic per account).
+ * `settings` goes into the agent's --settings file (written only when it's turned off,
+ * so the default launch is unchanged); `env` goes onto the child process.
+ */
+export function claudeIdleCompaction(idle: IdleMode, app: Pick<AppSettings, 'claudeIdleCompactMinTokens'>) {
+  const off = idle !== 'compact';
+  const settings: Record<string, unknown> = off ? { idleCompaction: false } : {};
+  const env: Record<string, string> = {};
+  const floor = app.claudeIdleCompactMinTokens;
+  if (!off && Number.isFinite(floor) && floor > 0) {
+    env.CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS = String(Math.max(IDLE_COMPACT_MIN_FLOOR, Math.round(floor)));
+  }
+  return { settings, env };
 }
 
 export function claudeCommand(

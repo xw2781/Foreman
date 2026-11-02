@@ -197,8 +197,8 @@ function PreviewPane({ agent, state, expanded, onExpand }: { agent: AgentInfo; s
           </div>
         ) : null}
         {onExpand ? (
-          <button type="button" className="btn ghost icon sm" aria-label={expanded ? 'Restore preview size' : 'Expand preview'}
-            title={expanded ? 'Show the conversation too' : 'Expand preview'} onClick={onExpand}>
+          <button type="button" className="btn ghost icon sm" aria-label={expanded ? 'Narrow the preview' : 'Widen the preview'}
+            title={expanded ? 'Swap widths back: the conversation gets its column again' : 'Widen the preview: swap widths with the conversation'} onClick={onExpand}>
             {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
         ) : null}

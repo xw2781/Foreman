@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ClaudeTranscriptParser, claudeContextWindow, claudeTitle, sessionIdForTranscript } from '../src/main/telemetry/claudeTranscript';
+import { claudeContextUsed } from '../src/main/telemetry/engine';
 
 let dir: string;
 beforeEach(() => {
@@ -72,6 +73,26 @@ describe('Claude transcript parser', () => {
     const state = await new ClaudeTranscriptParser(file).update();
     expect(state.compactions).toBe(2);
     expect(state.lastCompactionAt).toBe('2026-09-23T12:00:01.000Z');
+  });
+
+  it('takes the context size from a compaction until the next request runs', async () => {
+    const file = path.join(dir, `${SESSION}.jsonl`);
+    const big = { input_tokens: 5, cache_read_input_tokens: 480_000, output_tokens: 100 };
+    const lines = [
+      assistant('req_1', 'end_turn', big),
+      // An idle compaction: nothing is sent after it until the person comes back.
+      JSON.stringify({ type: 'system', subtype: 'compact_boundary', uuid: 'b1', timestamp: '2026-09-23T11:00:00.000Z', compactMetadata: { trigger: 'auto', preTokens: 480_005, postTokens: 11_585 } })
+    ];
+    fs.writeFileSync(file, `${lines.join('\n')}\n`);
+    const parser = new ClaudeTranscriptParser(file);
+    let state = await parser.update();
+    expect(claudeContextUsed(state)).toBe(11_585);
+    expect(state.lastUsage?.inputTokens).toBe(480_005);
+
+    fs.appendFileSync(file, `${assistant('req_2', 'end_turn', { input_tokens: 20, cache_creation_input_tokens: 12_000, output_tokens: 50 })}\n`);
+    state = await parser.update();
+    expect(state.contextAfterCompaction).toBeNull();
+    expect(claudeContextUsed(state)).toBe(12_020);
   });
 
   it('prefers a custom title, then the AI title, then the first prompt', async () => {

@@ -151,6 +151,32 @@ export function SettingsView() {
         >
           <Switch on={settings.claudeStatusLine} onChange={(v) => update({ claudeStatusLine: v })} />
         </Setting>
+        <Setting
+          title="Compact idle Claude conversations"
+          description="When a long conversation sits idle, Claude Code may compact it about 54 minutes after the last reply, shortly before its prompt cache expires, so coming back doesn't re-send the whole context at full price. Anthropic rolls this out per account. This is the default for new sessions; change one session's in its side panel (Details), where a chat can also keep its cache warm instead. Your Claude Code settings are not changed."
+        >
+          <Switch on={settings.claudeIdleMode !== 'off'} onChange={(v) => update({ claudeIdleMode: v ? 'compact' : 'off' })} />
+        </Setting>
+        <Setting
+          title="Idle compaction threshold"
+          description="Only conversations at least this large are compacted while idle. Applies to sessions started after the change."
+        >
+          <Select
+            style={{ width: 220 }}
+            aria-label="Idle compaction threshold"
+            disabled={settings.claudeIdleMode === 'off'}
+            value={String(settings.claudeIdleCompactMinTokens ?? 0)}
+            onChange={(value) => update({ claudeIdleCompactMinTokens: Number(value) })}
+            options={[
+              { value: '0', label: 'Claude Code default', hint: '200K tokens unless Anthropic sets otherwise' },
+              { value: '100000', label: '100K tokens' },
+              { value: '200000', label: '200K tokens' },
+              { value: '400000', label: '400K tokens' },
+              { value: '600000', label: '600K tokens' },
+              { value: '800000', label: '800K tokens' }
+            ]}
+          />
+        </Setting>
         <Setting title="Shell for account terminals" description="Used by “Terminal as this account”.">
           <Select
             style={{ width: 220 }}

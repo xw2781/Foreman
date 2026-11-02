@@ -241,7 +241,35 @@ export interface AgentInfo {
   subagents?: SubagentInfo[];
   /** A model or effort change made mid-session whose next request hasn't run yet: it rebuilds the prompt cache. */
   cacheRebuild?: CacheRebuild | null;
+  /** Claude sessions: what happens when it sits idle (from Settings at launch; changeable per session). */
+  idleMode?: IdleMode;
+  /** Claude chats: keep the prompt cache warm this many hours after the last reply (0: don't). Needs idle mode 'off'. */
+  keepWarmHours?: number;
+  /** The keep-warm refreshes since the last reply; cleared by the next turn. */
+  cacheKeepalive?: CacheKeepalive | null;
 }
+
+export interface CacheKeepalive {
+  /** The model turn being kept warm (`lastModelActivityAt` then). */
+  forActivityAt: string;
+  /** Latest refresh that worked: the cache lives an hour from here. */
+  lastAt: string | null;
+  count: number;
+  /** A refresh in flight. */
+  pending: boolean;
+  /** Why the last refresh failed; refreshing stops for this turn. */
+  error: string | null;
+  /** List-price estimates: one refresh (a cache read), and rebuilding the cache once it has expired. */
+  refreshUsd: number | null;
+  rebuildUsd: number | null;
+}
+
+/**
+ * Whether Claude Code may compact a long conversation that sits idle until shortly before its
+ * prompt cache expires (its own idle compaction, rolled out per account): 'compact' lets it,
+ * 'off' stops it ("idleCompaction": false).
+ */
+export type IdleMode = 'compact' | 'off';
 
 export interface CacheRebuild {
   /** The model switched to (null: the CLI's default), when the model changed. */
@@ -439,6 +467,32 @@ export interface ChatConnector {
   source: 'claudeai' | 'local';
   tools: number;
   error: string | null;
+}
+
+/** The parts the context window is made of, in the order the bar shows them. */
+export const CONTEXT_PARTS = ['system', 'tools', 'mcp', 'memory', 'skills', 'messages', 'other'] as const;
+export type ContextPart = (typeof CONTEXT_PARTS)[number];
+
+/** What a Claude session's context window holds, by part, as Claude Code reports it (`get_context_usage`). */
+export interface ContextUsage {
+  model: string;
+  usedTokens: number;
+  windowTokens: number;
+  /** Parts with tokens in the window, in CONTEXT_PARTS order. */
+  parts: Array<{ part: ContextPart; label: string; tokens: number }>;
+  /** Kept free so the conversation can be compacted before the window fills; 0 when auto-compact is off. */
+  bufferTokens: number;
+  freeTokens: number;
+  /** Tool definitions held out of the window until a search loads them. */
+  deferredTokens: number;
+  /** Where auto-compact starts; null when it's off. */
+  autoCompactAt: number | null;
+  memoryFiles: Array<{ path: string; tokens: number }>;
+  mcpServers: Array<{ name: string; tools: number; tokens: number }>;
+  skills: Array<{ name: string; source: string; tokens: number }>;
+  agents: Array<{ name: string; source: string; tokens: number }>;
+  /** The conversation's share, by what it is; null before the first message. */
+  messages: Array<{ label: string; tokens: number }> | null;
 }
 
 export interface ChatSettingsPatch {
@@ -654,6 +708,10 @@ export interface AppSettings {
   shellForTerminals: string;
   /** Route Claude Code's status line through the app (keeps the user's own) for exact context, cost and plan limits. */
   claudeStatusLine: boolean;
+  /** What new Claude sessions do when they sit idle; each session can change its own (side panel → Details). */
+  claudeIdleMode: IdleMode;
+  /** Smallest context idle compaction acts on; 0 keeps Claude Code's default (CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS). */
+  claudeIdleCompactMinTokens: number;
   /** What Enter does in a chat while the agent is working; Ctrl+Enter does the other. */
   chatSendMode: ChatSendMode;
   /** Whisper model for voice input (see shared/voiceModels). */

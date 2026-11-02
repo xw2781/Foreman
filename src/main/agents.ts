@@ -12,21 +12,24 @@ import {
   LIVE_STATUSES,
   PROVIDER_LABEL,
   type AgentInfo,
+  type IdleMode,
   type AgentMode,
   type AgentStatus,
   type AppSettings,
   type ChatAnswer,
   type ChatCommand,
   type ChatConnector,
+  type ContextUsage,
   type ChatItem,
   type ChatSendMode,
   type ChatSettingsPatch,
   type LaunchOptions,
   type Profile
 } from '../shared/types';
-import { claudeCommand, codexCommand, loginCommand, splitArgs, withBrowserArgs } from './commands';
+import { claudeCommand, claudeIdleCompaction, codexCommand, loginCommand, splitArgs, withBrowserArgs } from './commands';
 import { ChatLog, clipText } from './chat/log';
 import { ClaudeChat, claudeChatArgs } from './chat/claudeChat';
+import { KEEPALIVE_PROMPT, keepaliveCosts, keepaliveDue, keepWarmAllowed } from './chat/idleCache';
 import { CodexChat } from './chat/codexChat';
 import { LineSplitter, type ChatDriver, type ChatHost } from './chat/driver';
 import { locateCli, spawnSpec } from './cliLocator';
@@ -123,6 +126,8 @@ export class AgentManager {
   private changed = new Set<string>();
   private changeTimer: NodeJS.Timeout | null = null;
   private ticking = false;
+  /** Agents the person archived in the session list (kept by the renderer). */
+  private archivedIds = new Set<string>();
   private chatTimer: NodeJS.Timeout | null = null;
 
   onData: (id: string, data: string, end: number) => void = () => {};
@@ -206,6 +211,9 @@ export class AgentManager {
     let args: string[];
     let headless = false;
     let chat: ChatLog | null = null;
+    // A continued session keeps the idle mode it was given; a new one takes the Settings default.
+    const idleMode: IdleMode = previous?.idleMode === 'compact' || previous?.idleMode === 'off' ? previous.idleMode : settings.claudeIdleMode === 'off' ? 'off' : 'compact';
+    const idleCompaction = claudeIdleCompaction(idleMode, settings);
     if (options.mode === 'chat') {
       // A chat continued in this run keeps its items; otherwise the session file has them.
       if (previousSession?.chat?.size && previousSession.info.mode === 'chat') chat = previousSession.chat;
@@ -215,9 +223,11 @@ export class AgentManager {
       }
       if (profile.provider === 'claude') {
         claudeSessionId = options.resumeSessionId ?? crypto.randomUUID();
+        if (Object.keys(idleCompaction.settings).length) settingsFile = this.deps.hooks.writeSettingsFile(id, idleCompaction.settings);
         args = claudeChatArgs({
           sessionId: options.resumeSessionId ? null : claudeSessionId,
           resumeSessionId: options.resumeSessionId,
+          settingsFile,
           model: options.model,
           effort: options.effort,
           permission: options.permission,
@@ -232,7 +242,8 @@ export class AgentManager {
       claudeSessionId = options.resumeSessionId ?? crypto.randomUUID();
       settingsFile = this.deps.hooks.settingsFileFor(
         id,
-        settings.claudeStatusLine && options.mode !== 'task' ? { refreshInterval: originalStatusLine(profile)?.refreshInterval } : null
+        settings.claudeStatusLine && options.mode !== 'task' ? { refreshInterval: originalStatusLine(profile)?.refreshInterval } : null,
+        idleCompaction.settings
       );
       ({ args, headless } = claudeCommand(options, options.resumeSessionId ? null : claudeSessionId, settingsFile));
     } else {
@@ -272,6 +283,9 @@ export class AgentManager {
       lastActivityAt: now,
       lastOutputAt: null,
       lastModelActivityAt: options.resumeSessionId ? previous?.lastModelActivityAt ?? (previous?.telemetry?.requests ? previous.telemetry.updatedAt : null) : null,
+      idleMode: profile.provider === 'claude' && AGENT_MODES.includes(options.mode) ? idleMode : undefined,
+      // Off unless turned on for this chat (side panel); a continued chat keeps its own.
+      keepWarmHours: profile.provider === 'claude' && options.mode === 'chat' && keepWarmAllowed({ mode: options.mode, idleMode }) ? previous?.keepWarmHours ?? 0 : undefined,
       completedAt: previous?.completedAt ?? null,
       commandLine: [cli.path, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' '),
       telemetry: options.resumeSessionId ? previous?.telemetry ?? null : null,
@@ -296,6 +310,7 @@ export class AgentManager {
     const env = this.deps.profiles.envFor(profile, cleanEnv());
     env.PATH = `${path.dirname(cli.path)}${path.delimiter}${env.PATH ?? ''}`;
     if (profile.provider === 'claude' && cli.source === 'Foreman managed') env.DISABLE_AUTOUPDATER = '1';
+    if (profile.provider === 'claude') Object.assign(env, idleCompaction.env);
     env.ATC_AGENT_ID = id;
     env.ATC_AGENT_NAME = `${PROVIDER_LABEL[profile.provider]} · ${profile.label}`;
     env.COLORTERM = 'truecolor';
@@ -555,6 +570,8 @@ export class AgentManager {
       },
       turnComplete: () => {
         info.lastModelActivityAt = new Date().toISOString();
+        // Keep-warm counts from this reply.
+        info.cacheKeepalive = null;
         if (session.rebuildSkipsTurn) session.rebuildSkipsTurn = false;
         else info.cacheRebuild = null;
         this.markChanged(info.id);
@@ -718,6 +735,70 @@ export class AgentManager {
     const session = this.sessions.get(id);
     if (!session?.driver?.connectors || session.info.endedAt) return [];
     return (await session.driver.connectors()) ?? [];
+  }
+
+  /** What the running session's context window holds (null when it has ended or its CLI can't say). */
+  setArchived(ids: string[]) {
+    this.archivedIds = new Set(ids);
+  }
+
+  /** Refreshes the prompt cache of idle Claude chats that are kept warm (side panel → Details). */
+  private keepChatsWarm() {
+    for (const session of this.sessions.values()) {
+      const { info, driver } = session;
+      if (!driver?.sideQuestion || driver.busy || session.needsInput || this.archivedIds.has(info.id) || !info.lastModelActivityAt) continue;
+      if (keepaliveDue(info)) this.keepWarm(info, info.lastModelActivityAt, driver.sideQuestion.bind(driver));
+    }
+  }
+
+  /** Reads the prompt cache with the smallest side question, so it lives another hour. */
+  private keepWarm(info: AgentInfo, forActivityAt: string, ask: NonNullable<ChatDriver['sideQuestion']>) {
+    const previous = info.cacheKeepalive?.forActivityAt === forActivityAt ? info.cacheKeepalive : null;
+    info.cacheKeepalive = { forActivityAt, lastAt: previous?.lastAt ?? null, count: previous?.count ?? 0, pending: true, error: null, ...keepaliveCosts(info) };
+    this.markChanged(info.id);
+    const askedAt = new Date().toISOString();
+    ask(KEEPALIVE_PROMPT).then((reply) => {
+      const current = info.cacheKeepalive;
+      // A turn that ran meanwhile has cleared it.
+      if (current?.forActivityAt !== forActivityAt) return;
+      info.cacheKeepalive = reply.ok
+        ? { ...current, pending: false, lastAt: askedAt, count: current.count + 1 }
+        : { ...current, pending: false, error: reply.error };
+      this.markChanged(info.id);
+    });
+  }
+
+  /** A session's own idle mode. A running chat switches at once; a terminal session on its next start. */
+  setIdleMode(id: string, mode: IdleMode) {
+    const info = this.get(id);
+    if (!info || info.provider !== 'claude') throw new Error('Only Claude sessions have an idle mode.');
+    const session = this.sessions.get(id);
+    if (session?.driver?.setIdleCompaction && !info.endedAt) session.driver.setIdleCompaction(mode === 'compact');
+    info.idleMode = mode;
+    // Claude Code would compact a chat being kept warm.
+    if (mode === 'compact' && info.keepWarmHours) info.keepWarmHours = 0;
+    this.archive(info);
+    this.markChanged(id);
+  }
+
+  /**
+   * How long a chat's prompt cache is kept warm after its last reply (0: not at all). Needs an idle
+   * mode that doesn't compact: Claude Code's own idle compaction would compact the chat being kept.
+   */
+  setKeepWarm(id: string, hours: number) {
+    const info = this.get(id);
+    if (!info || info.provider !== 'claude' || info.mode !== 'chat') throw new Error('Only Claude chats can keep their cache warm.');
+    const next = Math.max(0, Math.min(72, Number.isFinite(hours) ? hours : 0));
+    if (next > 0 && !keepWarmAllowed(info)) throw new Error('Turn off idle compaction for this chat first.');
+    info.keepWarmHours = next;
+    this.archive(info);
+    this.markChanged(id);
+  }
+
+  async chatContextUsage(id: string): Promise<ContextUsage | null> {
+    const session = this.sessions.get(id);
+    if (!session?.driver?.contextUsage || session.info.endedAt) return null;
+    return session.driver.contextUsage();
   }
 
   /** Starts a connector's sign-in: the page the person finishes it on. */
@@ -1296,7 +1377,9 @@ export class AgentManager {
     const t = session.info.telemetry;
     const s = session.statusLine;
     if (!t || !s || Date.now() - s.at > 10 * 60_000) return;
-    if (s.contextWindow > 0) {
+    // A status line drawn before the latest compaction (an idle one, say) still shows the old context.
+    const beforeCompaction = t.lastCompactionAt !== null && s.at < Date.parse(t.lastCompactionAt);
+    if (s.contextWindow > 0 && !beforeCompaction) {
       t.contextWindow = s.contextWindow;
       t.contextWindowAssumed = false;
       t.contextUsedTokens = s.usedTokens || t.contextUsedTokens;
@@ -1317,6 +1400,7 @@ export class AgentManager {
     try {
       const live = [...this.sessions.values()].filter((s) => !s.info.endedAt && AGENT_MODES.includes(s.info.mode));
       await Promise.all(live.map((session) => this.refreshTelemetry(session).catch(() => {})));
+      this.keepChatsWarm();
       for (const session of this.sessions.values()) {
         if (!session.info.pid) continue;
         const resources = this.deps.processes.treeResources(session.info.pid);

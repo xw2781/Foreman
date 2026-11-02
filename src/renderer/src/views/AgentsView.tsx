@@ -433,7 +433,10 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
   );
 }
 
-/** The conversation beside the side panel, with a divider to drag; in a narrow window the panel takes it all. */
+/**
+ * The conversation beside the side panel, with a divider to drag; "expanded" swaps their widths so the panel
+ * gets the conversation's share. In a narrow window the panel takes it all.
+ */
 function AgentWork({ agent, children }: { agent: AgentInfo; children: React.ReactNode }) {
   const shown = useApp((s) => isPanelOpen(s, agent.id));
   const expanded = useApp((s) => s.panelExpanded);
@@ -456,14 +459,18 @@ function AgentWork({ agent, children }: { agent: AgentInfo; children: React.Reac
     return () => observer.disconnect();
   }, []);
   const narrow = width > 0 && width < 760;
-  const full = shown && (expanded || narrow);
+  const full = shown && narrow;
+  const swapped = shown && expanded && !narrow;
+  /** The panel's share of the width (`share` is its share when not swapped). */
+  const side = swapped ? 1 - share : share;
   const drag = (event: React.PointerEvent) => {
     const element = box.current;
     if (!element) return;
     event.preventDefault();
     const bounds = element.getBoundingClientRect();
     const move = (e: PointerEvent) => {
-      const next = Math.min(0.75, Math.max(0.25, (bounds.right - e.clientX) / bounds.width));
+      const panel = Math.min(0.75, Math.max(0.25, (bounds.right - e.clientX) / bounds.width));
+      const next = swapped ? 1 - panel : panel;
       setShare(next);
       try {
         localStorage.setItem('sidePanelShare', String(next));
@@ -487,8 +494,8 @@ function AgentWork({ agent, children }: { agent: AgentInfo; children: React.Reac
       </div>
       {shown && !full ? <div className="split-handle" role="separator" aria-orientation="vertical" title="Drag to resize" onPointerDown={drag} /> : null}
       {shown ? (
-        <div className="agent-side" style={full ? { flex: 1 } : { width: `${share * 100}%` }}>
-          <SidePanel agent={agent} expanded={full} onExpand={narrow ? undefined : () => useApp.setState({ panelExpanded: !expanded })} />
+        <div className="agent-side" style={full ? { flex: 1 } : { width: `${side * 100}%` }}>
+          <SidePanel agent={agent} expanded={full || swapped} onExpand={narrow ? undefined : () => useApp.setState({ panelExpanded: !expanded })} />
         </div>
       ) : null}
     </div>
@@ -558,6 +565,8 @@ export function AgentsView() {
       localStorage.setItem('archivedAgentIds', JSON.stringify(archivedIds));
       localStorage.removeItem('hiddenAgentIds');
     } catch { /* Storage unavailable. */ }
+    // Keep-warm only refreshes chats still in the list.
+    call('agents.setArchived', archivedIds).catch(() => {});
   }, [archivedIds]);
   useEffect(() => {
     try { localStorage.setItem('agentListWidth', String(listWidth)); } catch { /* Storage unavailable. */ }

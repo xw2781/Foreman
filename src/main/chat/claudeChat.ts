@@ -4,11 +4,12 @@ import type { ChatImage } from '../../shared/types';
 // and control requests go in on stdin; conversation events, streaming deltas
 // and permission requests (`can_use_tool`) come out on stdout.
 import { randomUUID } from 'node:crypto';
-import type { ChatAnswer, ChatCommand, ChatConnector, ChatOption, ChatQuestion, ChatSettingsPatch } from '../../shared/types';
+import type { ChatAnswer, ChatCommand, ChatConnector, ChatOption, ChatQuestion, ChatSettingsPatch, ContextUsage } from '../../shared/types';
 import { describeToolInput } from '../streamFormat';
 import { parseStatusPayload } from '../statusLine';
 import { claudeFileChanges, claudeToolEntry, claudeToolTitle, toolResultText } from './claudeTools';
 import { parseConnectors } from './connectors';
+import { parseContextUsage } from './contextUsage';
 import type { ChatDriver, ChatHost } from './driver';
 import { clipText } from './log';
 import { optionalHeaders, QuestionQueue, questionInstructions } from './questions';
@@ -33,11 +34,13 @@ export function claudeChatArgs(options: {
   model?: string;
   effort?: string;
   permission?: string;
+  settingsFile?: string | null;
   extraArgs?: string[];
 }): string[] {
   const args = ['--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json', '--include-partial-messages', '--permission-prompt-tool', 'stdio'];
   if (options.resumeSessionId) args.push('--resume', options.resumeSessionId);
   else if (options.sessionId) args.push('--session-id', options.sessionId);
+  if (options.settingsFile) args.push('--settings', options.settingsFile);
   if (options.model) args.push('--model', options.model);
   if (options.effort) args.push('--effort', options.effort);
   if (options.permission && options.permission !== 'default') args.push('--permission-mode', options.permission);
@@ -558,6 +561,23 @@ export class ClaudeChat implements ChatDriver {
 
   async connectors(): Promise<ChatConnector[] | null> {
     return parseConnectors(await this.ask({ subtype: 'mcp_status' }));
+  }
+
+  /** 'summary' answers from the last response's usage and local estimates, without a token-count API call per category. */
+  async contextUsage(): Promise<ContextUsage | null> {
+    return parseContextUsage(await this.ask({ subtype: 'get_context_usage', detail: 'summary' }));
+  }
+
+  setIdleCompaction(on: boolean) {
+    this.request({ subtype: 'apply_flag_settings', settings: { idleCompaction: on } });
+  }
+
+  async sideQuestion(question: string) {
+    const reply = await this.askResult({ subtype: 'side_question', question });
+    if (!reply.ok) return reply;
+    const text = reply.response?.response;
+    if (typeof text !== 'string' || !text.trim() || reply.response?.synthetic === true) return { ok: false as const, error: 'Claude Code gave no answer' };
+    return { ok: true as const, text: text.trim() };
   }
 
   async connectorSignIn(name: string) {
