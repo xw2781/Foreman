@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUp, Eraser, LoaderCircle, MessageSquareDashed, RotateCcw } from 'lucide-react';
 import { PROVIDER_LABEL, type AgentInfo } from '@shared/types';
 import { CopyButton, Markdown } from '../markdown';
+import { AnnotationTray, UserMessageText } from '../ChatAnnotations';
+import { annotatedMessage, NO_ANNOTATIONS, setAnnotations, sideQuotesKey, useAnnotations } from '../annotations';
 import { askSide, clearSide, NO_SIDE_MESSAGES, retrySide, sidePending, useSideChats } from '../sideChat';
 
 /** Unsent side-chat text per agent. */
@@ -16,7 +18,10 @@ export function SideChatPane({ agent }: { agent: AgentInfo }) {
   const [text, setText] = useState(() => sideDrafts.get(agent.id) ?? '');
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const quotesKey = sideQuotesKey(agent.id);
+  const quotes = useAnnotations((s) => s.drafts[quotesKey] ?? NO_ANNOTATIONS);
   const pending = sidePending(messages);
+  const ready = (Boolean(text.trim()) || quotes.length > 0) && !pending;
   const name = PROVIDER_LABEL[agent.provider];
 
   useEffect(() => {
@@ -40,8 +45,9 @@ export function SideChatPane({ agent }: { agent: AgentInfo }) {
     else sideDrafts.delete(agent.id);
   };
   const send = () => {
-    if (!text.trim() || pending) return;
-    void askSide(agent.id, text);
+    if (!ready) return;
+    void askSide(agent.id, annotatedMessage(text.trim(), quotes));
+    setAnnotations(quotesKey, []);
     update('');
   };
 
@@ -58,19 +64,16 @@ export function SideChatPane({ agent }: { agent: AgentInfo }) {
           <div className="side-chat-empty">
             <MessageSquareDashed size={22} />
             <strong>Ask about this conversation</strong>
-            <span>
-              {name} answers with the whole conversation in view, but nothing here is added to it, so the agent's work isn't interrupted or steered.
-            </span>
+            <span>{name} sees the whole conversation. Nothing here is added to it.</span>
             <span className="muted">
-              {agent.provider === 'claude'
-                ? "Answers come from what's already in the conversation, without tools, and reuse its prompt cache."
-                : 'Codex answers in a read-only copy of the thread: it may read files, but changes nothing.'}
+              Tip: select text and choose <em>Ask on the side</em>.{' '}
+              {agent.provider === 'claude' ? 'No tools; reuses the prompt cache.' : 'Read-only: may read files, changes nothing.'}
             </span>
           </div>
         ) : (
           messages.map((m) => (
             <div key={m.id} className="side-chat-exchange">
-              <div className="side-chat-q selectable">{m.question}</div>
+              <div className="side-chat-q selectable"><UserMessageText text={m.question} /></div>
               {m.answer !== null ? (
                 <div className="side-chat-a">
                   <Markdown text={m.answer} agentId={agent.id} />
@@ -94,6 +97,7 @@ export function SideChatPane({ agent }: { agent: AgentInfo }) {
           ))
         )}
       </div>
+      <AnnotationTray agentId={quotesKey} />
       <form
         className="side-chat-input"
         onSubmit={(e) => {
@@ -106,7 +110,7 @@ export function SideChatPane({ agent }: { agent: AgentInfo }) {
           className="input"
           rows={1}
           value={text}
-          placeholder={messages.length ? 'Ask a follow-up…' : 'Ask a side question…'}
+          placeholder={quotes.length ? 'Ask about the selection…' : messages.length ? 'Ask a follow-up…' : 'Ask a side question…'}
           onChange={(e) => update(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -115,7 +119,7 @@ export function SideChatPane({ agent }: { agent: AgentInfo }) {
             }
           }}
         />
-        <button type="submit" className="btn primary icon" title="Ask" aria-label="Ask" disabled={!text.trim() || pending}>
+        <button type="submit" className="btn primary icon" title="Ask" aria-label="Ask" disabled={!ready}>
           {pending ? <LoaderCircle size={14} className="spin" /> : <ArrowUp size={15} />}
         </button>
       </form>

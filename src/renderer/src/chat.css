@@ -935,19 +935,47 @@
 .annotation-selection {
   position: fixed;
   z-index: 300;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
   background: var(--surface-2);
   box-shadow: var(--shadow);
 }
-.annotation-tray { display: grid; gap: 8px; min-width: 0; }
-.annotation-cards { display: grid; gap: 8px; max-height: 230px; overflow-y: auto; }
-.annotation-card { background: var(--surface-3); border-radius: 12px; padding: 10px 12px; min-width: 0; }
-.annotation-card-heading { display: flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: 11.5px; }
-.annotation-card-heading > span { flex: 1; }
-.annotation-card blockquote { margin: 4px 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 110px; overflow-y: auto; font-size: var(--chat-font-size, 13.5px); }
-.annotation-card textarea { width: 100%; resize: vertical; font-size: var(--chat-font-size, 13.5px); }
-.annotation-card .annotation-edit { min-height: 70px; margin: 6px 0; }
-.annotation-card .annotation-comment { min-height: 32px; background: var(--surface-1); }
-.annotation-chip { display: flex; align-items: center; justify-self: start; border: 1px solid var(--border-strong); border-radius: 9px; }
+.annotation-tray { display: grid; gap: 6px; min-width: 0; }
+.annotation-cards { display: grid; gap: 6px; max-height: 230px; overflow-y: auto; }
+.annotation-card { background: var(--surface-3); border-radius: 10px; padding: 6px 6px 4px 10px; min-width: 0; }
+.annotation-quote { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.annotation-quote blockquote {
+  flex: 1; min-width: 0; margin: 2px 0; padding-left: 9px; border-left: 2px solid var(--border-strong);
+  color: var(--text-muted); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--chat-font-size, 13.5px); line-height: 1.45;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+}
+.annotation-card-actions { display: flex; gap: 1px; opacity: 0; transition: opacity 0.12s; }
+.annotation-card:hover .annotation-card-actions, .annotation-card-actions:focus-within, .annotation-quote:has(.annotation-edit) .annotation-card-actions { opacity: 1; }
+.annotation-card .annotation-edit { flex: 1; min-width: 0; min-height: 60px; resize: vertical; font-size: var(--chat-font-size, 13.5px); }
+.annotation-card .annotation-comment {
+  display: block; width: 100%; margin-top: 2px; padding: 3px 0 3px 11px; border: 0; outline: 0; background: transparent; resize: none;
+  color: var(--text); font: inherit; font-size: var(--chat-font-size, 13.5px); field-sizing: content; max-height: 5lh;
+}
+.annotation-card .annotation-comment::placeholder { color: var(--text-muted); opacity: 0.8; }
+.sent-quotes { display: grid; gap: 6px; min-width: 0; }
+.sent-quotes + .sent-follow-up { margin-top: 8px; }
+.sent-quote { min-width: 0; }
+.sent-quote-text {
+  display: flex; align-items: flex-start; gap: 6px; width: 100%; min-width: 0; padding: 0 0 0 9px; border: 0; border-left: 2px solid var(--border-strong);
+  background: none; color: var(--text-muted); font: inherit; text-align: left; cursor: pointer; user-select: text;
+}
+.sent-quote-text > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sent-quote.open .sent-quote-text > span { white-space: pre-wrap; overflow-wrap: anywhere; }
+.sent-quote-text:hover { color: var(--text); }
+.sent-quote-icon, .sent-quote-chevron { flex: none; margin-top: 0.3em; }
+.sent-quote-chevron { opacity: 0; transition: opacity 0.12s, transform 0.12s; }
+.sent-quote-text:hover .sent-quote-chevron, .sent-quote.open .sent-quote-chevron { opacity: 1; }
+.sent-quote.open .sent-quote-chevron { transform: rotate(180deg); }
+.sent-quote-comment { padding-left: 11px; margin-top: 2px; }
+.annotation-chip { display: flex; align-items: center; justify-self: start; border: 1px solid var(--border); border-radius: 8px; color: var(--text-muted); }
 /* Always one line. Nothing here shrinks; when the controls don't fit, useCollapse adds collapse-1…3
    and each step folds more labels away (the composer-bar.collapse-* rules below). */
 .composer-bar {
@@ -1747,6 +1775,13 @@
   flex: 1;
   min-width: 0;
 }
+.side-chat > .annotation-tray {
+  padding: 8px 10px 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface-1);
+}
+.side-chat > .annotation-tray .annotation-cards { max-height: 180px; }
+.side-chat > .annotation-tray + .side-chat-input { border-top: 0; }
 .side-chat-input {
   display: flex;
   align-items: flex-end;

@@ -63,7 +63,7 @@ import { Modal, ProviderIcon, Select, useCollapse, useFit } from '../ui';
 import { PERMISSIONS, effortOptions, modelOptions } from './LaunchDialog';
 import { ImageAttachments } from '../ImageAttachments';
 import { EffortControl } from '../EffortControl';
-import { AnnotationSelection, AnnotationTray } from '../ChatAnnotations';
+import { AnnotationSelection, AnnotationTray, UserMessageText } from '../ChatAnnotations';
 import { annotatedMessage, NO_ANNOTATIONS, restoreAnnotations, setAnnotations, useAnnotations } from '../annotations';
 import { PromptCacheBadge } from '../PromptCacheBadge';
 import { switchCostNotice, useSwitchCosts } from '../switchCost';
@@ -511,7 +511,7 @@ function SteerMessage({ item }: { item: Item<'user'> }) {
         {waiting ? <LoaderCircle size={11} className="spin" /> : <Navigation size={11} />}
         <span>{waiting ? 'Steering · waiting for the next step' : 'Steered mid-turn'}</span>
       </div>
-      <div className="bubble selectable" data-annotation-source><ImageAttachments images={item.images} />{item.text}</div>
+      <div className="bubble selectable" data-annotation-source><ImageAttachments images={item.images} /><UserMessageText text={item.text} /></div>
     </div>
   );
 }
@@ -555,7 +555,7 @@ function renderEntries(items: ChatItem[], agent: AgentInfo, activeTail: boolean,
                   </button>
                 ) : null}
               </div>
-              <div className="bubble selectable" data-annotation-source><ImageAttachments images={item.images} />{item.text}</div>
+              <div className="bubble selectable" data-annotation-source><ImageAttachments images={item.images} /><UserMessageText text={item.text} /></div>
             </div>
           )
         );

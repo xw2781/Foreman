@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import type { ChatItem } from '@shared/types';
+import { parseAnnotatedMessage } from '../annotations';
 
 type UserItem = Extract<ChatItem, { kind: 'user' }>;
 
@@ -8,7 +9,8 @@ const RAIL_MAX = 0.5;
 const TICK_SPACING = 9;
 
 function preview(item: UserItem) {
-  const text = item.text.replace(/\s+/g, ' ').trim();
+  const quoted = parseAnnotatedMessage(item.text);
+  const text = (quoted ? quoted.text || quoted.quotes.map((quote) => `“${quote.text}”`).join(' ') : item.text).replace(/\s+/g, ' ').trim();
   if (text) return text.length > 140 ? `${text.slice(0, 140)}…` : text;
   return item.images?.length ? `[${item.images.length === 1 ? 'image' : `${item.images.length} images`}]` : '(empty)';
 }
