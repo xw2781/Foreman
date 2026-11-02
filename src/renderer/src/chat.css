@@ -1799,3 +1799,27 @@
   font-size: 13px;
   line-height: 1.45;
 }
+/* When each message was sent: on its own line above the message's top-right corner. A steer has it in its tag, already there. */
+.msg-time {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  white-space: nowrap;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+.msg-tag .msg-time {
+  margin-left: 4px;
+}
+.msg-user {
+  flex-wrap: wrap;
+}
+.msg-user > .msg-time {
+  order: -1;
+  flex-basis: 100%;
+  text-align: right;
+}
+.msg-assistant > .msg-time {
+  display: block;
+  text-align: right;
+}

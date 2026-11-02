@@ -58,7 +58,7 @@ import { useApp } from '../store';
 import { commandLists, drafts, imageDrafts, loadChat, loadCommands, sendModes, useChats } from '../chats';
 import { commandToken, rankCommands } from '../commands';
 import { CopyButton, Markdown } from '../markdown';
-import { folderName, modelLabel, percent, usd } from '../format';
+import { folderName, fullTime, messageTime, modelLabel, percent, usd } from '../format';
 import { Modal, ProviderIcon, Select, useCollapse, useFit } from '../ui';
 import { PERMISSIONS, effortOptions, modelOptions } from './LaunchDialog';
 import { ImageAttachments } from '../ImageAttachments';
@@ -502,6 +502,12 @@ function Notice({ item }: { item: Item<'notice'> }) {
   );
 }
 
+/** When a message was sent; shows on hover. */
+function MessageTime({ at }: { at: string }) {
+  const label = messageTime(at);
+  return label ? <time className="msg-time" dateTime={at} title={fullTime(at)}>{label}</time> : null;
+}
+
 /** A message sent into a running turn, marked as such so it does not read as a new prompt. */
 function SteerMessage({ item }: { item: Item<'user'> }) {
   const waiting = item.delivery === 'steering';
@@ -510,6 +516,7 @@ function SteerMessage({ item }: { item: Item<'user'> }) {
       <div className="msg-tag" title={waiting ? 'Sent into the running turn; the agent reads it after its current step' : 'The agent took this in without starting a new turn'}>
         {waiting ? <LoaderCircle size={11} className="spin" /> : <Navigation size={11} />}
         <span>{waiting ? 'Steering · waiting for the next step' : 'Steered mid-turn'}</span>
+        <MessageTime at={item.at} />
       </div>
       <div className="bubble selectable" data-annotation-source><ImageAttachments images={item.images} /><UserMessageText text={item.text} /></div>
     </div>
@@ -540,6 +547,7 @@ function renderEntries(items: ChatItem[], agent: AgentInfo, activeTail: boolean,
             <SteerMessage key={item.id} item={item} />
           ) : (
             <div key={item.id} className="msg-user" data-user-message={item.id}>
+              <MessageTime at={item.at} />
               <div className="msg-user-actions">
                 {item.text ? <CopyButton text={item.text} label="Copy message" /> : null}
                 {agent.mode === 'chat' ? (
@@ -562,8 +570,9 @@ function renderEntries(items: ChatItem[], agent: AgentInfo, activeTail: boolean,
         break;
       case 'assistant':
         nodes.push(
-          <div key={item.id} data-annotation-source className={`msg-assistant ${item.streaming ? 'streaming' : ''}`}>
-            <Markdown text={item.text} agentId={agent.id} />
+          <div key={item.id} className={`msg-assistant ${item.streaming ? 'streaming' : ''}`}>
+            <MessageTime at={item.at} />
+            <div data-annotation-source><Markdown text={item.text} agentId={agent.id} /></div>
           </div>
         );
         break;

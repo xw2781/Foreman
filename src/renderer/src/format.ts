@@ -54,6 +54,24 @@ export function ago(iso: string | null | undefined): string {
   return `${d}d ago`;
 }
 
+/** A message's time: "3:42 PM" today, "Oct 30, 3:42 PM" before, with the year once it's another year. */
+export function messageTime(iso: string | null | undefined): string {
+  const date = iso ? new Date(iso) : null;
+  if (!date || !Number.isFinite(date.getTime())) return '';
+  const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) return time;
+  const day = date.toLocaleDateString(undefined, date.getFullYear() === now.getFullYear() ? { month: 'short', day: 'numeric' } : { year: 'numeric', month: 'short', day: 'numeric' });
+  return `${day}, ${time}`;
+}
+
+/** The full moment for a tooltip, e.g. "Saturday, November 1, 2026, 3:42:07 PM". */
+export function fullTime(iso: string | null | undefined): string {
+  const date = iso ? new Date(iso) : null;
+  if (!date || !Number.isFinite(date.getTime())) return '';
+  return date.toLocaleString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' });
+}
+
 export function resetIn(iso: string | null | undefined): string {
   if (!iso) return '';
   const ms = Date.parse(iso) - Date.now();
