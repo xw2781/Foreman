@@ -18,6 +18,7 @@ import {
   FilePlus,
   FileText,
   FolderSearch,
+  GitBranchPlus,
   Globe,
   Image,
   Info,
@@ -67,6 +68,8 @@ import { annotatedMessage, NO_ANNOTATIONS, restoreAnnotations, setAnnotations, u
 import { PromptCacheBadge } from '../PromptCacheBadge';
 import { switchCostNotice, useSwitchCosts } from '../switchCost';
 import { SubagentPill } from './SubagentMap';
+import { MessageNavigator } from './MessageNavigator';
+import { askSide, forkAgent, sidePending, useSideChats } from '../sideChat';
 import '../chat.css';
 
 type Item<K extends ChatItem['kind']> = Extract<ChatItem, { kind: K }>;
@@ -503,7 +506,7 @@ function Notice({ item }: { item: Item<'notice'> }) {
 function SteerMessage({ item }: { item: Item<'user'> }) {
   const waiting = item.delivery === 'steering';
   return (
-    <div className={`msg-user steer ${waiting ? 'waiting' : ''}`}>
+    <div className={`msg-user steer ${waiting ? 'waiting' : ''}`} data-user-message={item.id}>
       <div className="msg-tag" title={waiting ? 'Sent into the running turn; the agent reads it after its current step' : 'The agent took this in without starting a new turn'}>
         {waiting ? <LoaderCircle size={11} className="spin" /> : <Navigation size={11} />}
         <span>{waiting ? 'Steering · waiting for the next step' : 'Steered mid-turn'}</span>
@@ -536,7 +539,22 @@ function renderEntries(items: ChatItem[], agent: AgentInfo, activeTail: boolean,
           item.delivery ? (
             <SteerMessage key={item.id} item={item} />
           ) : (
-            <div key={item.id} className="msg-user">
+            <div key={item.id} className="msg-user" data-user-message={item.id}>
+              <div className="msg-user-actions">
+                {item.text ? <CopyButton text={item.text} label="Copy message" /> : null}
+                {agent.mode === 'chat' ? (
+                  <button
+                    type="button"
+                    className="btn ghost sm icon"
+                    data-tip="Fork from here"
+                    data-tip-note="A new chat with everything before this message; the message goes in its box to edit and send"
+                    aria-label="Fork from here"
+                    onClick={() => void forkAgent(agent, { id: item.id, text: item.text, images: item.images })}
+                  >
+                    <GitBranchPlus size={13} />
+                  </button>
+                ) : null}
+              </div>
               <div className="bubble selectable" data-annotation-source><ImageAttachments images={item.images} />{item.text}</div>
             </div>
           )
@@ -1030,6 +1048,15 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
   const modelBusy = voice.model.state === 'loading' && !recording && !transcribing;
 
   const send = async (value = text, how: ChatSendMode = mode) => {
+    // "/btw …" goes to the side chat, as Claude Code's own aside does: not into the conversation.
+    const aside = /^\/btw\s+([\s\S]+)$/.exec(value.trim());
+    if (aside && agent.mode === 'chat') {
+      if (sidePending(useSideChats.getState().chats[agent.id] ?? [])) return toast('info', 'The side chat is still answering.');
+      void askSide(agent.id, aside[1]);
+      useApp.getState().showPanel(agent.id, 'side');
+      update('');
+      return;
+    }
     let message = value.trim();
     if ((!message && !images.length && !annotations.length) || sending || reading) return;
     const dictated = voiceDrafts.has(agent.id) && Boolean(message) && !message.startsWith('/');
@@ -1408,6 +1435,7 @@ export function ChatView({ agent }: { agent: AgentInfo }) {
   const items = chat?.items ?? [];
   const turns = useMemo(() => splitTurns(items), [items]);
   const queued = useMemo(() => items.filter((i): i is Item<'user'> => i.kind === 'user' && i.delivery === 'queued'), [items]);
+  const sent = useMemo(() => items.filter((i): i is Item<'user'> => i.kind === 'user' && i.delivery !== 'queued'), [items]);
 
   // Follow new output while the view is scrolled to the bottom.
   useLayoutEffect(() => {
@@ -1437,6 +1465,7 @@ export function ChatView({ agent }: { agent: AgentInfo }) {
   return (
     <div className={`chat ${question ? 'has-question' : ''}`}>
       <AnnotationSelection agentId={agent.id} container={scrollRef} />
+      <div className="chat-body">
       <div className="chat-scroll" ref={scrollRef} onScroll={onScroll}>
         <div className="chat-column">
           {items.length === 0 ? (
@@ -1461,6 +1490,8 @@ export function ChatView({ agent }: { agent: AgentInfo }) {
             </div>
           ) : null}
         </div>
+      </div>
+      <MessageNavigator messages={sent} scrollRef={scrollRef} />
       </div>
       {!atBottom ? (
         <button

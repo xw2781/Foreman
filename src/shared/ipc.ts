@@ -1,4 +1,4 @@
-import type { ChatImage, ChatMessage } from './types';
+import type { ChatImage, ChatMessage, SideChatExchange } from './types';
 import type {
   AgentInfo,
   IdleMode,
@@ -72,6 +72,8 @@ export interface InvokeMap {
   /** Continues the agent's conversation in place, as a chat or in the terminal (default: its current kind). */
   'agents.resume': (id: string, mode?: AgentMode) => AgentInfo;
   'agents.buffer': (id: string) => { data: string; end: number };
+  /** A new chat that copies this one's conversation, all of it or what came before `itemId` (a message of yours). */
+  'agents.fork': (id: string, itemId?: string) => AgentInfo;
 
   /** Opens a linked file or reveals it in its folder, relative to this agent's cwd. */
   'chat.file': (id: string, href: string, action: 'open' | 'show') => void;
@@ -96,6 +98,13 @@ export interface InvokeMap {
   'chat.setIdleMode': (id: string, mode: IdleMode) => void;
   /** How many hours a Claude chat's prompt cache is kept warm after its last reply (0: off). */
   'chat.setKeepWarm': (id: string, hours: number) => void;
+  /**
+   * Asks about the conversation without adding to it (a side chat); `earlier` are the side chat's
+   * previous exchanges. A finished chat is started again for it. Returns the answer.
+   */
+  'chat.side': (id: string, question: string, earlier: SideChatExchange[]) => string;
+  /** Forgets the side chat's own thread (Codex), so the next question starts afresh. */
+  'chat.sideReset': (id: string) => void;
   /** The agents archived in the session list: keep-warm skips them. */
   'agents.setArchived': (ids: string[]) => void;
   /** Starts sign-in for a connector and opens its page in the browser; returns the page. */
@@ -185,10 +194,10 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'profiles.list', 'profiles.create', 'profiles.update', 'profiles.remove', 'profiles.setActive', 'profiles.refresh',
   'profiles.login', 'profiles.logout', 'profiles.setGlobalDefault', 'profiles.shareConfig', 'profiles.openShell',
   'agents.list', 'agents.launch', 'agents.write', 'agents.resize', 'agents.stop', 'agents.remove', 'agents.clearFinished',
-  'agents.rename', 'agents.resume', 'agents.buffer',
+  'agents.rename', 'agents.resume', 'agents.buffer', 'agents.fork',
   'chat.file', 'chat.items', 'chat.send', 'chat.interrupt', 'chat.respond', 'chat.configure', 'chat.switchCost', 'chat.commands', 'chat.queued',
   'chat.connectors', 'chat.connectorSignIn', 'chat.connectorReconnect', 'chat.contextUsage',
-  'chat.setIdleMode', 'chat.setKeepWarm', 'agents.setArchived',
+  'chat.setIdleMode', 'chat.setKeepWarm', 'agents.setArchived', 'chat.side', 'chat.sideReset',
   'files.list', 'files.read',
   'processes.external', 'processes.kill',
   'usage.report', 'usage.export', 'usage.import', 'usage.forgetMachine', 'pricing.status', 'pricing.edit',

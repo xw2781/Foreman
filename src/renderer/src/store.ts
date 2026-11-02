@@ -16,7 +16,7 @@ import type {
 } from '@shared/types';
 
 /** The tabs of the side panel beside an agent. */
-export type PanelTab = 'subagents' | 'browser' | 'files' | 'connectors' | 'details';
+export type PanelTab = 'subagents' | 'side' | 'browser' | 'files' | 'connectors' | 'details';
 
 export type View = 'agents' | 'tasks' | 'usage' | 'accounts' | 'computer' | 'settings';
 

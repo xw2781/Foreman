@@ -1,4 +1,4 @@
-import type { ChatImage } from '../../shared/types';
+import type { ChatImage, SideChatExchange } from '../../shared/types';
 import type { ChatAnswer, ChatCommand, ChatConnector, ChatSettingsPatch, ContextUsage, ProfileLimits } from '../../shared/types';
 import type { ChatLog } from './log';
 import type { SubagentTracker } from '../subagents';
@@ -54,9 +54,27 @@ export interface ChatDriver {
    * side question: no tools, not written to the transcript, read from the prompt cache).
    */
   sideQuestion?(question: string): Promise<{ ok: true; text: string } | { ok: false; error: string }>;
+  /** A side chat: asks about the conversation without adding to it; `earlier` are the side chat's previous exchanges. */
+  sideChat?(question: string, earlier: SideChatExchange[]): Promise<{ ok: true; text: string } | { ok: false; error: string }>;
+  /** Starts the side chat over. */
+  resetSideChat?(): void;
   /** Lets Claude Code compact the conversation while it sits idle, or stops it (flag settings, from now on). */
   setIdleCompaction?(on: boolean): void;
   readonly busy: boolean;
+}
+
+/** How many earlier side-chat exchanges go along with a follow-up, and how much of each answer. */
+const SIDE_HISTORY = 6;
+const SIDE_ANSWER_CHARS = 4000;
+
+/** A side-chat question, with the side chat so far for a CLI that only answers one-off questions. */
+export function sideChatPrompt(question: string, earlier: SideChatExchange[]): string {
+  const recent = earlier.slice(-SIDE_HISTORY);
+  if (!recent.length) return question;
+  const history = recent
+    .map((e) => `Question: ${e.question}\n\nAnswer: ${e.answer.length > SIDE_ANSWER_CHARS ? `${e.answer.slice(0, SIDE_ANSWER_CHARS)}…` : e.answer}`)
+    .join('\n\n---\n\n');
+  return `Earlier in this side conversation (asides about the main conversation, not part of it):\n\n${history}\n\n---\n\nFollow-up: ${question}`;
 }
 
 /** Splits a byte stream into complete lines. */

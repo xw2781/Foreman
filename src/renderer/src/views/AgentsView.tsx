@@ -3,8 +3,10 @@ import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
   FolderOpen,
+  GitFork,
   Globe,
   History,
+  MessageSquareDashed,
   MessagesSquare,
   MoreHorizontal,
   MousePointer2,
@@ -32,6 +34,7 @@ import { AccountChip, AgentStatusPill, Empty, Meter, MiniMeter, ProviderIcon, co
 import { mountTerminal, terminalBackground } from '../terminals';
 import { groupAgentsByProject, projectKey } from '../agentProjects';
 import { hasUnreadCompletion } from '../sessionUnread';
+import { forkAgent } from '../sideChat';
 
 export async function stopAgent(agent: AgentInfo) {
   const settings = useApp.getState().settings;
@@ -314,6 +317,13 @@ function TerminalHost({ agent }: { agent: AgentInfo }) {
 function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display }) {
   const panelOpen = useApp((s) => isPanelOpen(s, agent.id));
   const panelTab = usePanelTab(agent);
+  const forkSource = useApp((s) => (agent.forkedFrom ? s.agents.find((a) => a.id === agent.forkedFrom!.agentId) ?? null : null));
+  const [forking, setForking] = useState(false);
+  const fork = async () => {
+    setForking(true);
+    await forkAgent(agent);
+    setForking(false);
+  };
   // The cost shows here unless the panel's Details tab already does.
   const costShown = panelOpen && panelTab === 'details';
   const [editing, setEditing] = useState(false);
@@ -371,6 +381,19 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
           >
             {agent.projectless ? 'No project' : folderName(agent.cwd)}
           </span>
+          {agent.forkedFrom ? (
+            <button
+              type="button"
+              className="th-forked"
+              data-fit="2"
+              data-tip={forkSource ? 'Open the chat this was forked from' : 'Forked from a chat no longer in the list'}
+              disabled={!forkSource}
+              onClick={() => forkSource && useApp.getState().selectAgent(forkSource.id)}
+            >
+              <GitFork size={12} />
+              <span className="ellipsis">{forkSource?.title ?? agent.forkedFrom.title}</span>
+            </button>
+          ) : null}
         </div>
       </div>
       <div className="th-actions">
@@ -389,6 +412,31 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
               {compact(t.totalUsage?.totalTokens ?? 0)} tokens
             </div>
           </div>
+        ) : null}
+        {CONVERSATION_MODES.includes(agent.mode) ? (
+          <button
+            className="btn ghost icon"
+            data-fit="1"
+            data-tip="Fork"
+            data-tip-note="A new chat that continues from a copy of this conversation. To fork from an earlier point, use the button beside one of your messages"
+            aria-label="Fork this conversation"
+            disabled={forking}
+            onClick={() => void fork()}
+          >
+            <GitFork size={15} />
+          </button>
+        ) : null}
+        {agent.mode === 'chat' ? (
+          <button
+            className={`btn ghost icon ${panelOpen && panelTab === 'side' ? 'on' : ''}`}
+            data-fit="1"
+            data-tip="Side chat"
+            data-tip-note="Ask about the conversation without adding to it (or type /btw in the message box)"
+            aria-label="Side chat"
+            onClick={() => useApp.getState().togglePanel(agent.id, 'side')}
+          >
+            <MessageSquareDashed size={15} />
+          </button>
         ) : null}
         <button className="btn ghost icon" data-fit="2" data-tip="Rename" aria-label="Rename" onClick={() => setEditing(true)}>
           <Pencil size={15} />

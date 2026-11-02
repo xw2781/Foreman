@@ -86,6 +86,12 @@ Foreman adds session instructions encouraging both agents to use their question 
 
 These cards apply to **Chat** mode. **Terminal** mode uses the CLI's own interaction UI. Models still decide when to call a tool, and older CLIs may not expose every interactive feature.
 
+## Fork, side chat and message navigator
+
+- **Fork** (header button) starts a new chat, on the same account, model and folder, that continues from a copy of the conversation; the original is untouched. To branch from an earlier point, hover one of your messages and click **Fork from here**: the new chat holds everything *before* that message and puts the message in its box to edit and send. Claude Code forks with `--fork-session` (and `--resume-session-at` for an earlier point); Codex with `thread/fork` (and `lastTurnId`). A fork links back to its original under its title.
+- **Side chat** (header button, the **Side chat** tab of the side panel, or `/btw <question>` in the message box) asks about the conversation without adding to it, so a running turn isn't interrupted or steered. Claude Code answers with its side-question request (no tools, from the prompt cache; follow-ups carry the side chat so far). Codex answers on an ephemeral, read-only copy of the thread that is never saved. Side chats last until the app closes. Their cost isn't counted in Usage, which reads the saved session files.
+- **Message navigator**: the ticks at the right edge of a chat are your messages, the highlighted one is in view. Hover them for a preview list; click to jump back to a message.
+
 ## Development
 
 Node isn't required on PATH: `.tools/node` holds a portable Node (not committed).

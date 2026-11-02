@@ -1,4 +1,4 @@
-import type { ChatImage, ChatMessage, SettingsChange, SwitchCost } from '../shared/types';
+import type { ChatEntry, ChatImage, ChatMessage, ForkPoint, ForkSource, SettingsChange, SideChatExchange, SwitchCost } from '../shared/types';
 import crypto from 'node:crypto';
 import { validateChatImages } from '../shared/chatImages';
 import path from 'node:path';
@@ -31,6 +31,7 @@ import { ChatLog, clipText } from './chat/log';
 import { ClaudeChat, claudeChatArgs } from './chat/claudeChat';
 import { KEEPALIVE_PROMPT, keepaliveCosts, keepaliveDue, keepWarmAllowed } from './chat/idleCache';
 import { CodexChat } from './chat/codexChat';
+import { forkItems, forkPoint } from './chat/fork';
 import { LineSplitter, type ChatDriver, type ChatHost } from './chat/driver';
 import { locateCli, spawnSpec } from './cliLocator';
 import { defaultModel } from '../shared/models';
@@ -218,7 +219,11 @@ export class AgentManager {
       // A chat continued in this run keeps its items; otherwise the session file has them.
       if (previousSession?.chat?.size && previousSession.info.mode === 'chat') chat = previousSession.chat;
       else {
-        chat = options.resumeSessionId ? await this.historyLog(profile, options.resumeSessionId, previous?.transcriptPath ?? null) : new ChatLog();
+        chat = options.fork
+          ? await this.forkLog(profile, options.fork)
+          : options.resumeSessionId
+            ? await this.historyLog(profile, options.resumeSessionId, previous?.transcriptPath ?? null)
+            : new ChatLog();
         chat.reset = true;
       }
       if (profile.provider === 'claude') {
@@ -227,6 +232,8 @@ export class AgentManager {
         args = claudeChatArgs({
           sessionId: options.resumeSessionId ? null : claudeSessionId,
           resumeSessionId: options.resumeSessionId,
+          // A fork before the first message has nothing to copy: it starts a new session.
+          fork: options.fork && options.fork.through !== null ? { sessionId: options.fork.sessionId, through: options.fork.through } : undefined,
           settingsFile,
           model: options.model,
           effort: options.effort,
@@ -296,6 +303,7 @@ export class AgentManager {
       titleCustom: Boolean(options.title?.trim()) || previous?.titleCustom === true,
       // A continued conversation keeps the map of what it ran before.
       subagents: previous?.subagents,
+      forkedFrom: options.fork ?? previous?.forkedFrom,
       cacheRebuild: options.resumeSessionId ? previous?.cacheRebuild ?? null : null
     };
     const session = this.createSession(info, options, profile, {
@@ -493,6 +501,7 @@ export class AgentManager {
       : new CodexChat(host, write, {
           cwd: session.info.cwd,
           resumeThreadId: options.resumeSessionId,
+          fork: options.fork ? { threadId: options.fork.sessionId, before: options.fork.before } : undefined,
           model: options.model,
           effort: options.effort,
           permission: options.permission,
@@ -618,6 +627,18 @@ export class AgentManager {
     return log;
   }
 
+  /** A fork's chat: the conversation it copies, up to its fork point, then a marker where it branches off. */
+  private async forkLog(profile: Profile, fork: ForkSource): Promise<ChatLog> {
+    const source = this.sessions.get(fork.agentId)?.chat?.list()
+      ?? (await this.historyLog(profile, fork.sessionId, this.get(fork.agentId)?.transcriptPath ?? null)).list();
+    const log = new ChatLog();
+    for (const { seq: _seq, rev: _rev, at, ...entry } of forkItems(source, fork.before) ?? []) log.upsert(entry as ChatEntry, at);
+    log.settle('Forked');
+    log.upsert({ kind: 'notice', id: `fork-${Date.now()}`, tone: 'info', text: `Forked from “${fork.title}”` });
+    log.takeDirty();
+    return log;
+  }
+
   private findTranscript(profile: Profile, sessionId: string): Promise<string | null> {
     return profile.provider === 'claude'
       ? this.deps.telemetry.findClaudeTranscript(profile.configDir, sessionId)
@@ -718,6 +739,69 @@ export class AgentManager {
     const info = this.get(id);
     if (!info) throw new Error('Unknown agent');
     return this.continueAgent(info, 'chat', text, images);
+  }
+
+  /**
+   * A new chat that copies this conversation: all of it, or what came before one of the
+   * person's messages (to ask it differently). Same account, model and folder.
+   */
+  async fork(id: string, itemId?: string): Promise<AgentInfo> {
+    const info = this.get(id);
+    if (!info) throw new Error('Unknown agent');
+    if (!CONVERSATION_MODES.includes(info.mode)) throw new Error('Only conversations can be forked.');
+    const profile = this.deps.profiles.require(info.profileId);
+    const saved = await this.savedSessionOf(info);
+    if (!saved) throw new Error('There is nothing to fork yet: send a message first.');
+    let before: ForkPoint | undefined;
+    let through: string | null | undefined;
+    if (itemId) {
+      before = forkPoint(await this.chatItems(id), itemId) ?? undefined;
+      if (!before) throw new Error("That message can't be forked from.");
+      if (info.provider === 'claude') {
+        const file = saved.transcriptPath ?? info.transcriptPath ?? (await this.findTranscript(profile, saved.sessionId));
+        const point = file ? await this.deps.telemetry.claudeForkThrough(file, before) : null;
+        if (!point?.found) throw new Error("Couldn't find that message in Claude Code's session file.");
+        through = point.through;
+      }
+    }
+    const fork: ForkSource = { agentId: id, title: info.title, sessionId: saved.sessionId, ...(before ? { before } : {}), ...(through !== undefined ? { through } : {}) };
+    return this.launch({
+      provider: info.provider,
+      profileId: info.profileId,
+      cwd: info.cwd,
+      projectless: info.projectless,
+      mode: 'chat',
+      title: `${info.title.replace(/ \(fork\)$/, '')} (fork)`,
+      model: info.model ?? undefined,
+      effort: this.sessions.get(id)?.options.effort ?? info.effort ?? undefined,
+      permission: info.permission ?? undefined,
+      fork
+    });
+  }
+
+  /**
+   * A side chat: a question about the conversation that isn't added to it. A chat that
+   * has ended starts again (idle) to answer; one in the terminal can't.
+   */
+  async chatSide(id: string, question: string, earlier: SideChatExchange[]): Promise<string> {
+    if (!question.trim()) throw new Error('Type a question first.');
+    let session = this.sessions.get(id);
+    if (!session || session.info.endedAt) {
+      const info = this.get(id);
+      if (!info) throw new Error('Unknown agent');
+      if (info.mode !== 'chat') throw new Error('Side chat works with chats; switch this agent to Chat first.');
+      await this.continueAgent(info, 'chat');
+      session = this.sessions.get(id);
+    }
+    const driver = session?.driver;
+    if (!driver?.sideChat) throw new Error('Side chat works with chats; switch this agent to Chat first.');
+    const reply = await driver.sideChat(question.trim(), Array.isArray(earlier) ? earlier.filter((e) => typeof e?.question === 'string' && typeof e?.answer === 'string') : []);
+    if (!reply.ok) throw new Error(reply.error);
+    return reply.text;
+  }
+
+  chatSideReset(id: string) {
+    this.sessions.get(id)?.driver?.resetSideChat?.();
   }
 
   async chatCommands(id: string): Promise<ChatCommand[]> {
@@ -943,6 +1027,8 @@ export class AgentManager {
         effort,
         permission: info.permission ?? undefined,
         resumeSessionId: saved?.sessionId,
+        // A fork closed before its first message saved nothing of its own: it copies its source again.
+        fork: !saved && mode === 'chat' ? info.forkedFrom : undefined,
         prompt
       },
       info.id,

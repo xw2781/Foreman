@@ -3055,3 +3055,25 @@ body.dragging-split .bp-canvas {
 @media (prefers-reduced-motion: reduce) {
   .voice-model-status .progress.indeterminate > div { animation: none; width: 100%; opacity: 0.5; }
 }
+
+/* The chat a fork came from, in the agent header. */
+.th-forked {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 220px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.th-forked:hover:not(:disabled) {
+  color: var(--accent-strong);
+}
+.th-forked:disabled {
+  cursor: default;
+}

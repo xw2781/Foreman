@@ -50,6 +50,26 @@ function parse(line: string): any {
   }
 }
 
+/** What the person wrote in a Claude Code user record, as the chat shows it ('' for tool results and the CLI's own messages). */
+export function claudeUserText(content: unknown): string {
+  const texts: string[] = [];
+  const push = (text: string) => {
+    if (!isSyntheticUserText(text)) texts.push(text);
+    else {
+      const command = slashCommandText(text);
+      if (command) texts.push(command);
+    }
+  };
+  if (typeof content === 'string') push(content);
+  else if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block?.type === 'text' && typeof block.text === 'string') push(block.text);
+      else if (block?.type === 'image' && !contentImages([block]).length) texts.push('[image]');
+    }
+  }
+  return texts.join('\n').trim();
+}
+
 /** Claude Code transcript (<config>/projects/<cwd>/<session>.jsonl). */
 export function claudeHistory(lines: Iterable<string>, limit = HISTORY_LIMIT): HistoryEntry[] {
   const out = new Collector();
@@ -68,29 +88,14 @@ export function claudeHistory(lines: Iterable<string>, limit = HISTORY_LIMIT): H
     if (record.type === 'user') {
       if (record.isCompactSummary || record.isMeta) continue;
       const content = record.message?.content;
-      const texts: string[] = [];
-      const push = (text: string) => {
-        if (!isSyntheticUserText(text)) texts.push(text);
-        else {
-          const command = slashCommandText(text);
-          if (command) texts.push(command);
-        }
-      };
-      if (typeof content === 'string') push(content);
-      else if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block?.type === 'text' && typeof block.text === 'string') push(block.text);
-          else if (block?.type === 'image' && !contentImages([block]).length) texts.push('[image]');
-          else if (block?.type === 'tool_result') {
-            const id = String(block.tool_use_id ?? '');
-            const tool = out.get(id);
-            if (tool?.kind === 'tool') {
-              out.put({ ...tool, output: clipText(toolResultText(block.content)), status: block.is_error ? 'error' : 'done' }, null);
-            }
-          }
+      for (const block of Array.isArray(content) ? content : []) {
+        if (block?.type !== 'tool_result') continue;
+        const tool = out.get(String(block.tool_use_id ?? ''));
+        if (tool?.kind === 'tool') {
+          out.put({ ...tool, output: clipText(toolResultText(block.content)), status: block.is_error ? 'error' : 'done' }, null);
         }
       }
-      const text = texts.join('\n').trim();
+      const text = claudeUserText(content);
       const images = contentImages(content);
       if (text || images.length) out.put({ kind: 'user', id: `user-${uuid}`, text, ...(images.length ? { images } : {}) }, at);
       continue;

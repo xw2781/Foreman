@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeftRight, FolderTree, Gauge, Globe, Loader2, Network, Plug, X, type LucideIcon } from 'lucide-react';
+import { ArrowLeftRight, FolderTree, Gauge, Globe, Loader2, MessageSquareDashed, Network, Plug, X, type LucideIcon } from 'lucide-react';
 import { AGENT_MODES, CONVERSATION_MODES, type AgentInfo } from '@shared/types';
 import { runningSubagents } from '@shared/subagents';
 import { useApp, type PanelTab } from '../store';
@@ -8,9 +8,12 @@ import { AgentDetails } from './DetailsPanel';
 import { ConnectorsPane, hasConnectors, useConnectorAlerts, useConnectorWatch } from './ConnectorsPanel';
 import { FilesPanel } from './FilesPanel';
 import { SubagentMapPane } from './SubagentMap';
+import { SideChatPane } from './SideChatPanel';
+import { sidePending, useSideChats } from '../sideChat';
 
 const TABS: Array<{ id: PanelTab; label: string; icon: LucideIcon; title: string }> = [
   { id: 'subagents', label: 'Subagents', icon: Network, title: 'The subagents this agent started' },
+  { id: 'side', label: 'Side chat', icon: MessageSquareDashed, title: "Ask about the conversation without adding to it: the agent isn't interrupted or steered" },
   { id: 'browser', label: 'Browser', icon: Globe, title: "The agent's browser" },
   { id: 'files', label: 'Files', icon: FolderTree, title: 'Project files' },
   { id: 'connectors', label: 'Connectors', icon: Plug, title: 'Connectors this session can use (Microsoft 365, Gmail, Google Drive…) and their sign-in' },
@@ -20,6 +23,7 @@ const TABS: Array<{ id: PanelTab; label: string; icon: LucideIcon; title: string
 function available(agent: AgentInfo, tab: PanelTab) {
   if (tab === 'subagents') return CONVERSATION_MODES.includes(agent.mode) || Boolean(agent.subagents?.length);
   if (tab === 'browser') return AGENT_MODES.includes(agent.mode);
+  if (tab === 'side') return agent.mode === 'chat';
   if (tab === 'connectors') return hasConnectors(agent);
   return true;
 }
@@ -66,6 +70,7 @@ export function SidePanel({ agent, expanded, onExpand }: { agent: AgentInfo; exp
   const running = runningSubagents(agent);
   const choose = (id: PanelTab) => useApp.setState({ panelTab: { ...useApp.getState().panelTab, [agent.id]: id } });
   const signIn = useConnectorAlerts(agent.id);
+  const asking = useSideChats((s) => sidePending(s.chats[agent.id] ?? []));
   useConnectorWatch(agent);
   const strip = useCompactTabs([agent.mode, running > 0, Boolean(browser), signIn > 0]);
   return (
@@ -81,7 +86,7 @@ export function SidePanel({ agent, expanded, onExpand }: { agent: AgentInfo; exp
             title={title}
             onClick={() => choose(id)}
           >
-            {id === 'browser' && browser?.busy ? <Loader2 size={14} className="spin" /> : <Icon size={14} />}
+            {(id === 'browser' && browser?.busy) || (id === 'side' && asking) ? <Loader2 size={14} className="spin" /> : <Icon size={14} />}
             <span className="sp-tab-label">{label}</span>
             {id === 'subagents' && running ? <span className="sp-badge">{running}</span> : null}
             {id === 'browser' && browser ? <span className="sp-live" title="Open" /> : null}
@@ -102,6 +107,8 @@ export function SidePanel({ agent, expanded, onExpand }: { agent: AgentInfo; exp
       <div className="sp-body" role="tabpanel">
         {tab === 'subagents' ? (
           <SubagentMapPane agent={agent} />
+        ) : tab === 'side' ? (
+          <SideChatPane agent={agent} />
         ) : tab === 'browser' ? (
           <BrowserPanel agent={agent} state={browser} />
         ) : tab === 'connectors' ? (

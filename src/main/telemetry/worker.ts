@@ -4,13 +4,20 @@ import { parentPort, workerData } from 'node:worker_threads';
 import { TelemetryEngine } from './engine';
 import { IncrementalLineReader } from './jsonl';
 import { claudeHistory, codexHistory } from '../chat/history';
+import { claudeForkThrough } from '../chat/fork';
+import type { ForkPoint } from '../../shared/types';
 import { loadPricingFile } from './pricingFile';
 
 type Request = { id: number; method: string; args: any[] };
 
-async function chatHistory(provider: 'claude' | 'codex', filePath: string) {
+async function readLines(filePath: string) {
   const lines: string[] = [];
   await new IncrementalLineReader(filePath).read((line) => lines.push(line));
+  return lines;
+}
+
+async function chatHistory(provider: 'claude' | 'codex', filePath: string) {
+  const lines = await readLines(filePath);
   return provider === 'claude' ? claudeHistory(lines) : codexHistory(lines);
 }
 
@@ -36,6 +43,10 @@ const methods: Record<string, (...args: any[]) => unknown> = {
   quickReport: () => engine.quickReport(),
   codexLimits: (profile) => engine.codexLimits(profile),
   chatHistory: (provider, filePath) => chatHistory(provider, filePath),
+  claudeForkThrough: async (filePath: string, point: ForkPoint) => {
+    const through = claudeForkThrough(await readLines(filePath), point);
+    return { found: through !== undefined, through: through ?? null };
+  },
   saveCache: () => engine.saveCache(),
   localUsage: (previous) => engine.localUsage(previous),
   exportUsage: (filePath) => engine.exportUsage(filePath),

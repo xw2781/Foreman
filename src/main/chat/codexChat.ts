@@ -4,11 +4,12 @@ import type { ChatImage } from '../../shared/types';
 // We call initialize → thread/start|resume → turn/start; the server streams
 // item and turn notifications and asks for approvals as server requests.
 import { randomUUID } from 'node:crypto';
-import type { ChatAnswer, ChatCommand, ChatOption, ChatQuestion, ChatSettingsPatch, TokenUsage } from '../../shared/types';
+import type { ChatAnswer, ChatCommand, ChatOption, ChatQuestion, ChatSettingsPatch, ForkPoint, SideChatExchange, TokenUsage } from '../../shared/types';
 import { LONG_CONTEXT_THRESHOLD, priceUsage, rateForModel } from '../telemetry/pricing';
 import { normalizeCodexUsage, subtractUsage } from '../telemetry/codexRollout';
 import { codexItemEntry, codexPermission } from './codexItems';
-import type { ChatDriver, ChatHost } from './driver';
+import { sideChatPrompt, type ChatDriver, type ChatHost } from './driver';
+import { codexForkTurn } from './fork';
 import { clipText, TEXT_LIMIT } from './log';
 import { optionalHeaders, OPTIONAL_QUESTION_MS, QuestionQueue, questionInstructions } from './questions';
 
@@ -26,6 +27,11 @@ const APPROVAL_OPTIONS: ChatOption[] = [
 ];
 
 const COMMAND = /^\/(compact|review)(?:\s+([\s\S]*))?$/;
+
+const SIDE_INSTRUCTIONS =
+  'This is a side conversation about the work above, kept apart from it. Answer the questions asked; you may read files and run read-only commands to do so, but do not change anything or carry on with the task.';
+
+type SideReply = { ok: true; text: string } | { ok: false; error: string };
 
 const DECISIONS: Record<string, string> = { allow: 'accept', 'allow-session': 'acceptForSession', deny: 'decline', cancel: 'cancel' };
 const RESOLUTIONS: Record<string, string> = { allow: 'Allowed', 'allow-session': 'Allowed for this session', deny: 'Denied', cancel: 'Denied · turn stopped' };
@@ -56,6 +62,8 @@ export function mentionedSkills(text: string, skills: CodexSkill[]): CodexSkill[
 export interface CodexChatOptions {
   cwd: string;
   resumeThreadId?: string;
+  /** Starts as a copy of this thread: all of it, or the turns before the `before` message. */
+  fork?: { threadId: string; before?: ForkPoint };
   model?: string;
   effort?: string;
   permission?: string;
@@ -86,13 +94,40 @@ export class CodexChat implements ChatDriver {
   /** `skills/list`, fetched once and again after `skills/changed`. */
   private skills: Promise<CodexSkill[]> | null = null;
   private knownSkills: CodexSkill[] = [];
+  /** Settles once the thread exists (or couldn't be started). */
+  private ready: Promise<void>;
+  private settleReady!: (error?: Error) => void;
+  /** The side chat's thread: an ephemeral, read-only copy of this one. */
+  private sideThreadId: string | null = null;
+  /** The side chat's turn in flight: its answer so far, and who waits for it. */
+  private sideTurn: { text: string; resolve: (reply: SideReply) => void } | null = null;
   busy = false;
 
   constructor(private host: ChatHost, private write: (message: object) => void, private options: CodexChatOptions) {
     this.questionQueue = new QuestionQueue(host.log, () => host.changed());
+    this.ready = new Promise<void>((resolve, reject) => {
+      this.settleReady = (error) => (error ? reject(error) : resolve());
+    });
+    this.ready.catch(() => {});
   }
 
   async start(prompt?: string, images?: ChatImage[]) {
+    try {
+      await this.open();
+    } catch (error) {
+      this.settleReady(error instanceof Error ? error : new Error(String(error)));
+      throw error;
+    }
+    this.settleReady();
+    if (prompt?.trim() || images?.length) this.send(prompt ?? '', undefined, images);
+    for (const message of this.early.splice(0)) {
+      if (this.busy) this.steer(message.id, message.text, message.images);
+      else this.dispatch(message.id, message.text, message.images);
+    }
+  }
+
+  /** Starts, resumes or forks the thread. */
+  private async open() {
     this.initialized = this.call('initialize', { clientInfo: { name: 'foreman', title: 'Foreman', version: this.options.appVersion }, capabilities: null });
     await this.initialized;
     this.write({ method: 'initialized' });
@@ -110,9 +145,11 @@ export class CodexChat implements ChatDriver {
         ...(this.options.effort ? { model_reasoning_effort: this.options.effort } : {})
       }
     };
-    const result = this.options.resumeThreadId
-      ? await this.call('thread/resume', { threadId: this.options.resumeThreadId, ...params, excludeTurns: true })
-      : await this.call('thread/start', params);
+    const result = this.options.fork
+      ? await this.forkThread(this.options.fork, params)
+      : this.options.resumeThreadId
+        ? await this.call('thread/resume', { threadId: this.options.resumeThreadId, ...params, excludeTurns: true })
+        : await this.call('thread/start', params);
     this.threadId = result.thread.id;
     this.defaultModel = typeof result.model === 'string' ? result.model : null;
     this.model = this.options.model || this.defaultModel;
@@ -120,10 +157,83 @@ export class CodexChat implements ChatDriver {
     this.host.status('idle', null);
     // Known skills turn `$name` mentions into skill inputs.
     this.loadSkills();
-    if (prompt?.trim() || images?.length) this.send(prompt ?? '', undefined, images);
-    for (const message of this.early.splice(0)) {
-      if (this.busy) this.steer(message.id, message.text, message.images);
-      else this.dispatch(message.id, message.text, message.images);
+  }
+
+  /** A copy of another thread, through the turn before the fork's message; a message that opened it leaves nothing to copy. */
+  private async forkThread(fork: NonNullable<CodexChatOptions['fork']>, params: Record<string, unknown>) {
+    let lastTurnId: string | undefined;
+    if (fork.before) {
+      const turns: Array<{ id: string; items?: unknown[] }> = [];
+      let cursor: string | null = null;
+      do {
+        const page: any = await this.call('thread/turns/list', { threadId: fork.threadId, sortDirection: 'asc', limit: 100, ...(cursor ? { cursor } : {}) });
+        turns.push(...(Array.isArray(page?.data) ? page.data : []));
+        cursor = typeof page?.nextCursor === 'string' ? page.nextCursor : null;
+      } while (cursor);
+      const through = codexForkTurn(turns, fork.before);
+      if (through === undefined) throw new Error("that message isn't in the Codex thread");
+      if (through === null) return this.call('thread/start', params);
+      lastTurnId = through;
+    }
+    return this.call('thread/fork', { threadId: fork.threadId, ...(lastTurnId ? { lastTurnId } : {}), ...params, excludeTurns: true });
+  }
+
+  /**
+   * Asks on an ephemeral, read-only copy of the thread, made at the first question:
+   * Codex has the side chat's own turns, so `earlier` matters only when that copy is gone.
+   */
+  async sideChat(question: string, earlier: SideChatExchange[]): Promise<SideReply> {
+    if (this.sideTurn) return { ok: false, error: 'The side chat is still answering' };
+    try {
+      await this.ready;
+      const fresh = !this.sideThreadId;
+      if (!this.sideThreadId) {
+        const result = await this.call('thread/fork', {
+          threadId: this.threadId,
+          ephemeral: true,
+          excludeTurns: true,
+          approvalPolicy: 'never',
+          sandbox: 'read-only',
+          developerInstructions: SIDE_INSTRUCTIONS
+        });
+        this.sideThreadId = result.thread.id;
+      }
+      const text = fresh ? sideChatPrompt(question, earlier) : question;
+      const answer = new Promise<SideReply>((resolve) => (this.sideTurn = { text: '', resolve }));
+      this.call('turn/start', { threadId: this.sideThreadId, input: [{ type: 'text', text, text_elements: [] }] }).catch((error: Error) =>
+        this.endSideTurn({ ok: false, error: error.message })
+      );
+      return await answer;
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  resetSideChat() {
+    this.sideThreadId = null;
+    this.endSideTurn({ ok: false, error: 'The side chat was cleared' });
+  }
+
+  private endSideTurn(reply: SideReply) {
+    const turn = this.sideTurn;
+    this.sideTurn = null;
+    turn?.resolve(reply);
+  }
+
+  /** The side chat's thread: only its answer is kept. */
+  private onSideNotification(method: string, params: any) {
+    const turn = this.sideTurn;
+    if (!turn) return;
+    if (method === 'item/agentMessage/delta' && typeof params.delta === 'string') turn.text += params.delta;
+    else if (method === 'item/started' && codexItemEntry(params.item)?.kind === 'assistant') turn.text = '';
+    else if (method === 'item/completed') {
+      const entry = codexItemEntry(params.item);
+      if (entry?.kind === 'assistant' && entry.text) turn.text = entry.text;
+    } else if (method === 'error' && !params.willRetry) this.endSideTurn({ ok: false, error: params.error?.message ?? 'Codex reported an error' });
+    else if (method === 'turn/completed') {
+      const status = String(params.turn?.status ?? 'completed');
+      if (status === 'completed' && turn.text.trim()) this.endSideTurn({ ok: true, text: turn.text.trim() });
+      else this.endSideTurn({ ok: false, error: params.turn?.error?.message ?? (status === 'completed' ? 'Codex gave no answer' : `The answer was ${status}`) });
     }
   }
 
@@ -335,11 +445,16 @@ export class CodexChat implements ChatDriver {
   /** Fails every call still waiting (the process exited). */
   dispose(reason: string) {
     this.questionQueue.clear();
+    this.endSideTurn({ ok: false, error: reason });
     for (const call of this.calls.values()) call.reject(new Error(reason));
     this.calls.clear();
   }
 
   private onNotification(method: string, params: any) {
+    if (this.sideThreadId && params.threadId === this.sideThreadId) {
+      this.onSideNotification(method, params);
+      return;
+    }
     // Child threads (spawned agents) report here too; only the map follows them.
     this.host.subagents?.codex(method, params, this.threadId);
     if (params.threadId && this.threadId && params.threadId !== this.threadId) return;
@@ -480,6 +595,11 @@ export class CodexChat implements ChatDriver {
   private onServerRequest(message: any) {
     const { id: rpcId, method } = message;
     const params = message.params ?? {};
+    // The side chat never asks: it runs read-only without approvals. Answer anyway, or Codex waits.
+    if (this.sideThreadId && params.threadId === this.sideThreadId) {
+      this.write({ id: rpcId, error: { code: -32000, message: 'The side chat is read-only' } });
+      return;
+    }
     const itemId = `approval-${rpcId}`;
     let title: string;
     let detail: string | null = typeof params.reason === 'string' ? params.reason : null;

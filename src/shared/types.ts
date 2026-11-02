@@ -142,7 +142,35 @@ export interface LaunchOptions {
   permission?: string;
   /** Resume an earlier session by id (interactive mode only). */
   resumeSessionId?: string;
+  /** Start as a copy of another conversation (chat mode). */
+  fork?: ForkSource;
   extraArgs?: string;
+}
+
+/** A message of the copied conversation that a fork stops before. */
+export interface ForkPoint {
+  itemId: string;
+  text: string;
+  /** Which message with this text it is (0: the first), for transcripts whose ids differ from the chat's. */
+  occurrence: number;
+}
+
+/** Where a forked conversation came from. */
+export interface ForkSource {
+  agentId: string;
+  title: string;
+  /** The session (Claude Code) or thread (Codex) it copies. */
+  sessionId: string;
+  /** Copies only what came before this message; absent: the whole conversation. */
+  before?: ForkPoint;
+  /** Claude Code: the transcript entry the copy ends with, resolved from `before` (null: nothing is copied). */
+  through?: string | null;
+}
+
+/** One question and answer of a side chat: asked about the conversation, never added to it. */
+export interface SideChatExchange {
+  question: string;
+  answer: string;
 }
 
 export interface TokenUsage {
@@ -239,6 +267,8 @@ export interface AgentInfo {
   titleCustom?: boolean;
   /** Subagents it started (Claude Code's Task/Agent tool, Codex's spawn_agent), oldest first. */
   subagents?: SubagentInfo[];
+  /** The conversation it was forked from. */
+  forkedFrom?: ForkSource;
   /** A model or effort change made mid-session whose next request hasn't run yet: it rebuilds the prompt cache. */
   cacheRebuild?: CacheRebuild | null;
   /** Claude sessions: what happens when it sits idle (from Settings at launch; changeable per session). */

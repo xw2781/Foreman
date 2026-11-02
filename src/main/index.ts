@@ -444,6 +444,9 @@ function registerIpc() {
   handle('agents.rename', (id, title) => agents.rename(id, title));
   handle('agents.resume', (id, mode) => agents.resume(id, mode));
   handle('agents.buffer', (id) => agents.buffer(id));
+  handle('agents.fork', (id, itemId) => agents.fork(id, typeof itemId === 'string' ? itemId : undefined));
+  handle('chat.side', (id, question, earlier) => agents.chatSide(id, String(question ?? ''), Array.isArray(earlier) ? earlier : []));
+  handle('chat.sideReset', (id) => agents.chatSideReset(id));
   handle('chat.items', (id) => agents.chatItems(id));
   handle('chat.file', async (id, href, action) => {
     const agent = agents.get(id);

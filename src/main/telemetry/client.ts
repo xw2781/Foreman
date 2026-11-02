@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import type {
+  ForkPoint,
   PricingStatus,
   ProfileLimits,
   Provider,
@@ -95,6 +96,11 @@ export class TelemetryClient {
   /** A past conversation rebuilt from its session file. */
   chatHistory(provider: Provider, filePath: string) {
     return this.call<HistoryEntry[]>('chatHistory', provider, filePath);
+  }
+
+  /** The Claude transcript entry a fork before `point` copies through (see `claudeForkThrough`). */
+  claudeForkThrough(filePath: string, point: ForkPoint) {
+    return this.call<{ found: boolean; through: string | null }>('claudeForkThrough', filePath, point);
   }
 
   /** This computer's whole usage history as a usage file, folded into its previous upload. */
