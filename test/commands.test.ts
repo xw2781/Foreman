@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { claudeCommand, claudeIdleCompaction, codexCommand, splitArgs } from '../src/main/commands';
+import { claudeCommand, claudeIdleCompaction, codexCommand, idleCompactFloor, splitArgs } from '../src/main/commands';
 import { parseStatusPayload, defaultStatusText } from '../src/main/statusLine';
 import { ClaudeStreamFormatter } from '../src/main/streamFormat';
 import type { Profile } from '../src/shared/types';
@@ -16,6 +16,12 @@ describe('idle compaction', () => {
     expect(claudeIdleCompaction('off', { claudeIdleCompactMinTokens: 400_000 })).toEqual({ settings: { idleCompaction: false }, env: {} });
     expect(claudeIdleCompaction('compact', { claudeIdleCompactMinTokens: 400_000 }).env).toEqual({ CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS: '400000' });
     expect(claudeIdleCompaction('compact', { claudeIdleCompactMinTokens: 50_000 }).env).toEqual({ CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS: '100000' });
+  });
+
+  it('holds it off for a chat kept warm, keeping the floor for when it comes back', () => {
+    expect(claudeIdleCompaction('compact', { claudeIdleCompactMinTokens: 400_000 }, true)).toEqual({ settings: { idleCompaction: false }, env: { CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS: '400000' } });
+    expect(idleCompactFloor({ claudeIdleCompactMinTokens: 0 })).toBe(200_000);
+    expect(idleCompactFloor({ claudeIdleCompactMinTokens: 50_000 })).toBe(100_000);
   });
 });
 

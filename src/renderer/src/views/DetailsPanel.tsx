@@ -3,12 +3,12 @@
 // session cost, its tokens, plan usage and the session itself.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronRight, Copy, FolderOpen, RefreshCw } from 'lucide-react';
-import { PROVIDER_LABEL, type AgentInfo, type ContextPart, type ContextUsage, type IdleMode } from '@shared/types';
+import { PROVIDER_LABEL, type AgentInfo, type ContextPart, type ContextUsage } from '@shared/types';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
 import { ago, compact, duration, usd } from '../format';
-import { Meter, Select, useTicker } from '../ui';
-import { IDLE_MODE_OPTIONS, KEEP_WARM_OPTIONS } from '../idleMode';
+import { Meter, Select, Switch, useTicker } from '../ui';
+import { DEFAULT_KEEP_WARM_HOURS, KEEP_WARM_OPTIONS } from '../idleMode';
 
 /** Palette slots 3–8 (and a neutral for anything newer), in the bar's fixed order: a part keeps its color whatever else shows. */
 const PART_COLOR: Record<ContextPart, string> = {
@@ -163,61 +163,81 @@ function Fold({ title, items }: { title: string; items: Array<{ key: string; lab
   );
 }
 
-/** What this Claude session does when it sits idle until shortly before its prompt cache expires. */
+/**
+ * What this Claude session does when it sits idle: compaction shortly before the prompt cache
+ * expires, and (chats only) keeping the cache warm for some hours first, which pushes compaction back.
+ */
 function IdleModeSection({ agent }: { agent: AgentInfo }) {
   const toast = useApp((s) => s.toast);
+  const fail = (error: unknown) => toast('error', errorMessage(error));
   const chat = agent.mode === 'chat';
-  const mode = agent.idleMode ?? 'compact';
-  const note = mode === 'compact'
-    ? 'Claude Code may compact it about 54 minutes after the last reply, if Anthropic has turned this on for the account.'
-    : 'Claude Code leaves the conversation as it is while it sits idle.';
+  const compacting = (agent.idleMode ?? 'compact') === 'compact';
+  const warmHours = chat ? agent.keepWarmHours ?? 0 : 0;
   const timing = chat || agent.endedAt ? null : 'Takes effect the next time this session starts.';
   return (
     <section>
-      <div className="details-head">
-        <h3>When idle</h3>
-      </div>
-      <Select
-        aria-label="When this session sits idle"
-        value={mode}
-        onChange={(value) => call('chat.setIdleMode', agent.id, value as IdleMode).catch((error) => toast('error', errorMessage(error)))}
-        options={IDLE_MODE_OPTIONS}
-      />
-      <div className="ctx-note">{note}{timing ? ` ${timing}` : ''}</div>
-      {chat ? <KeepWarm agent={agent} /> : null}
+      <h3>When idle</h3>
+      <label
+        className="idle-row"
+        title={`About 54 minutes after the last ${warmHours ? 'cache refresh' : 'reply'}, shortly before the prompt cache expires. Only conversations past the size set in Settings, and only where Anthropic has turned idle compaction on for the account.`}
+      >
+        <span>Auto-compact after ~{warmHours + 1} {warmHours ? 'hours' : 'hour'}</span>
+        <Switch on={compacting} onChange={(on) => call('chat.setIdleMode', agent.id, on ? 'compact' : 'off').catch(fail)} />
+      </label>
+      {chat ? <KeepWarm agent={agent} fail={fail} /> : null}
+      {timing ? <div className="ctx-note">{timing}</div> : null}
     </section>
   );
 }
 
 /** Keeping a chat's prompt cache warm for a while after its last reply, and how that is going. */
-function KeepWarm({ agent }: { agent: AgentInfo }) {
-  const toast = useApp((s) => s.toast);
+function KeepWarm({ agent, fail }: { agent: AgentInfo; fail: (error: unknown) => void }) {
   const hours = agent.keepWarmHours ?? 0;
-  const allowed = agent.idleMode === 'off';
+  const [picked, setPicked] = useState(hours || DEFAULT_KEEP_WARM_HOURS);
+  const shown = hours || picked;
+  const ended = Boolean(agent.endedAt);
+  const keepWarm = (next: number) => call('chat.setKeepWarm', agent.id, next).catch(fail);
+  const choose = (value: string) => {
+    const next = Math.round(Number(value));
+    if (!(next > 0)) return;
+    setPicked(next);
+    void keepWarm(next);
+  };
+  const options = KEEP_WARM_OPTIONS.some((o) => o.value === String(shown)) ? KEEP_WARM_OPTIONS : [...KEEP_WARM_OPTIONS, { value: String(shown), label: `${shown} hours` }];
+
   const k = agent.cacheKeepalive?.forActivityAt === agent.lastModelActivityAt ? agent.cacheKeepalive : null;
   const turn = Date.parse(agent.lastModelActivityAt ?? '');
   const until = hours > 0 && Number.isFinite(turn) ? turn + hours * 3_600_000 : null;
   const time = (at: number) => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const costs = k?.refreshUsd != null && k.rebuildUsd != null ? ` Each refresh ≈ ${usd(k.refreshUsd)}; rebuilding the cache ≈ ${usd(k.rebuildUsd)} (list prices).` : '';
-  const note = hours === 0 ? 'Off: the prompt cache expires an hour after the last reply.'
+  const costs = k?.refreshUsd != null && k.rebuildUsd != null ? ` Each refresh ≈ ${usd(k.refreshUsd)}; rebuilding ≈ ${usd(k.rebuildUsd)}.` : '';
+  // Only what's happening now; nothing while it's off or hasn't started.
+  // Chats under the idle compaction threshold aren't kept warm, and say nothing about it.
+  const status = hours === 0 ? null
+    : k?.compactedAt ? `Kept warm until ${until !== null ? time(until) : '—'}, then compacted.`
     : k?.error ? `Stopped for this reply: ${k.error}`
     : k?.pending ? 'Refreshing the cache…'
-    : until !== null && Date.now() >= until ? `Done: kept warm until ${time(until)}.${costs}`
-    : k?.count ? `Kept warm until ${until !== null ? time(until) : '—'}: ${k.count === 1 ? '1 refresh' : `${k.count} refreshes`} so far, last ${ago(k.lastAt)}.${costs}`
-    : `Refreshed every 40 minutes for ${hours} hours after the last reply.`;
+    : until !== null && Date.now() >= until ? `Kept warm until ${time(until)}.${costs}`
+    : k?.count ? `Warm until ${until !== null ? time(until) : '—'} · ${k.count === 1 ? '1 refresh' : `${k.count} refreshes`}, last ${ago(k.lastAt)}.${costs}`
+    : null;
   return (
     <>
-      <div className="details-head" style={{ marginTop: 10 }}>
-        <h3>Keep cache warm</h3>
+      <div className="idle-row" title="Refreshes the prompt cache every 55 minutes after the last reply, so coming back doesn't re-send the whole context at full price.">
+        <span>
+          Keep cache warm for{' '}
+          <Select
+            size="sm"
+            className="idle-hours"
+            aria-label="Hours to keep the cache warm"
+            disabled={ended}
+            value={String(shown)}
+            onChange={choose}
+            options={options}
+            custom={{ placeholder: 'Hours' }}
+          />
+        </span>
+        <Switch on={hours > 0} onChange={(on) => (ended ? undefined : void keepWarm(on ? shown : 0))} />
       </div>
-      <Select
-        aria-label="Keep this chat's prompt cache warm"
-        disabled={!allowed || Boolean(agent.endedAt)}
-        value={String(hours)}
-        onChange={(value) => call('chat.setKeepWarm', agent.id, Number(value)).catch((error) => toast('error', errorMessage(error)))}
-        options={KEEP_WARM_OPTIONS}
-      />
-      <div className="ctx-note">{allowed ? note : 'Needs “Nothing” above: Claude Code’s idle compaction would compact the chat being kept warm.'}</div>
+      {status ? <div className="ctx-note">{status}</div> : null}
     </>
   );
 }

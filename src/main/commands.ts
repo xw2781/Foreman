@@ -1,4 +1,7 @@
 import type { AppSettings, IdleMode, LaunchOptions, Profile } from '../shared/types';
+import { IDLE_COMPACT_MIN_FLOOR } from '../shared/promptCache';
+
+export { IDLE_COMPACT_MIN_FLOOR, idleCompactFloor } from '../shared/promptCache';
 
 export interface BuiltCommand {
   args: string[];
@@ -32,21 +35,21 @@ export function withBrowserArgs(args: string[], browser: string[]): string[] {
   return [...browser, ...args];
 }
 
-/** Claude Code doesn't accept an idle-compaction floor below this (smaller values are raised to it). */
-export const IDLE_COMPACT_MIN_FLOOR = 100_000;
 
 /**
  * Idle compaction: when a long conversation sits idle, Claude Code may compact it
  * shortly before the prompt cache expires (rolled out by Anthropic per account).
  * `settings` goes into the agent's --settings file (written only when it's turned off,
  * so the default launch is unchanged); `env` goes onto the child process.
+ * `heldOff`: a chat kept warm, whose compaction the app runs itself once the warm hours end
+ * (Claude Code's own would come 54 minutes into them).
  */
-export function claudeIdleCompaction(idle: IdleMode, app: Pick<AppSettings, 'claudeIdleCompactMinTokens'>) {
-  const off = idle !== 'compact';
-  const settings: Record<string, unknown> = off ? { idleCompaction: false } : {};
+export function claudeIdleCompaction(idle: IdleMode, app: Pick<AppSettings, 'claudeIdleCompactMinTokens'>, heldOff = false) {
+  const settings: Record<string, unknown> = idle !== 'compact' || heldOff ? { idleCompaction: false } : {};
   const env: Record<string, string> = {};
   const floor = app.claudeIdleCompactMinTokens;
-  if (!off && Number.isFinite(floor) && floor > 0) {
+  // Kept even while held off: the chat may stop being kept warm, and Claude Code compacts again.
+  if (idle === 'compact' && Number.isFinite(floor) && floor > 0) {
     env.CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS = String(Math.max(IDLE_COMPACT_MIN_FLOOR, Math.round(floor)));
   }
   return { settings, env };

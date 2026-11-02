@@ -153,13 +153,13 @@ export function SettingsView() {
         </Setting>
         <Setting
           title="Compact idle Claude conversations"
-          description="When a long conversation sits idle, Claude Code may compact it about 54 minutes after the last reply, shortly before its prompt cache expires, so coming back doesn't re-send the whole context at full price. Anthropic rolls this out per account. This is the default for new sessions; change one session's in its side panel (Details), where a chat can also keep its cache warm instead. Your Claude Code settings are not changed."
+          description="When a long conversation sits idle, Claude Code may compact it about 54 minutes after the last reply, shortly before its prompt cache expires, so coming back doesn't re-send the whole context at full price. Anthropic rolls this out per account. This is the default for new sessions; change one session's in its side panel (Details), where a chat can also keep its cache warm for some hours first. Your Claude Code settings are not changed."
         >
           <Switch on={settings.claudeIdleMode !== 'off'} onChange={(v) => update({ claudeIdleMode: v ? 'compact' : 'off' })} />
         </Setting>
         <Setting
           title="Idle compaction threshold"
-          description="Only conversations at least this large are compacted while idle. Applies to sessions started after the change."
+          description="Only conversations at least this large are compacted while idle, or kept warm. Applies to sessions started after the change."
         >
           <Select
             style={{ width: 220 }}

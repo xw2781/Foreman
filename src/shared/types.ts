@@ -273,7 +273,7 @@ export interface AgentInfo {
   cacheRebuild?: CacheRebuild | null;
   /** Claude sessions: what happens when it sits idle (from Settings at launch; changeable per session). */
   idleMode?: IdleMode;
-  /** Claude chats: keep the prompt cache warm this many hours after the last reply (0: don't). Needs idle mode 'off'. */
+  /** Claude chats: keep the prompt cache warm this many hours after the last reply (0: don't). With idle mode 'compact', the app compacts once they end. */
   keepWarmHours?: number;
   /** The keep-warm refreshes since the last reply; cleared by the next turn. */
   cacheKeepalive?: CacheKeepalive | null;
@@ -292,6 +292,8 @@ export interface CacheKeepalive {
   /** List-price estimates: one refresh (a cache read), and rebuilding the cache once it has expired. */
   refreshUsd: number | null;
   rebuildUsd: number | null;
+  /** When the app sent /compact for this reply, the warm hours over (idle compaction on). */
+  compactedAt?: string | null;
 }
 
 /**

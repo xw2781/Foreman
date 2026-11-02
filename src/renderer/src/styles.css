@@ -1928,6 +1928,26 @@ table.table {
 .details-head h3 {
   margin: 0;
 }
+.idle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 30px;
+  font-size: 12.5px;
+}
+label.idle-row {
+  cursor: pointer;
+}
+.idle-row + .idle-row {
+  margin-top: 4px;
+}
+.idle-row .idle-hours {
+  display: inline-flex;
+  width: auto;
+  vertical-align: middle;
+  margin-left: 2px;
+}
 .details-head > :not(h3) {
   margin-left: auto;
 }

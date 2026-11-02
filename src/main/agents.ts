@@ -26,10 +26,10 @@ import {
   type LaunchOptions,
   type Profile
 } from '../shared/types';
-import { claudeCommand, claudeIdleCompaction, codexCommand, loginCommand, splitArgs, withBrowserArgs } from './commands';
+import { claudeCommand, claudeIdleCompaction, codexCommand, idleCompactFloor, loginCommand, splitArgs, withBrowserArgs } from './commands';
 import { ChatLog, clipText } from './chat/log';
 import { ClaudeChat, claudeChatArgs } from './chat/claudeChat';
-import { KEEPALIVE_PROMPT, keepaliveCosts, keepaliveDue, keepWarmAllowed } from './chat/idleCache';
+import { KEEPALIVE_PROMPT, claudeCompactsIdle, idleCompactDue, keepaliveCosts, keepaliveDue, keepWarmAllowed } from './chat/idleCache';
 import { CodexChat } from './chat/codexChat';
 import { forkItems, forkPoint } from './chat/fork';
 import { LineSplitter, type ChatDriver, type ChatHost } from './chat/driver';
@@ -214,7 +214,9 @@ export class AgentManager {
     let chat: ChatLog | null = null;
     // A continued session keeps the idle mode it was given; a new one takes the Settings default.
     const idleMode: IdleMode = previous?.idleMode === 'compact' || previous?.idleMode === 'off' ? previous.idleMode : settings.claudeIdleMode === 'off' ? 'off' : 'compact';
-    const idleCompaction = claudeIdleCompaction(idleMode, settings);
+    // Off unless turned on for this chat (side panel); a continued chat keeps its own.
+    const keepWarmHours = profile.provider === 'claude' && keepWarmAllowed({ mode: options.mode }) ? previous?.keepWarmHours ?? 0 : undefined;
+    const idleCompaction = claudeIdleCompaction(idleMode, settings, (keepWarmHours ?? 0) > 0);
     if (options.mode === 'chat') {
       // A chat continued in this run keeps its items; otherwise the session file has them.
       if (previousSession?.chat?.size && previousSession.info.mode === 'chat') chat = previousSession.chat;
@@ -291,8 +293,7 @@ export class AgentManager {
       lastOutputAt: null,
       lastModelActivityAt: options.resumeSessionId ? previous?.lastModelActivityAt ?? (previous?.telemetry?.requests ? previous.telemetry.updatedAt : null) : null,
       idleMode: profile.provider === 'claude' && AGENT_MODES.includes(options.mode) ? idleMode : undefined,
-      // Off unless turned on for this chat (side panel); a continued chat keeps its own.
-      keepWarmHours: profile.provider === 'claude' && options.mode === 'chat' && keepWarmAllowed({ mode: options.mode, idleMode }) ? previous?.keepWarmHours ?? 0 : undefined,
+      keepWarmHours,
       completedAt: previous?.completedAt ?? null,
       commandLine: [cli.path, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' '),
       telemetry: options.resumeSessionId ? previous?.telemetry ?? null : null,
@@ -828,11 +829,24 @@ export class AgentManager {
 
   /** Refreshes the prompt cache of idle Claude chats that are kept warm (side panel → Details). */
   private keepChatsWarm() {
+    const floor = idleCompactFloor(this.deps.settings());
     for (const session of this.sessions.values()) {
       const { info, driver } = session;
       if (!driver?.sideQuestion || driver.busy || session.needsInput || this.archivedIds.has(info.id) || !info.lastModelActivityAt) continue;
-      if (keepaliveDue(info)) this.keepWarm(info, info.lastModelActivityAt, driver.sideQuestion.bind(driver));
+      if (keepaliveDue(info, floor)) this.keepWarm(info, info.lastModelActivityAt, driver.sideQuestion.bind(driver));
+      else if (idleCompactDue(info, floor)) this.compactIdle(info, info.lastModelActivityAt, driver);
     }
+  }
+
+  /** Claude Code's idle compaction for a chat that was kept warm: held off through the warm hours, run here after. */
+  private compactIdle(info: AgentInfo, forActivityAt: string, driver: ChatDriver) {
+    const previous = info.cacheKeepalive?.forActivityAt === forActivityAt ? info.cacheKeepalive : null;
+    const compactedAt = new Date().toISOString();
+    info.cacheKeepalive = previous
+      ? { ...previous, compactedAt }
+      : { forActivityAt, lastAt: null, count: 0, pending: false, error: null, ...keepaliveCosts(info), compactedAt };
+    driver.send('/compact');
+    this.markChanged(info.id);
   }
 
   /** Reads the prompt cache with the smallest side question, so it lives another hour. */
@@ -857,24 +871,24 @@ export class AgentManager {
     const info = this.get(id);
     if (!info || info.provider !== 'claude') throw new Error('Only Claude sessions have an idle mode.');
     const session = this.sessions.get(id);
-    if (session?.driver?.setIdleCompaction && !info.endedAt) session.driver.setIdleCompaction(mode === 'compact');
     info.idleMode = mode;
-    // Claude Code would compact a chat being kept warm.
-    if (mode === 'compact' && info.keepWarmHours) info.keepWarmHours = 0;
+    if (session?.driver?.setIdleCompaction && !info.endedAt) session.driver.setIdleCompaction(claudeCompactsIdle(info));
     this.archive(info);
     this.markChanged(id);
   }
 
   /**
-   * How long a chat's prompt cache is kept warm after its last reply (0: not at all). Needs an idle
-   * mode that doesn't compact: Claude Code's own idle compaction would compact the chat being kept.
+   * How long a chat's prompt cache is kept warm after its last reply (0: not at all). With idle
+   * compaction on, the chat is compacted once the warm hours end, not 54 minutes into them.
    */
   setKeepWarm(id: string, hours: number) {
     const info = this.get(id);
     if (!info || info.provider !== 'claude' || info.mode !== 'chat') throw new Error('Only Claude chats can keep their cache warm.');
     const next = Math.max(0, Math.min(72, Number.isFinite(hours) ? hours : 0));
-    if (next > 0 && !keepWarmAllowed(info)) throw new Error('Turn off idle compaction for this chat first.');
     info.keepWarmHours = next;
+    // Claude Code's own idle compaction would come 54 minutes into the warm hours: it waits for them.
+    const session = this.sessions.get(id);
+    if (session?.driver?.setIdleCompaction && !info.endedAt && info.idleMode === 'compact') session.driver.setIdleCompaction(claudeCompactsIdle(info));
     this.archive(info);
     this.markChanged(id);
   }
