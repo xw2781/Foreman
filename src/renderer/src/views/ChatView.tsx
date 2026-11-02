@@ -502,7 +502,7 @@ function Notice({ item }: { item: Item<'notice'> }) {
   );
 }
 
-/** When a message was sent; shows on hover. */
+/** When a message was sent. */
 function MessageTime({ at }: { at: string }) {
   const label = messageTime(at);
   return label ? <time className="msg-time" dateTime={at} title={fullTime(at)}>{label}</time> : null;
