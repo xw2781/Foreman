@@ -756,6 +756,13 @@ export interface AppSettings {
   browserProfile: BrowserProfileMode;
   /** Bring up the side panel's Browser tab when its agent starts using the browser. */
   browserAutoOpen: boolean;
+  /**
+   * Folder that holds every account's session transcripts (<dir>/<account id>/projects, sessions…),
+   * linked from the account folders; '' keeps them inside each account folder. Changed with `sessionLogs.move`.
+   */
+  sessionLogsDir: string;
+  /** Days Claude Code keeps transcripts (`cleanupPeriodDays`, written to each Claude account's settings.json). */
+  claudeSessionRetentionDays: number;
 }
 
 export interface CliInfo {

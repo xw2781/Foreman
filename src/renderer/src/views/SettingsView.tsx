@@ -5,7 +5,7 @@ import { call, errorMessage, listen } from '../api';
 import { useApp } from '../store';
 import { VOICE_MODELS, voiceModel } from '@shared/voiceModels';
 import { describeVoiceStatus, prepareVoiceModel, useVoiceStatus } from '../voice/engine';
-import { Segmented, Select, Switch } from '../ui';
+import { Segmented, Select, Switch, confirmDialog } from '../ui';
 
 function Setting({ title, description, children }: { title: string; description?: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -400,6 +400,8 @@ export function SettingsView() {
         </Setting>
       </div>
 
+      <SessionHistory />
+
       <div className="section-title">
         <h2>Updates</h2>
       </div>
@@ -425,6 +427,120 @@ export function SettingsView() {
         Foreman {env?.appVersion} · Accounts live in {env?.profilesDir} · Claude hooks endpoint {env?.hookServer ?? 'unavailable'}
       </p>
     </div>
+  );
+}
+
+/** Where session transcripts are kept, and for how long Claude Code keeps them. */
+function SessionHistory() {
+  const settings = useApp((s) => s.settings)!;
+  const toast = useApp((s) => s.toast);
+  const [moving, setMoving] = useState(false);
+  const [days, setDays] = useState(String(settings.claudeSessionRetentionDays));
+  useEffect(() => setDays(String(settings.claudeSessionRetentionDays)), [settings.claudeSessionRetentionDays]);
+
+  const move = async (dir: string) => {
+    const { ok } = await confirmDialog({
+      title: dir ? 'Move session transcripts?' : 'Move transcripts back?',
+      message: dir ? (
+        <>
+          Every account's transcripts move to <span className="mono">{dir}</span>, one folder per account, and are linked back from the account folders, so
+          Claude Code, Codex and resuming sessions work as before. Close Claude Code and Codex sessions outside Foreman first. Moving to another drive copies
+          everything and can take a while.
+        </>
+      ) : (
+        'The transcripts move back into each account\'s own folder. Close Claude Code and Codex sessions outside Foreman first.'
+      ),
+      confirmLabel: 'Move'
+    });
+    if (!ok) return;
+    setMoving(true);
+    try {
+      useApp.setState({ settings: await call('sessionLogs.move', dir) });
+      toast('success', 'Session transcripts moved.');
+    } catch (error) {
+      toast('error', errorMessage(error));
+      useApp.setState({ settings: await call('settings.get') });
+    } finally {
+      setMoving(false);
+    }
+  };
+
+  const choose = async () => {
+    const dir = await call('dialog.pickDirectory', settings.sessionLogsDir || undefined);
+    if (dir) await move(dir);
+  };
+
+  const saveDays = async () => {
+    const value = Number(days);
+    if (!Number.isFinite(value) || value < 1 || value === settings.claudeSessionRetentionDays) {
+      setDays(String(settings.claudeSessionRetentionDays));
+      return;
+    }
+    try {
+      useApp.setState({ settings: await call('settings.update', { claudeSessionRetentionDays: value }) });
+    } catch (error) {
+      toast('error', errorMessage(error));
+      useApp.setState({ settings: await call('settings.get') });
+    }
+  };
+
+  return (
+    <>
+      <div className="section-title">
+        <h2>Session history</h2>
+      </div>
+      <div className="card settings-list">
+        <Setting
+          title="Transcript folder"
+          description={
+            settings.sessionLogsDir ? (
+              <>
+                <span className="mono">{settings.sessionLogsDir}</span>, one folder per account. Claude Code's project memory moves along with them.
+              </>
+            ) : (
+              <>
+                Inside each account's folder (<span className="mono">.claude\projects</span>, <span className="mono">.codex\sessions</span>). Choose another folder
+                (another drive, say) to keep them all there. Stop running agents first.
+              </>
+            )
+          }
+        >
+          {settings.sessionLogsDir ? (
+            <button className="btn ghost sm" onClick={() => call('shell.openPath', settings.sessionLogsDir)}>
+              <FolderOpen size={14} /> Open
+            </button>
+          ) : null}
+          {settings.sessionLogsDir ? (
+            <button className="btn sm" disabled={moving} onClick={() => move('')}>
+              Move back
+            </button>
+          ) : null}
+          <button className="btn sm" disabled={moving} onClick={choose}>
+            <FolderOpen size={13} /> {moving ? 'Moving…' : 'Choose…'}
+          </button>
+        </Setting>
+        <Setting
+          title="Keep Claude transcripts for"
+          description="Claude Code deletes transcripts older than this when it starts, inside Foreman or not; deleted sessions can't be resumed. Saved as cleanupPeriodDays in each Claude account's settings.json. Codex sessions aren't affected."
+        >
+          <input
+            className="input"
+            type="number"
+            min={1}
+            max={36500}
+            aria-label="Days to keep Claude transcripts"
+            style={{ width: 90 }}
+            value={days}
+            onChange={(e) => setDays(e.target.value)}
+            onBlur={saveDays}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur();
+            }}
+          />
+          <span className="muted">days</span>
+        </Setting>
+      </div>
+    </>
   );
 }
 

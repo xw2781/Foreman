@@ -33,7 +33,8 @@ import { GitHubSync } from './githubSync';
 import { BrowserService } from './browser/browserService';
 import { BrowserMcpServer } from './browser/mcpServer';
 import { callTool } from './browser/tools';
-import { HOME, JsonStore, cleanEnv, exists, profilesRoot, readJsonFile, run, writeJsonFileAtomic } from './util';
+import { DEFAULT_RETENTION_DAYS, movedLogsDir, placeSessionLogs, readClaudeRetention, retentionDays, writeClaudeRetention } from './sessionLogs';
+import { HOME, JsonStore, cleanEnv, exists, profilesRoot, readJsonFile, removeTree, run, writeJsonFileAtomic } from './util';
 
 app.setAppUserModelId('com.agenttaskcenter.app');
 // Corporate HTTPS proxies can negotiate HTTP/2 that Chromium rejects with
@@ -98,10 +99,14 @@ const DEFAULT_SETTINGS: AppSettings = {
   browserEnabled: true,
   browserAutoApprove: true,
   browserProfile: 'shared',
-  browserAutoOpen: true
+  browserAutoOpen: true,
+  sessionLogsDir: '',
+  claudeSessionRetentionDays: DEFAULT_RETENTION_DAYS
 };
 
-const settingsStore = new JsonStore<AppSettings>(path.join(userData, 'settings.json'), DEFAULT_SETTINGS);
+const settingsPath = path.join(userData, 'settings.json');
+const retentionChosen = readJsonFile<Partial<AppSettings>>(settingsPath)?.claudeSessionRetentionDays !== undefined;
+const settingsStore = new JsonStore<AppSettings>(settingsPath, DEFAULT_SETTINGS);
 const windowStore = new JsonStore<{ bounds: Electron.Rectangle | null; maximized: boolean }>(
   path.join(userData, 'window.json'),
   { bounds: null, maximized: false }
@@ -217,6 +222,42 @@ function configureTelemetry() {
     })),
     { claudeContextWindow: s.claudeContextWindow, contextWindowOverrides: s.contextWindowOverrides, usageDays: s.usageDays }
   );
+}
+
+/** Writes the transcript retention into each Claude account's settings.json; returns the problems. */
+function applyRetention(): string[] {
+  const days = settings().claudeSessionRetentionDays;
+  const problems: string[] = [];
+  for (const profile of profiles.forProvider('claude')) {
+    try {
+      writeClaudeRetention(profile, days);
+    } catch (error) {
+      problems.push(`${profile.label}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return problems;
+}
+
+/**
+ * At startup: the first time, start from 90 days, or from a longer period an
+ * account already keeps (never shorten what someone set by hand); then put
+ * new accounts' settings and logs where the others' are.
+ */
+async function applySessionStorage() {
+  if (!retentionChosen) {
+    const existing = profiles.forProvider('claude').map(readClaudeRetention).filter((d): d is number => d !== null);
+    settingsStore.update({ claudeSessionRetentionDays: retentionDays(Math.max(DEFAULT_RETENTION_DAYS, ...existing)) });
+  }
+  for (const problem of applyRetention()) console.error('Transcript retention not applied:', problem);
+  if (!settings().sessionLogsDir) return;
+  try {
+    // Errors are usually a CLI holding a file open; tried again next start.
+    const { leftovers, errors } = await placeSessionLogs(profiles.list(), settings().sessionLogsDir);
+    if (errors.length) console.error('Session logs not moved:', errors);
+    if (leftovers.length) console.error('Session logs left behind in', leftovers);
+  } catch (error) {
+    console.error('Session logs not moved:', error);
+  }
 }
 
 telemetry.onProgress = (scanned) => emit('usage-progress', scanned);
@@ -341,12 +382,32 @@ function registerIpc() {
   handle('settings.get', () => settings());
   handle('settings.update', async (patch) => {
     if ('chatFontSize' in patch) patch = { ...patch, chatFontSize: chatFontSize(patch.chatFontSize) };
+    // Moving the logs takes `sessionLogs.move`; a plain update would only change the setting.
+    const { sessionLogsDir: _, ...rest } = patch;
+    patch = rest;
+    if ('claudeSessionRetentionDays' in patch) patch = { ...patch, claudeSessionRetentionDays: retentionDays(patch.claudeSessionRetentionDays) };
     const next = settingsStore.update(patch);
+    if ('claudeSessionRetentionDays' in patch) {
+      const problems = applyRetention();
+      if (problems.length) throw new Error(`Couldn't update every account: ${problems.join('; ')}`);
+    }
     if (patch.cliPath) forgetCli();
     if ('claudeContextWindow' in patch || 'contextWindowOverrides' in patch || 'usageDays' in patch) await configureTelemetry();
     if (patch.activeProfile) emit('profiles', views());
     if (patch.theme || patch.lightPalette) applyTheme();
     emit('settings', next);
+    return next;
+  });
+  handle('sessionLogs.move', async (dir) => {
+    const root = dir ? path.resolve(dir) : '';
+    const busy = profiles.list().filter((p) => agents.runningCount(p.id) > 0);
+    if (busy.length) throw new Error('Stop running agents first: their transcripts are being written.');
+    const { leftovers, errors } = await placeSessionLogs(profiles.list(), root);
+    // Recorded even when a folder couldn't move yet: the next start moves it.
+    const next = settingsStore.update({ sessionLogsDir: root });
+    emit('settings', next);
+    if (errors.length) throw new Error(`Some transcripts weren't moved (Foreman tries again when it starts): ${errors.join(' ')}`);
+    if (leftovers.length) throw new Error(`Moved, but some files already existed at the new place and stayed in ${leftovers.join(', ')}.`);
     return next;
   });
   handle('dialog.pickDirectory', async (defaultPath) => {
@@ -366,8 +427,19 @@ function registerIpc() {
   });
 
   handle('profiles.list', () => views());
-  handle('profiles.create', (input) => {
+  handle('profiles.create', async (input) => {
     const profile = profiles.create(input);
+    if (profile.provider === 'claude') {
+      try {
+        writeClaudeRetention(profile, settings().claudeSessionRetentionDays);
+      } catch {
+        // its settings.json is unreadable; the CLI's own default applies
+      }
+    }
+    if (settings().sessionLogsDir) {
+      // A new account has nothing to move yet, so this only links its folders.
+      await placeSessionLogs([profile], settings().sessionLogsDir).catch(() => {});
+    }
     const primary = profiles.list().find((p) => p.builtin && p.provider === input.provider);
     if (primary && computerUse.isInstalled(primary) && !computerUse.isInstalled(profile)) {
       // Keep computer use available on the new account if the primary has it.
@@ -387,6 +459,9 @@ function registerIpc() {
     if (agents.runningCount(id) > 0) throw new Error('Stop this account\'s running agents first.');
     const profile = profiles.require(id);
     profiles.remove(id, deleteData);
+    const moved = movedLogsDir(profile, settings().sessionLogsDir);
+    // Deleting the account folder only unlinks the junctions to its moved transcripts.
+    if (deleteData && moved && !profile.builtin) removeTree(moved);
     const active = settings().activeProfile;
     if (active[profile.provider] === id) {
       settingsStore.update({ activeProfile: { ...active, [profile.provider]: `${profile.provider}-default` } });
@@ -876,6 +951,8 @@ app.whenReady().then(async () => {
     console.error('Browser tool server failed to start', error);
   }
   await configureTelemetry();
+  // Before any session restarts, so none writes while its folder moves.
+  await applySessionStorage();
   // The app's own window may use the microphone (voice input) and the clipboard (terminal
   // paste reads it); nothing else is granted.
   const CLIPBOARD = new Set(['clipboard-read', 'clipboard-sanitized-write']);

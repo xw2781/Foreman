@@ -42,6 +42,8 @@ export interface InvokeMap {
   'cli.rollback': (provider: Provider) => EnvironmentInfo;
   'settings.get': () => AppSettings;
   'settings.update': (patch: Partial<AppSettings>) => AppSettings;
+  /** Moves every account's session transcripts into `dir` ('' back into each account folder). */
+  'sessionLogs.move': (dir: string) => AppSettings;
   'dialog.pickDirectory': (defaultPath?: string) => string | null;
   'dialog.pickFile': (title: string) => string | null;
   'shell.openPath': (target: string) => void;

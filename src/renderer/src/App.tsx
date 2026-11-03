@@ -76,7 +76,7 @@ function useBootstrap() {
     load();
     const markVisibleRead = () => {
       const state = store();
-      if (state.view === 'agents' && !state.launcher && !state.panelExpanded && state.selectedAgentId && document.hasFocus() && document.visibilityState === 'visible') {
+      if (state.view === 'agents' && !state.launcher && state.selectedAgentId && document.hasFocus() && document.visibilityState === 'visible') {
         state.markSessionRead(state.selectedAgentId);
       }
     };
