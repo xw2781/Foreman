@@ -23,6 +23,7 @@ import { HookServer } from './hookServer';
 import { ProcessMonitor, killTree } from './processMonitor';
 import { resolveChatFile } from './chat/fileLinks';
 import { listProjectDirectory, readProjectFile } from './projectFiles';
+import { gitCommit, gitDiff, gitStatus } from './gitStatus';
 import { AgentManager } from './agents';
 import { ComputerUseService } from './computerUse';
 import { forgetCli, locateCli } from './cliLocator';
@@ -547,6 +548,9 @@ function registerIpc() {
   };
   handle('files.list', (id, dir) => listProjectDirectory(projectRoot(id), dir));
   handle('files.read', (id, file) => readProjectFile(projectRoot(id), file));
+  handle('git.status', (id) => gitStatus(projectRoot(id)));
+  handle('git.diff', (id, target) => gitDiff(projectRoot(id), target));
+  handle('git.commit', (id, hash) => gitCommit(projectRoot(id), String(hash ?? '')));
   handle('chat.send', (id, text, mode, images) => agents.chatSend(id, text, mode, images));
   handle('chat.queued', (id, itemId, action) => agents.chatQueued(id, itemId, action));
   handle('chat.interrupt', (id) => agents.chatInterrupt(id));

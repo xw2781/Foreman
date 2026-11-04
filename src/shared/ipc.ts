@@ -17,7 +17,11 @@ import type {
   ComputerUseStatus,
   EnvironmentInfo,
   ExternalAgentProcess,
+  GitCommitDetails,
+  GitDiff,
+  GitDiffTarget,
   GitHubSyncStatus,
+  GitStatus,
   LaunchOptions,
   PricingStatus,
   ProjectFileEntry,
@@ -119,6 +123,11 @@ export interface InvokeMap {
   /** A file of the agent's project, for the preview. */
   'files.read': (id: string, file: string) => ProjectFilePreview;
 
+  /** The git state of the agent's folder: branch, changes, recent commits, worktrees. Read-only. */
+  'git.status': (id: string) => GitStatus;
+  'git.diff': (id: string, target: GitDiffTarget) => GitDiff;
+  'git.commit': (id: string, hash: string) => GitCommitDetails;
+
   /** null until the first process snapshot has been taken. */
   'processes.external': () => ExternalAgentProcess[] | null;
   'processes.kill': (pid: number) => void;
@@ -200,7 +209,7 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'chat.file', 'chat.items', 'chat.send', 'chat.interrupt', 'chat.respond', 'chat.configure', 'chat.switchCost', 'chat.commands', 'chat.queued',
   'chat.connectors', 'chat.connectorSignIn', 'chat.connectorReconnect', 'chat.contextUsage',
   'chat.setIdleMode', 'chat.setKeepWarm', 'agents.setArchived', 'chat.side', 'chat.sideReset',
-  'files.list', 'files.read',
+  'files.list', 'files.read', 'git.status', 'git.diff', 'git.commit',
   'processes.external', 'processes.kill',
   'usage.report', 'usage.export', 'usage.import', 'usage.forgetMachine', 'pricing.status', 'pricing.edit',
   'github.status', 'github.connect', 'github.cancel', 'github.disconnect', 'github.sync',

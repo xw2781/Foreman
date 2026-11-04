@@ -17,9 +17,6 @@
 .md-file-reveal:hover { background: var(--surface-3); color: var(--text-primary); }
 .md a[role='link']:focus-visible, .md-file-reveal:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-.display-toggle button {
-  gap: 5px;
-}
 .chat {
   container-type: inline-size;
   flex: 1;

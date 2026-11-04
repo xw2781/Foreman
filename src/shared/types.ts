@@ -892,3 +892,102 @@ export type ProjectFilePreview =
   | { kind: 'text'; path: string; size: number; modifiedMs: number; text: string; truncated: boolean }
   | { kind: 'image'; path: string; size: number; modifiedMs: number; dataUrl: string }
   | { kind: 'binary' | 'too-large'; path: string; size: number; modifiedMs: number };
+
+/** Lines added and removed; null for a binary file. */
+export type GitLineStats = { added: number; removed: number } | null;
+
+/**
+ * A changed file of the working tree. `index` / `worktree` are git's status letters for the
+ * staged and unstaged side ('.' unchanged, M modified, A added, D deleted, R renamed, C copied,
+ * T type change, U unmerged, '?' untracked). Paths are relative to the repository root, with `/`.
+ */
+export interface GitFileChange {
+  path: string;
+  /** The path before a rename or copy. */
+  origPath?: string;
+  index: string;
+  worktree: string;
+  conflict: boolean;
+  staged?: GitLineStats;
+  unstaged?: GitLineStats;
+}
+
+export interface GitCommit {
+  hash: string;
+  short: string;
+  subject: string;
+  author: string;
+  /** ISO time the commit was authored. */
+  date: string;
+  /** On a remote branch already (false: only on this computer). */
+  pushed: boolean;
+}
+
+export interface GitWorktree {
+  path: string;
+  /** Short branch name; null when detached. */
+  branch: string | null;
+  head: string;
+  /** The repository's main working tree (the others are linked worktrees). */
+  main: boolean;
+  /** The worktree the agent works in. */
+  current: boolean;
+  bare: boolean;
+  locked: string | null;
+  prunable: string | null;
+}
+
+export type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'revert' | 'bisect';
+
+/** The git side of an agent's folder, for the side panel's Git tab. */
+export type GitStatus =
+  | { repo: false; reason: string }
+  | {
+      repo: true;
+      /** Root of the working tree the agent is in. */
+      root: string;
+      /** Short branch name; null when HEAD is detached. */
+      branch: string | null;
+      /** null in a repository with no commits yet. */
+      head: { hash: string; short: string; subject: string } | null;
+      /** e.g. origin/main; null when the branch tracks nothing. */
+      upstream: string | null;
+      /** The upstream branch is set but no longer exists. */
+      upstreamGone: boolean;
+      ahead: number;
+      behind: number;
+      operation: GitOperation | null;
+      stashes: number;
+      files: GitFileChange[];
+      /** Changed files left out of `files` (very large change sets). */
+      omittedFiles: number;
+      commits: GitCommit[];
+      /** How many remotes the repository has; with none, nothing counts as pushed. */
+      remotes: number;
+      /** Commits on HEAD that no remote has, counted beyond `commits` too. */
+      unpushed: number;
+      worktrees: GitWorktree[];
+    };
+
+/** Which version of a file a diff compares. */
+export type GitDiffTarget =
+  | { kind: 'staged' | 'unstaged' | 'untracked'; path: string; origPath?: string }
+  | { kind: 'commit'; hash: string; path: string; origPath?: string };
+
+export interface GitDiff {
+  /** Unified diff text ('' when nothing differs). */
+  text: string;
+  binary: boolean;
+  truncated: boolean;
+}
+
+export interface GitCommitDetails {
+  hash: string;
+  /** The whole message (subject and body). */
+  message: string;
+  author: string;
+  email: string;
+  date: string;
+  /** Compared with the first parent for a merge. */
+  files: Array<{ path: string; origPath?: string; stats: GitLineStats }>;
+}

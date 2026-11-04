@@ -349,6 +349,27 @@ export function TipHost() {
   );
 }
 
+/**
+ * A wheel handler that steps through a list (-1 / +1). Deltas add up to one notch before a step, and a
+ * step is held off briefly so a touchpad's stream of small deltas doesn't race through it. Horizontal
+ * scrolling counts too, for touchpads and tilt wheels.
+ */
+export function useWheelStep(onStep: (step: -1 | 1) => void) {
+  const wheel = useRef({ sum: 0, last: 0, seen: 0 });
+  return (event: React.WheelEvent) => {
+    const w = wheel.current;
+    const now = performance.now();
+    if (now - w.seen > 400) w.sum = 0;
+    w.seen = now;
+    w.sum += Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+    if (Math.abs(w.sum) < 50 || now - w.last < 150) return;
+    const step = w.sum > 0 ? 1 : -1;
+    w.sum = 0;
+    w.last = now;
+    onStep(step);
+  };
+}
+
 export function Toasts() {
   const toasts = useApp((s) => s.toasts);
   const dismiss = useApp((s) => s.dismissToast);
@@ -395,25 +416,39 @@ export function useMediaQuery(query: string) {
  * cells), then the next — rather than letting text be cut. `deps`: what
  * changes the content's width. Rows can nest; each manages only its own items.
  */
+/** The `[data-fit]` items a fit row owns (not those of a fit row nested inside it), by level. */
+function fitItems(row: HTMLElement) {
+  const levels = new Map<number, HTMLElement[]>();
+  for (const item of row.querySelectorAll<HTMLElement>('[data-fit]')) {
+    if (item.parentElement?.closest('[data-fit-row]') !== row) continue;
+    const level = Number(item.dataset.fit);
+    levels.set(level, [...(levels.get(level) ?? []), item]);
+  }
+  return levels;
+}
+
+/** Shows every item `fitRow` may have left out. */
+export function unfitRow(row: HTMLElement) {
+  row.dataset.fitRow = '';
+  for (const items of fitItems(row).values()) for (const item of items) item.style.removeProperty('display');
+}
+
+/** Leaves out a row's `[data-fit]` items, highest level first, until the row stops overflowing. */
+export function fitRow(row: HTMLElement) {
+  unfitRow(row);
+  const levels = fitItems(row);
+  for (const level of [...levels.keys()].sort((a, b) => b - a)) {
+    if (row.scrollWidth <= row.clientWidth) break;
+    for (const item of levels.get(level)!) item.style.display = 'none';
+  }
+}
+
 export function useFit<T extends HTMLElement>(deps: unknown[]) {
   const ref = useRef<T>(null);
   useLayoutEffect(() => {
     const row = ref.current;
     if (!row) return;
-    row.dataset.fitRow = '';
-    const fit = () => {
-      const levels = new Map<number, HTMLElement[]>();
-      for (const item of row.querySelectorAll<HTMLElement>('[data-fit]')) {
-        if (item.parentElement?.closest('[data-fit-row]') !== row) continue;
-        item.style.removeProperty('display');
-        const level = Number(item.dataset.fit);
-        levels.set(level, [...(levels.get(level) ?? []), item]);
-      }
-      for (const level of [...levels.keys()].sort((a, b) => b - a)) {
-        if (row.scrollWidth <= row.clientWidth) break;
-        for (const item of levels.get(level)!) item.style.display = 'none';
-      }
-    };
+    const fit = () => fitRow(row);
     fit();
     // Only the row's own size is watched, which hiding its items doesn't change, so this can't loop.
     const observer = new ResizeObserver(fit);

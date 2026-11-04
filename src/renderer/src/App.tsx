@@ -16,7 +16,7 @@ import { AGENT_MODES, LIVE_STATUSES, PROVIDERS, PROVIDER_LABEL, type Provider } 
 import { call, errorMessage, listen, pageTheme } from './api';
 import { useApp, type PanelTab, type View } from './store';
 import { colorVar, limitSummary, signedOutLabel } from './format';
-import { ConfirmHost, LimitMeters, ProviderIcon, TipHost, Toasts } from './ui';
+import { ConfirmHost, LimitMeters, ProviderIcon, TipHost, Toasts, useWheelStep } from './ui';
 import { configureTerminals, disposeTerminal } from './terminals';
 import { forgetChat } from './chats';
 import { AgentsView } from './views/AgentsView';
@@ -98,7 +98,7 @@ function useBootstrap() {
         const known = new Map(store().agents.map((a) => [a.id, new Set((a.subagents ?? []).map((n) => n.id))]));
         for (const agent of agents) {
           const before = known.get(agent.id);
-          if (before && agent.subagents?.some((n) => n.status === 'running' && !n.shell && !before.has(n.id))) store().showPanel(agent.id, 'subagents');
+          if (before && !store().panelHiddenTabs.includes('subagents') && agent.subagents?.some((n) => n.status === 'running' && !n.shell && !before.has(n.id))) store().showPanel(agent.id, 'subagents');
         }
         for (const old of store().agents) {
           const run = runs.get(old.id);
@@ -130,7 +130,7 @@ function useBootstrap() {
         const lastUse = previous?.actions.findLast((a) => a.source === 'agent');
         const resumed = previous && state?.busy && !previous.busy && !state.paused && (!lastUse || Date.now() - Date.parse(lastUse.at) > 60_000);
         const started = state && (!previous || resumed);
-        if (started && settings?.browserAutoOpen !== false) store().showPanel(agentId, 'browser');
+        if (started && settings?.browserAutoOpen !== false && !store().panelHiddenTabs.includes('browser')) store().showPanel(agentId, 'browser');
       }),
       listen('toast', (t) => store().toast(t.kind, t.message)),
       listen('navigate', ({ view, agentId }) => {
@@ -360,23 +360,12 @@ function Nav() {
       </span>
     </button>
   );
-  // The wheel steps through the pages. Deltas add up to one notch before a step, and a step
-  // is held off briefly so a touchpad's stream of small deltas doesn't race through them.
-  const wheel = useRef({ sum: 0, last: 0, seen: 0 });
-  const onWheel = (event: React.WheelEvent) => {
-    const w = wheel.current;
-    const now = performance.now();
-    if (now - w.seen > 400) w.sum = 0;
-    w.seen = now;
-    w.sum += event.deltaY;
-    if (Math.abs(w.sum) < 50 || now - w.last < 150) return;
-    const step = Math.sign(w.sum);
-    w.sum = 0;
-    w.last = now;
+  // The wheel steps through the pages.
+  const onWheel = useWheelStep((step) => {
     const index = NAV.findIndex((n) => n.view === useApp.getState().view);
     const next = NAV[index + step];
     if (next) setView(next.view);
-  };
+  });
   return (
     <nav className="nav" onWheel={onWheel}>
       {NAV.filter((n) => !n.foot).map(item)}

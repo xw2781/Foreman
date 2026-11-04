@@ -16,7 +16,9 @@ import type {
 } from '@shared/types';
 
 /** The tabs of the side panel beside an agent. */
-export type PanelTab = 'subagents' | 'side' | 'browser' | 'files' | 'connectors' | 'details';
+export type PanelTab = 'subagents' | 'side' | 'browser' | 'files' | 'git' | 'connectors' | 'details';
+
+export const PANEL_TABS: readonly PanelTab[] = ['subagents', 'side', 'browser', 'files', 'git', 'connectors', 'details'];
 
 export type View = 'agents' | 'tasks' | 'usage' | 'accounts' | 'computer' | 'settings';
 
@@ -52,6 +54,9 @@ interface AppState {
   panelTab: Record<string, PanelTab>;
   /** The side panel fills the agent panel, hiding the conversation. */
   panelExpanded: boolean;
+  /** Tabs the person hid from the side panel's strip (right-click it); saved on this computer only. */
+  panelHiddenTabs: PanelTab[];
+  setPanelTabHidden: (tab: PanelTab, hidden: boolean) => void;
   setView: (view: View) => void;
   selectAgent: (id: string | null) => void;
   openLauncher: (preset?: Partial<LaunchOptions>) => void;
@@ -94,6 +99,15 @@ export const useApp = create<AppState>((set, get) => ({
   panelDefault: readPanelDefault(),
   panelTab: {},
   panelExpanded: false,
+  panelHiddenTabs: readHiddenTabs(),
+  setPanelTabHidden: (tab, hidden) => {
+    const current = get().panelHiddenTabs;
+    const panelHiddenTabs = hidden ? [...new Set([...current, tab])] : current.filter((t) => t !== tab);
+    try { localStorage.setItem('sidePanelHiddenTabs', JSON.stringify(panelHiddenTabs)); } catch { /* storage unavailable */ }
+    // Panels showing the tab just hidden move off it.
+    const panelTab = hidden ? Object.fromEntries(Object.entries(get().panelTab).filter(([, t]) => t !== tab)) : get().panelTab;
+    set({ panelHiddenTabs, panelTab });
+  },
   setView: (view) => set({ view }),
   selectAgent: (id) => set({ selectedAgentId: id }),
   openLauncher: (preset = {}) => set({ launcher: preset }),
@@ -129,6 +143,13 @@ function readPanelDefault() {
   } catch {
     return false;
   }
+}
+
+function readHiddenTabs(): PanelTab[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem('sidePanelHiddenTabs') ?? '[]');
+    return Array.isArray(saved) ? PANEL_TABS.filter((tab) => saved.includes(tab)) : [];
+  } catch { return []; }
 }
 
 function readCompletionState(): Record<string, string> {

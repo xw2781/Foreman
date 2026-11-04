@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
@@ -7,7 +7,6 @@ import {
   Globe,
   History,
   MessageSquareDashed,
-  MessagesSquare,
   MoreHorizontal,
   MousePointer2,
   Network,
@@ -21,7 +20,6 @@ import {
   Trash2,
   X
 } from 'lucide-react';
-import { create } from 'zustand';
 import { AGENT_MODES, CONVERSATION_MODES, LIVE_STATUSES, type AgentInfo, type AgentMode } from '@shared/types';
 import { ChatView } from './ChatView';
 import { PromptCacheBadge } from '../PromptCacheBadge';
@@ -30,7 +28,7 @@ import { describeSubagents, runningSubagents } from '@shared/subagents';
 import { call, errorMessage } from '../api';
 import { isPanelOpen, useApp } from '../store';
 import { compact, folderName, modelLabel, percent, usd } from '../format';
-import { AccountChip, AgentStatusPill, Empty, Meter, MiniMeter, ProviderIcon, confirmDialog, useFit, useTicker } from '../ui';
+import { AccountChip, AgentStatusPill, Empty, Meter, MiniMeter, ProviderIcon, confirmDialog, fitRow, unfitRow, useTicker } from '../ui';
 import { mountTerminal, terminalBackground } from '../terminals';
 import { groupAgentsByProject, projectKey } from '../agentProjects';
 import { hasUnreadCompletion } from '../sessionUnread';
@@ -74,44 +72,12 @@ export async function resumeAgent(agent: AgentInfo, mode?: AgentMode) {
 
 type Display = 'chat' | 'terminal';
 
-/** How a finished conversation is shown; a running one always shows the kind of process it is. */
-const useDisplay = create<Record<string, Display>>(() => ({}));
-
-function displayOf(agent: AgentInfo, preferred: Display | undefined): Display {
+/** How a conversation is shown: a running one as the kind of process it is. */
+function displayOf(agent: AgentInfo): Display {
   if (!CONVERSATION_MODES.includes(agent.mode)) return 'terminal';
   if (!agent.endedAt) return agent.mode === 'chat' ? 'chat' : 'terminal';
   // Without a terminal buffer (earlier app run) the chat rebuilds the conversation from its session file.
-  return preferred ?? (agent.mode === 'chat' || !agent.attached ? 'chat' : 'terminal');
-}
-
-function DisplayToggle({ agent, display }: { agent: AgentInfo; display: Display }) {
-  const choose = async (next: Display) => {
-    if (next === display) return;
-    if (agent.endedAt) {
-      useDisplay.setState({ [agent.id]: next });
-      return;
-    }
-    if (agent.status === 'working') {
-      const { ok } = await confirmDialog({
-        title: next === 'chat' ? 'Continue as a chat?' : 'Open in the terminal?',
-        message: 'The conversation moves to a new process; the turn in progress is interrupted.',
-        confirmLabel: 'Switch'
-      });
-      if (!ok) return;
-    }
-    useDisplay.setState({ [agent.id]: next });
-    await resumeAgent(agent, next === 'chat' ? 'chat' : 'interactive');
-  };
-  return (
-    <div className="segmented display-toggle" title="Show this conversation as a chat or in the CLI's terminal UI">
-      <button type="button" className={display === 'chat' ? 'on' : ''} onClick={() => choose('chat')}>
-        <MessagesSquare size={13} /> Chat
-      </button>
-      <button type="button" className={display === 'terminal' ? 'on' : ''} onClick={() => choose('terminal')}>
-        <SquareTerminal size={13} /> Terminal
-      </button>
-    </div>
-  );
+  return agent.mode === 'chat' || !agent.attached ? 'chat' : 'terminal';
 }
 
 /** A simple archive box, using the same outline weight as the toolbar icons. */
@@ -314,6 +280,40 @@ function TerminalHost({ agent }: { agent: AgentInfo }) {
   return <div className="term-host" ref={hostRef} style={{ ['--term-bg' as any]: terminalBackground() }} />;
 }
 
+/**
+ * Puts the title and its details on one line when both fit there whole, otherwise stacks them;
+ * then leaves out what still doesn't fit, as useFit does, in the header row and in the details.
+ */
+function useHeaderLayout(deps: unknown[]) {
+  const row = useRef<HTMLDivElement>(null);
+  const meta = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const header = row.current;
+    const details = meta.current;
+    if (!header || !details) return;
+    const fits = (el: Element | null) => !el || el.scrollWidth <= el.clientWidth;
+    let width = -1;
+    const layout = () => {
+      header.dataset.layout = 'inline';
+      unfitRow(header);
+      unfitRow(details);
+      if (!fits(details) || !fits(header.querySelector('.th-title > .name'))) header.dataset.layout = 'stacked';
+      fitRow(header);
+      fitRow(details);
+    };
+    layout();
+    // Switching layouts changes only the height, so reacting to width alone can't loop.
+    const observer = new ResizeObserver(() => {
+      if (header.clientWidth === width) return;
+      width = header.clientWidth;
+      layout();
+    });
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, deps);
+  return { row, meta };
+}
+
 function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display }) {
   const panelOpen = useApp((s) => isPanelOpen(s, agent.id));
   const panelTab = usePanelTab(agent);
@@ -324,17 +324,13 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
     await forkAgent(agent);
     setForking(false);
   };
-  // The cost shows here unless the panel's Details tab already does.
-  const costShown = panelOpen && panelTab === 'details';
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(agent.title);
   useEffect(() => setName(agent.title), [agent.title]);
   const live = !agent.endedAt;
   const t = agent.telemetry;
   const model = t?.model ?? agent.model;
-  // What doesn't fit is left out whole: the cost first (the details have it), then shortcuts the title offers too.
-  const row = useFit<HTMLDivElement>([agent.id, agent.title, agent.status, display, costShown, panelOpen, live, editing]);
-  const meta = useFit<HTMLDivElement>([agent.id, agent.status, agent.statusDetail, agent.profileLabel, agent.cwd, model]);
+  const { row, meta } = useHeaderLayout([agent.id, agent.title, agent.profileLabel, agent.cwd, agent.forkedFrom, forkSource?.title, model, display, panelOpen, live, editing, t?.contextPercent != null]);
   const rename = async () => {
     setEditing(false);
     if (name.trim() && name !== agent.title) await call('agents.rename', agent.id, name.trim());
@@ -362,7 +358,6 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
           </div>
         )}
         <div className="meta" ref={meta}>
-          <AgentStatusPill agent={agent} label={agent.status === 'working' ? 'Running' : undefined} />
           <span data-fit="2">
             <AccountChip label={agent.profileLabel} color={agent.profileColor} />
           </span>
@@ -397,20 +392,9 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
         </div>
       </div>
       <div className="th-actions">
-        {CONVERSATION_MODES.includes(agent.mode) ? <DisplayToggle agent={agent} display={display} /> : null}
         {t && t.contextPercent !== null && display === 'terminal' ? (
           <div className="th-context">
             <Meter label="Context" value={t.contextPercent} valueText={`${percent(t.contextPercent)} of ${compact(t.contextWindow)}`} title={`${compact(t.contextUsedTokens)} tokens in context${t.contextWindowAssumed ? ' (window size assumed)' : ''}`} />
-          </div>
-        ) : null}
-        {t && !costShown ? (
-          <div data-fit="3" style={{ textAlign: 'right', minWidth: 70 }} title={t.cost.reportedUsd != null ? "Claude Code's own estimate" : 'Estimated at API list prices'}>
-            <div className="num" style={{ fontWeight: 600 }}>
-              {usd(t.cost.reportedUsd ?? t.cost.totalUsd)}
-            </div>
-            <div className="muted" style={{ fontSize: 11 }}>
-              {compact(t.totalUsage?.totalTokens ?? 0)} tokens
-            </div>
           </div>
         ) : null}
         {CONVERSATION_MODES.includes(agent.mode) ? (
@@ -631,8 +615,7 @@ export function AgentsView() {
   const visible = filtered.filter((a) => !archivedIds.includes(a.id));
   const archived = filtered.filter((a) => archivedIds.includes(a.id));
   const selected = agents.find((a) => a.id === selectedId) ?? live[0] ?? null;
-  const preferred = useDisplay((s) => (selected ? s[selected.id] : undefined));
-  const display = selected ? displayOf(selected, preferred) : 'terminal';
+  const display = selected ? displayOf(selected) : 'terminal';
 
   useEffect(() => {
     if (!selectedId && selected) useApp.setState({ selectedAgentId: selected.id });
