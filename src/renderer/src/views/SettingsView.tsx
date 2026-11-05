@@ -252,6 +252,12 @@ export function SettingsView() {
           />
         </Setting>
         <Setting
+          title="Suggested next steps"
+          description="When an agent finishes with a list of recommended next steps, show them as cards under its reply: click one to send it, or add a comment first."
+        >
+          <Switch on={settings.chatNextSteps !== false} onChange={(v) => update({ chatNextSteps: v })} />
+        </Setting>
+        <Setting
           title="Voice input model"
           description="The speech-to-text model behind the microphone button. It runs on this computer; a larger model is more accurate but slower and downloads once on first use. Dictated messages also tell the agent to correct mishearings from context."
         >

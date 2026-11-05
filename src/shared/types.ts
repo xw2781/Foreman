@@ -746,6 +746,8 @@ export interface AppSettings {
   claudeIdleCompactMinTokens: number;
   /** What Enter does in a chat while the agent is working; Ctrl+Enter does the other. */
   chatSendMode: ChatSendMode;
+  /** Offer the next steps an agent suggests at the end of a task as cards to click. */
+  chatNextSteps: boolean;
   /** Whisper model for voice input (see shared/voiceModels). */
   voiceModel: string;
   /** Give new agents Foreman's built-in browser (an MCP server of browser tools). */

@@ -12,6 +12,7 @@ import {
   Brain,
   Check,
   ChevronRight,
+  CornerDownRight,
   CircleCheck,
   CircleX,
   FilePen,
@@ -24,6 +25,7 @@ import {
   Info,
   Mic,
   MessageCircleQuestion,
+  MessageSquarePlus,
   Clock3,
   ListChecks,
   ListEnd,
@@ -70,6 +72,7 @@ import { switchCostNotice, useSwitchCosts } from '../switchCost';
 import { SubagentPill } from './SubagentMap';
 import { MessageNavigator } from './MessageNavigator';
 import { askSide, forkAgent, sidePending, useSideChats } from '../sideChat';
+import { extractNextSteps, type NextStep } from '../nextSteps';
 import '../chat.css';
 
 type Item<K extends ChatItem['kind']> = Extract<ChatItem, { kind: K }>;
@@ -685,6 +688,135 @@ const TurnView = memo(
     a.turn.body.every((item, index) => item === b.turn.body[index])
 );
 
+// ------------------------------------------------------------- next steps
+
+/** Composers by agent: lets a card put its text in the message box to edit first. */
+const composerFill = new Map<string, (text: string) => void>();
+/** Turns whose suggestions were dismissed. */
+const dismissedSteps = new Set<string>();
+
+/** Inline code in a suggestion, the rest as text. */
+function StepText({ text }: { text: string }) {
+  return <>{text.split(/(`[^`]+`)/).map((part, i) => (part.length > 2 && part.startsWith('`') && part.endsWith('`') ? <code key={i}>{part.slice(1, -1)}</code> : part))}</>;
+}
+
+/** The next steps the agent suggested when it finished: click one to send it, or add a comment to send with it. */
+function NextSteps({ agent, turnId, steps }: { agent: AgentInfo; turnId: string; steps: NextStep[] }) {
+  const toast = useApp((s) => s.toast);
+  const [sending, setSending] = useState<number | null>(null);
+  const [commenting, setCommenting] = useState<number | null>(null);
+  const [comment, setComment] = useState('');
+  const [, setDismissed] = useState(0);
+  if (dismissedSteps.has(turnId)) return null;
+  const send = (step: NextStep, index: number, note = '') => {
+    setSending(index);
+    const message = note.trim() ? `${step.prompt}
+
+${note.trim()}` : step.prompt;
+    call('chat.send', agent.id, message, 'queue', [])
+      .then(() => {
+        setCommenting(null);
+        setComment('');
+      })
+      .catch((error) => toast('error', errorMessage(error)))
+      .finally(() => setSending(null));
+  };
+  const openComment = (index: number) => {
+    if (commenting !== index) setComment('');
+    setCommenting(commenting === index ? null : index);
+  };
+  return (
+    <section className="next-steps" aria-label="Suggested next steps">
+      <div className="next-steps-head">
+        <Sparkles size={12} />
+        <span>Suggested next steps</span>
+        <button
+          type="button"
+          className="btn ghost sm icon"
+          aria-label="Dismiss suggestions"
+          data-tip="Dismiss"
+          onClick={() => {
+            dismissedSteps.add(turnId);
+            setDismissed((n) => n + 1);
+          }}
+        >
+          <X size={12} />
+        </button>
+      </div>
+      {steps.map((step, index) => (
+        <div key={index} className={`next-step ${commenting === index ? 'commenting' : ''}`}>
+          <div className="next-step-row">
+            <button
+              type="button"
+              className="next-step-send"
+              disabled={sending !== null}
+              title={`Send: ${step.prompt}`}
+              onClick={() => send(step, index, commenting === index ? comment : '')}
+            >
+              {sending === index ? <LoaderCircle size={13} className="spin" /> : <CornerDownRight size={13} />}
+              <span className="next-step-text">
+                <span className="next-step-title"><StepText text={step.title} /></span>
+                {step.detail ? <span className="next-step-detail"><StepText text={step.detail} /></span> : null}
+              </span>
+            </button>
+            <div className="next-step-actions">
+              <button
+                type="button"
+                className={`btn ghost sm icon ${commenting === index ? 'active' : ''}`}
+                aria-label="Add a comment"
+                aria-expanded={commenting === index}
+                data-tip="Add a comment"
+                data-tip-note="Send this step with your own notes or constraints"
+                onClick={() => openComment(index)}
+              >
+                <MessageSquarePlus size={12} />
+              </button>
+              <button
+                type="button"
+                className="btn ghost sm icon"
+                aria-label="Edit in message box"
+                data-tip="Edit in message box"
+                onClick={() => composerFill.get(agent.id)?.(step.prompt)}
+              >
+                <Pencil size={12} />
+              </button>
+            </div>
+          </div>
+          {commenting === index ? (
+            <div className="next-step-comment">
+              <textarea
+                className="input"
+                autoFocus
+                rows={2}
+                value={comment}
+                placeholder="Add details or constraints for this step…"
+                aria-label={`Comment for: ${step.title}`}
+                onChange={(e) => setComment(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setCommenting(null);
+                  } else if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    send(step, index, comment);
+                  }
+                }}
+              />
+              <div className="next-step-comment-actions">
+                <span className="muted">Enter to send · Shift+Enter for a new line · Esc to cancel</span>
+                <button type="button" className="btn sm" onClick={() => setCommenting(null)}>Cancel</button>
+                <button type="button" className="btn primary sm" disabled={sending !== null} onClick={() => send(step, index, comment)}>
+                  Send step
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </section>
+  );
+}
+
 // ------------------------------------------------------------- command menu
 
 function CommandMenu({ commands, loading, active, onHover, onChoose }: { commands: ChatCommand[]; loading: boolean; active: number; onHover: (index: number) => void; onChoose: (command: ChatCommand) => void }) {
@@ -1112,6 +1244,14 @@ ${VOICE_NOTE}`;
     ref.current?.focus();
   };
 
+  useEffect(() => {
+    const fill = (value: string) => restore([{ text: value }]);
+    composerFill.set(agent.id, fill);
+    return () => {
+      if (composerFill.get(agent.id) === fill) composerFill.delete(agent.id);
+    };
+  });
+
   // Queued messages come back into the message box, as in both CLIs' own apps.
   const stop = () =>
     call('chat.interrupt', agent.id)
@@ -1469,6 +1609,14 @@ export function ChatView({ agent }: { agent: AgentInfo }) {
   };
 
   const pendingApproval = items.some((i) => i.kind === 'approval' && i.state === 'pending');
+  // Suggestions show once the last turn has finished and the agent waits for the next message.
+  const lastTurn = turns[turns.length - 1];
+  const showSteps = useApp((s) => s.settings?.chatNextSteps !== false);
+  const closing = showSteps && lastTurn && !agent.endedAt && agent.status === 'idle' && !queued.length && lastTurn.footer?.ok !== false
+    ? [...lastTurn.body].reverse().find((i) => i.kind !== 'notice')
+    : undefined;
+  const closingText = closing?.kind === 'assistant' && !closing.streaming ? closing.text : null;
+  const nextSteps = useMemo(() => (closingText ? extractNextSteps(closingText) : []), [closingText]);
   const pendingQuestions = items.filter((i): i is Item<'approval'> => i.kind === 'approval' && i.state === 'pending' && Boolean(i.questions?.length));
   const question = pendingQuestions[0];
   return (
@@ -1491,6 +1639,7 @@ export function ChatView({ agent }: { agent: AgentInfo }) {
               return <TurnView key={turn.key} turn={turn} agent={agent} done={Boolean(turn.footer) || !last || !working} active={last && working} />;
             })
           )}
+          {nextSteps.length && lastTurn ? <NextSteps key={lastTurn.key} agent={agent} turnId={`${agent.id}:${lastTurn.key}`} steps={nextSteps} /> : null}
           {chat?.error ? <div className="chat-notice error">{chat.error}</div> : null}
           {working && !pendingApproval ? (
             <div className="working">

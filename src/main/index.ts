@@ -96,6 +96,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   claudeIdleMode: 'compact',
   claudeIdleCompactMinTokens: 0,
   chatSendMode: 'steer',
+  chatNextSteps: true,
   voiceModel: 'Xenova/whisper-base',
   browserEnabled: true,
   browserAutoApprove: true,
