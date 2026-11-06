@@ -13,6 +13,7 @@ import { SubagentMapPane } from './SubagentMap';
 import { SideChatPane } from './SideChatPanel';
 import { sidePending, useSideChats } from '../sideChat';
 import { useWheelStep } from '../ui';
+import { FileMenuHost } from '../FileMenu';
 
 /** `note` is the second line of each tab's hover card. */
 const TABS: Array<{ id: PanelTab; label: string; icon: LucideIcon; note: string }> = [
@@ -219,6 +220,7 @@ export function SidePanel({ agent, expanded, onExpand }: { agent: AgentInfo; exp
         </div>
       </div>
       {menu ? <TabsMenu at={menu} onClose={() => setMenu(null)} /> : null}
+      <FileMenuHost />
       <div className="sp-body" role="tabpanel">
         {tab === 'subagents' ? (
           <SubagentMapPane agent={agent} />

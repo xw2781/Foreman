@@ -8,6 +8,8 @@ import { ago, folderName } from '../format';
 import { Empty } from '../ui';
 import { HighlightedCode } from '../HighlightedCode';
 import { fileLanguage } from '../syntax';
+import { fileRowProps } from '../FileMenu';
+import { joinPath } from '../fileRefs';
 
 type Listing = { entries: ProjectFileEntry[]; omitted: number } | { error: string } | 'loading';
 type Preview = ProjectFilePreview | { error: string; path: string } | 'loading';
@@ -95,7 +97,7 @@ function absolute(agent: AgentInfo, relative: string) {
   return relative ? `${agent.cwd.replace(/[\\/]+$/, '')}${sep}${relative.split('/').join(sep)}` : agent.cwd;
 }
 
-function FolderView({ agentId, dir, depth, state }: { agentId: string; dir: string; depth: number; state: FilesState }) {
+function FolderView({ agentId, cwd, dir, depth, state }: { agentId: string; cwd: string; dir: string; depth: number; state: FilesState }) {
   const listing = state.dirs[dir];
   if (!listing || listing === 'loading') {
     return (
@@ -136,12 +138,13 @@ function FolderView({ agentId, dir, depth, state }: { agentId: string; dir: stri
               style={{ paddingLeft: 6 + depth * 14 }}
               title={entry.dir ? entry.path : `${entry.path}\n${size(entry.size)} · changed ${ago(new Date(entry.modifiedMs).toISOString())}`}
               onClick={toggle}
+              {...fileRowProps({ agentId, cwd, full: joinPath(cwd, entry.path) })}
             >
               <span className="ft-chevron">{entry.dir ? open ? <ChevronDown size={13} /> : <ChevronRight size={13} /> : null}</span>
               <span className="ft-icon">{entry.dir ? open ? <FolderOpen size={14} /> : <Folder size={14} /> : <FileIcon name={entry.name} />}</span>
               <span className="ellipsis">{entry.name}</span>
             </button>
-            {entry.dir && open ? <FolderView agentId={agentId} dir={entry.path} depth={depth + 1} state={state} /> : null}
+            {entry.dir && open ? <FolderView agentId={agentId} cwd={cwd} dir={entry.path} depth={depth + 1} state={state} /> : null}
           </div>
         );
       })}
@@ -182,7 +185,7 @@ function PreviewPane({ agent, state, expanded, onExpand }: { agent: AgentInfo; s
         <span className="ft-icon">
           <FileIcon name={name} />
         </span>
-        <span className="fp-name ellipsis" title={full}>
+        <span className="fp-name ellipsis" title={full} {...fileRowProps({ agentId: agent.id, cwd: agent.cwd, full })}>
           {file}
         </span>
         {preview !== 'loading' && !('error' in preview) ? <span className="muted fp-meta">{size(preview.size)}</span> : null}
@@ -287,7 +290,7 @@ export function FilesPanel({ agent, expanded, onExpand }: { agent: AgentInfo; ex
           </button>
         </div>
         <div className="ft-scroll" role="tree" aria-label="Project files">
-          <FolderView agentId={agent.id} dir="" depth={0} state={state} />
+          <FolderView agentId={agent.id} cwd={agent.cwd} dir="" depth={0} state={state} />
         </div>
       </div>
       {state.selected && state.treeVisible && !expanded ? (

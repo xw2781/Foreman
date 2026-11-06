@@ -10,6 +10,13 @@ import { ago, folderName, fullTime } from '../format';
 import { Empty } from '../ui';
 import { useApp } from '../store';
 import { parseDiff, splitPath, worktreeOf } from '../gitDiff';
+import { fileRowProps } from '../FileMenu';
+import { joinPath } from '../fileRefs';
+
+/** What a file row needs to be referenced: paths in git output are relative to `root`. */
+interface RefBase { agentId: string; cwd: string; root: string }
+
+const refProps = (base: RefBase, path: string, missing?: boolean) => fileRowProps({ agentId: base.agentId, cwd: base.cwd, full: joinPath(base.root, path), missing });
 
 type GitView = 'changes' | 'commits' | 'worktrees';
 type Loaded<T> = T | { error: string } | 'loading';
@@ -126,10 +133,10 @@ function Letter({ letter }: { letter: string }) {
   return <span className={`git-letter l-${LETTER_CLASS[letter] ?? 'mod'}`} title={LETTER_TITLE[letter] ?? letter}>{letter === '?' ? 'U' : letter}</span>;
 }
 
-function FileRow({ file, letter, stats, selected, onClick }: { file: { path: string; origPath?: string }; letter: string; stats?: GitLineStats; selected: boolean; onClick: () => void }) {
+function FileRow({ base, file, letter, stats, selected, onClick }: { base: RefBase; file: { path: string; origPath?: string }; letter: string; stats?: GitLineStats; selected: boolean; onClick: () => void }) {
   const { name, dir } = splitPath(file.path);
   return (
-    <button type="button" className={`ft-row git-file ${selected ? 'on' : ''}`} onClick={onClick}
+    <button type="button" className={`ft-row git-file ${selected ? 'on' : ''}`} onClick={onClick} {...refProps(base, file.path, letter === 'D')}
       title={file.origPath ? `${file.origPath} → ${file.path}` : file.path}>
       <Letter letter={letter} />
       <span className="git-file-name ellipsis">
@@ -145,7 +152,7 @@ function sameTarget(a: GitDiffTarget | undefined, b: GitDiffTarget) {
   return Boolean(a && a.kind === b.kind && a.path === b.path && (a.kind !== 'commit' || (b.kind === 'commit' && a.hash === b.hash)));
 }
 
-function ChangesView({ agentId, status, state }: { agentId: string; status: Extract<GitStatus, { repo: true }>; state: GitPanelState }) {
+function ChangesView({ agentId, base, status, state }: { agentId: string; base: RefBase; status: Extract<GitStatus, { repo: true }>; state: GitPanelState }) {
   const groups = useMemo(() => sections(status.files), [status.files]);
   const totals = useMemo(() => {
     let added = 0;
@@ -187,7 +194,7 @@ function ChangesView({ agentId, status, state }: { agentId: string; status: Extr
             {collapsed ? null : section.files.map((file) => {
               const target: GitDiffTarget = { kind: section.kind, path: file.path, ...(file.origPath ? { origPath: file.origPath } : {}) };
               return (
-                <FileRow key={`${section.id}:${file.path}`} file={file} letter={section.letter(file)} stats={section.stats(file)}
+                <FileRow base={base} key={`${section.id}:${file.path}`} file={file} letter={section.letter(file)} stats={section.stats(file)}
                   selected={sameTarget(state.diff?.target, target)} onClick={() => loadDiff(agentId, target)} />
               );
             })}
@@ -199,7 +206,7 @@ function ChangesView({ agentId, status, state }: { agentId: string; status: Extr
   );
 }
 
-function CommitRow({ agentId, commit, head, state }: { agentId: string; commit: Extract<GitStatus, { repo: true }>['commits'][number]; head: boolean; state: GitPanelState }) {
+function CommitRow({ agentId, base, commit, head, state }: { agentId: string; base: RefBase; commit: Extract<GitStatus, { repo: true }>['commits'][number]; head: boolean; state: GitPanelState }) {
   const open = state.openCommit === commit.hash;
   const details = state.commits[commit.hash];
   const toggle = () => {
@@ -234,7 +241,7 @@ function CommitRow({ agentId, commit, head, state }: { agentId: string; commit: 
               {details.files.length ? details.files.map((file) => {
                 const target: GitDiffTarget = { kind: 'commit', hash: commit.hash, path: file.path, ...(file.origPath ? { origPath: file.origPath } : {}) };
                 return (
-                  <FileRow key={file.path} file={file} letter={file.origPath ? 'R' : 'M'} stats={file.stats}
+                  <FileRow base={base} key={file.path} file={file} letter={file.origPath ? 'R' : 'M'} stats={file.stats}
                     selected={sameTarget(state.diff?.target, target)} onClick={() => loadDiff(agentId, target)} />
                 );
               }) : <div className="ft-note">No file changes</div>}
@@ -246,7 +253,7 @@ function CommitRow({ agentId, commit, head, state }: { agentId: string; commit: 
   );
 }
 
-function CommitsView({ agentId, status, state }: { agentId: string; status: Extract<GitStatus, { repo: true }>; state: GitPanelState }) {
+function CommitsView({ agentId, base, status, state }: { agentId: string; base: RefBase; status: Extract<GitStatus, { repo: true }>; state: GitPanelState }) {
   if (!status.commits.length) {
     return <div className="git-empty"><Empty icon={<GitCommitHorizontal size={22} />} title="No commits yet" /></div>;
   }
@@ -255,7 +262,7 @@ function CommitsView({ agentId, status, state }: { agentId: string; status: Extr
   const group = (label: ReactNode, commits: typeof status.commits) => (
     <div className="git-section">
       <div className="git-section-head static">{label}</div>
-      {commits.map((commit) => <CommitRow key={commit.hash} agentId={agentId} commit={commit} head={commit.hash === status.head?.hash} state={state} />)}
+      {commits.map((commit) => <CommitRow key={commit.hash} agentId={agentId} base={base} commit={commit} head={commit.hash === status.head?.hash} state={state} />)}
     </div>
   );
   return (
@@ -322,7 +329,7 @@ function WorktreesView({ status }: { status: Extract<GitStatus, { repo: true }> 
   );
 }
 
-function DiffPane({ agentId, diff, expanded, onExpand }: { agentId: string; diff: NonNullable<GitPanelState['diff']>; expanded: boolean; onExpand?: () => void }) {
+function DiffPane({ agentId, base, diff, expanded, onExpand }: { agentId: string; base: RefBase; diff: NonNullable<GitPanelState['diff']>; expanded: boolean; onExpand?: () => void }) {
   const { target, data } = diff;
   const rows = useMemo(() => (data !== 'loading' && !('error' in data) ? parseDiff(data.text) : []), [data]);
   const where = target.kind === 'commit' ? `Commit ${target.hash.slice(0, 7)}` : target.kind === 'untracked' ? 'New file' : target.kind === 'staged' ? 'Staged' : 'Unstaged';
@@ -332,7 +339,7 @@ function DiffPane({ agentId, diff, expanded, onExpand }: { agentId: string; diff
         <button type="button" className="btn ghost icon sm" aria-label="Back to the list" title="Back" onClick={() => patch(agentId, { diff: null })}>
           <ArrowLeft size={14} />
         </button>
-        <span className="fp-name ellipsis" title={target.origPath ? `${target.origPath} → ${target.path}` : target.path}>{target.path}</span>
+        <span className="fp-name ellipsis" title={target.origPath ? `${target.origPath} → ${target.path}` : target.path} {...refProps(base, target.path)}>{target.path}</span>
         <span className="git-tag">{where}</span>
         {onExpand ? (
           <button type="button" className="btn ghost icon sm" aria-label={expanded ? 'Narrow the diff' : 'Widen the diff'}
@@ -429,7 +436,8 @@ export function GitPanel({ agent, expanded, onExpand }: { agent: AgentInfo; expa
   if (!status.repo) {
     return <div className="sp-pane git-pane git-empty"><Empty icon={<GitBranch size={22} />} title="No git repository">{status.reason}</Empty></div>;
   }
-  if (state.diff) return <div className="sp-pane git-pane"><DiffPane agentId={agent.id} diff={state.diff} expanded={expanded} onExpand={onExpand} /></div>;
+  const base: RefBase = { agentId: agent.id, cwd: agent.cwd, root: status.root };
+  if (state.diff) return <div className="sp-pane git-pane"><DiffPane agentId={agent.id} base={base} diff={state.diff} expanded={expanded} onExpand={onExpand} /></div>;
 
   const current = status.worktrees.find((w) => w.current);
   const linked = current && !current.main;
@@ -476,9 +484,9 @@ export function GitPanel({ agent, expanded, onExpand }: { agent: AgentInfo; expa
         ))}
       </div>
       {state.view === 'changes' ? (
-        <ChangesView agentId={agent.id} status={status} state={state} />
+        <ChangesView agentId={agent.id} base={base} status={status} state={state} />
       ) : state.view === 'commits' ? (
-        <CommitsView agentId={agent.id} status={status} state={state} />
+        <CommitsView agentId={agent.id} base={base} status={status} state={state} />
       ) : (
         <WorktreesView status={status} />
       )}

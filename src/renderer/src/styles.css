@@ -3581,3 +3581,36 @@ body.dragging-split .bp-canvas {
   color: var(--text-muted);
   font-style: italic;
 }
+
+/* ------------------------------------------------------------------ side panel: file row menu */
+.file-menu {
+  position: fixed;
+  width: 230px;
+  z-index: 200;
+}
+.file-menu .pop-title {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11.5px;
+}
+.file-menu-item {
+  grid-template-columns: 16px 1fr;
+  padding: 6px 10px;
+  font-size: 12.5px;
+}
+.file-menu-item:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.file-menu-item:disabled:hover {
+  background: none;
+}
+.file-menu-item:focus-visible {
+  outline: 1px solid var(--accent);
+  background: var(--surface-2);
+}
+.file-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}

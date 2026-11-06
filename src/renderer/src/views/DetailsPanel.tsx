@@ -1,5 +1,5 @@
 // The side panel's Details tab: what the context window holds (by part, as
-// Claude Code reports it for a running chat; a single meter otherwise), what the
+// Claude Code reports it for a chat, kept after the chat ends; a single meter otherwise), what the
 // session cost, its tokens, plan usage and the session itself.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronRight, Copy, FolderOpen, RefreshCw } from 'lucide-react';
@@ -25,13 +25,14 @@ const PART_COLOR: Record<ContextPart, string> = {
 const known = new Map<string, ContextUsage>();
 
 function useContextUsage(agent: AgentInfo) {
+  // Only a running Claude chat can be asked again; any other agent shows the last breakdown it reported, if any.
   const live = agent.provider === 'claude' && agent.mode === 'chat' && !agent.endedAt;
-  const [usage, setUsage] = useState<ContextUsage | null>(() => (live ? known.get(agent.id) ?? null : null));
+  const [usage, setUsage] = useState<ContextUsage | null>(() => known.get(agent.id) ?? null);
   const [loading, setLoading] = useState(false);
   const current = useRef(agent.id);
   current.current = agent.id;
   const load = async () => {
-    if (!live) return;
+    if (agent.provider !== 'claude') return;
     const id = agent.id;
     setLoading(true);
     try {
@@ -45,12 +46,12 @@ function useContextUsage(agent: AgentInfo) {
     }
   };
   useEffect(() => {
-    setUsage(live ? known.get(agent.id) ?? null : null);
+    setUsage(known.get(agent.id) ?? null);
     void load();
   }, [agent.id, agent.runId, live]);
   // After each response (and when the turn ends) the window has changed.
   useEffect(() => {
-    if (agent.status === 'idle' || agent.status === 'needs-input') void load();
+    if (live && (agent.status === 'idle' || agent.status === 'needs-input')) void load();
   }, [agent.status, agent.telemetry?.requests, agent.telemetry?.compactions]);
   return { usage, loading, live, load };
 }
@@ -121,6 +122,7 @@ function ContextBreakdown({ usage, compactions, lastCompactionAt }: { usage: Con
         {' · '}
         {compactions === 1 ? '1 compaction' : `${compactions} compactions`}
         {lastCompactionAt ? `, last ${ago(lastCompactionAt)}` : ''}
+        {usage.savedAt ? <div>Reported {ago(usage.savedAt)}, while the session was running.</div> : null}
         {usage.deferredTokens ? (
           <div>{compact(usage.deferredTokens)} of tool definitions stay out of the window until Claude searches for them.</div>
         ) : null}

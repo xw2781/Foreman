@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import type { ChatImage, ChatMessage, SwitchCost } from '@shared/types';
 import { useVoiceInput } from '../voice/useVoiceInput';
 import { describeVoiceStatus } from '../voice/engine';
@@ -73,6 +73,7 @@ import { SubagentPill } from './SubagentMap';
 import { MessageNavigator } from './MessageNavigator';
 import { askSide, forkAgent, sidePending, useSideChats } from '../sideChat';
 import { extractNextSteps, type NextStep } from '../nextSteps';
+import { composerInsert, FILE_REF_TYPE, fileRef, formatRef, insertAt, spaceDrop } from '../fileRefs';
 import '../chat.css';
 
 type Item<K extends ChatItem['kind']> = Extract<ChatItem, { kind: K }>;
@@ -1252,6 +1253,38 @@ ${VOICE_NOTE}`;
     };
   });
 
+  /** Puts `value` at the caret, spaced from the words around it (a file reference from the side panel). */
+  const insertText = (value: string) => {
+    const next = insertAt(text, ref.current?.selectionStart ?? caret, value);
+    update(next.text);
+    setCaret(next.caret);
+    requestAnimationFrame(() => {
+      ref.current?.focus();
+      ref.current?.setSelectionRange(next.caret, next.caret);
+    });
+  };
+  useEffect(() => {
+    composerInsert.set(agent.id, insertText);
+    return () => {
+      if (composerInsert.get(agent.id) === insertText) composerInsert.delete(agent.id);
+    };
+  });
+  /** The mention a file row dropped onto the message box natively; onChange spaces it from its neighbours. */
+  const droppedRef = useRef<string | null>(null);
+  const dropFileRef = (e: DragEvent) => {
+    let payload: { full?: unknown } = {};
+    try { payload = JSON.parse(e.dataTransfer.getData(FILE_REF_TYPE)); } catch { /* not ours */ }
+    if (typeof payload.full !== 'string') return e.preventDefault();
+    const mention = formatRef(fileRef(agent.cwd, payload.full).relative);
+    // On the text box itself, the browser puts the text where the pointer is; elsewhere it goes at the caret.
+    if (e.target === ref.current && e.dataTransfer.getData('text/plain') === mention) {
+      droppedRef.current = mention;
+      return;
+    }
+    e.preventDefault();
+    insertText(mention);
+  };
+
   // Queued messages come back into the message box, as in both CLIs' own apps.
   const stop = () =>
     call('chat.interrupt', agent.id)
@@ -1333,7 +1366,11 @@ ${VOICE_NOTE}`;
       ) : null}
       {queued.length ? <QueueTray agent={agent} items={queued} busy={midTurn} onEdit={(queuedText) => restore([queuedText])} /> : null}
       {agent.cacheRebuild && agent.cacheRebuild.model === undefined ? <CacheRebuildNotice agent={agent} /> : null}
-      <div className="composer-box" onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); }} onDrop={(e) => {
+      <div className="composer-box" onDragOver={(e) => {
+        if (e.dataTransfer.types.includes(FILE_REF_TYPE)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }
+        else if (e.dataTransfer.types.includes('Files')) e.preventDefault();
+      }} onDrop={(e) => {
+        if (e.dataTransfer.types.includes(FILE_REF_TYPE)) return dropFileRef(e);
         e.preventDefault();
         void attach(Array.from(e.dataTransfer.files));
       }}>
@@ -1359,8 +1396,18 @@ ${VOICE_NOTE}`;
           aria-autocomplete="list"
           aria-expanded={menuOpen}
           onChange={(e) => {
-            update(e.target.value);
-            setCaret(e.target.selectionStart);
+            const dropped = droppedRef.current;
+            droppedRef.current = null;
+            const spaced = dropped ? spaceDrop(text, e.target.value, dropped) : null;
+            if (spaced) {
+              update(spaced.text);
+              setCaret(spaced.caret);
+              const target = e.target;
+              requestAnimationFrame(() => { target.focus(); target.setSelectionRange(spaced.caret, spaced.caret); });
+            } else {
+              update(e.target.value);
+              setCaret(e.target.selectionStart);
+            }
             setBrowsing(false);
           }}
           onPaste={(e) => {

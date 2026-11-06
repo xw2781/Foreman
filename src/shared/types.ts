@@ -525,6 +525,8 @@ export interface ContextUsage {
   agents: Array<{ name: string; source: string; tokens: number }>;
   /** The conversation's share, by what it is; null before the first message. */
   messages: Array<{ label: string; tokens: number }> | null;
+  /** Set on a breakdown kept from when the session last ran: when Claude Code reported it. */
+  savedAt?: string;
 }
 
 export interface ChatSettingsPatch {

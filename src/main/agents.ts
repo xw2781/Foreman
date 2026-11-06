@@ -123,6 +123,8 @@ function newRunId() {
 export class AgentManager {
   private sessions = new Map<string, Session>();
   private history: JsonStore<{ agents: AgentInfo[] }>;
+  /** Each chat's last context breakdown, shown once the CLI that reported it has gone (it can only be asked while running). */
+  private contextUsage: JsonStore<{ byAgent: Record<string, ContextUsage> }>;
   private flushTimer: NodeJS.Timeout | null = null;
   private changed = new Set<string>();
   private changeTimer: NodeJS.Timeout | null = null;
@@ -148,6 +150,8 @@ export class AgentManager {
         : withRun;
     });
     this.history.replace({ agents: restored });
+    this.contextUsage = new JsonStore(path.join(deps.userDataDir, 'context-usage.json'), { byAgent: {} });
+    this.pruneContextUsage();
     deps.hooks.onEvent = (event) => this.handleHook(event);
   }
 
@@ -893,10 +897,23 @@ export class AgentManager {
     this.markChanged(id);
   }
 
+  /** The live breakdown while the chat runs (remembered as it comes in); afterwards the last one it reported. */
   async chatContextUsage(id: string): Promise<ContextUsage | null> {
     const session = this.sessions.get(id);
-    if (!session?.driver?.contextUsage || session.info.endedAt) return null;
-    return session.driver.contextUsage();
+    const saved = this.contextUsage.data.byAgent[id] ?? null;
+    if (!session?.driver?.contextUsage || session.info.endedAt) return saved;
+    const usage = await session.driver.contextUsage();
+    if (!usage) return saved;
+    this.contextUsage.replace({ byAgent: { ...this.contextUsage.data.byAgent, [id]: { ...usage, savedAt: new Date().toISOString() } } });
+    return usage;
+  }
+
+  /** Drops breakdowns of agents no longer in the list. */
+  private pruneContextUsage() {
+    const byAgent = this.contextUsage.data.byAgent;
+    const kept = new Set([...this.sessions.keys(), ...this.history.data.agents.map((a) => a.id)]);
+    if (Object.keys(byAgent).every((id) => kept.has(id))) return;
+    this.contextUsage.replace({ byAgent: Object.fromEntries(Object.entries(byAgent).filter(([id]) => kept.has(id))) });
   }
 
   /** Starts a connector's sign-in: the page the person finishes it on. */
@@ -1229,6 +1246,7 @@ export class AgentManager {
     if (session && !session.info.endedAt) throw new Error('Stop the agent before removing it.');
     this.sessions.delete(id);
     this.history.replace({ agents: this.history.data.agents.filter((a) => a.id !== id) });
+    this.pruneContextUsage();
     this.emitChanged();
     this.onRemoved([id]);
   }
@@ -1239,6 +1257,7 @@ export class AgentManager {
       if (session.info.endedAt) this.sessions.delete(id);
     }
     this.history.replace({ agents: [] });
+    this.pruneContextUsage();
     this.emitChanged();
     const kept = new Set(this.list().map((a) => a.id));
     this.onRemoved(before.filter((id) => !kept.has(id)));
@@ -1348,6 +1367,7 @@ export class AgentManager {
     // The exit handlers archive only after a telemetry read, which the quitting app won't wait for.
     for (const s of live) this.archive(s.info);
     this.history.flush();
+    this.contextUsage.flush();
   }
 
   // -------------------------------------------------------------------------
