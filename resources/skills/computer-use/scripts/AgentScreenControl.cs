@@ -2089,7 +2089,8 @@ namespace AgentTaskCenter.ScreenControl
             o.Timestamp = DateTime.Now.ToString("o", CultureInfo.InvariantCulture);
             o.Window = WindowOps.Info(hwnd);
             if (o.Window == null) throw new InvalidOperationException("The window no longer exists.");
-            if (imagePath != null)
+            // PowerShell passes $null for a string as "": -NoShot means no image either way.
+            if (!string.IsNullOrEmpty(imagePath))
             {
                 Rectangle frame = o.Window.Bounds;
                 string method;
@@ -2547,6 +2548,9 @@ namespace AgentTaskCenter.ScreenControl
         public bool ShowEdges = true;
         public string PanelPosition = "TopCenter";
         public int IdleExitMinutes;
+        public string AgentId = "";
+        /// <summary>The window the agent last observed or acted on; the panels keep clear of it.</summary>
+        public long FocusHwnd;
 
         public int CursorSeq;
         public string CursorAction = "";
@@ -2596,6 +2600,9 @@ namespace AgentTaskCenter.ScreenControl
             s.ShowEdges = !edges.HasValue || edges.Value;
             s.PanelPosition = Json.Str(json, "panel_position") ?? "TopCenter";
             s.IdleExitMinutes = I(json, "idle_exit_minutes", 0);
+            s.AgentId = Json.Str(json, "agent_id") ?? "";
+            long? focus = Json.Int(json, "focus_hwnd");
+            s.FocusHwnd = focus.HasValue ? focus.Value : 0;
 
             s.CursorSeq = I(json, "cursor_seq", 0);
             s.CursorAction = Json.Str(json, "cursor_action") ?? "";
@@ -2655,7 +2662,8 @@ namespace AgentTaskCenter.ScreenControl
 
         public bool ReleaseClicked { get; private set; }
 
-        public StatusPanel(double scale, Rectangle screen, string position)
+        /// <summary>Where it sits is up to PanelDock, which moves it out of the agent's way.</summary>
+        public StatusPanel(double scale, Point location)
         {
             _scale = scale;
             FormBorderStyle = FormBorderStyle.None;
@@ -2665,9 +2673,9 @@ namespace AgentTaskCenter.ScreenControl
             BackColor = Color.FromArgb(18, 18, 20);
             DoubleBuffered = true;
 
-            int w = S(600), h = S(80);
+            int w = PanelDock.Width(scale), h = S(80);
             Size = new Size(w, h);
-            Location = Place(screen, w, h, position);
+            Location = location;
 
             _release = new Button();
             _release.Text = "Release";
@@ -2685,18 +2693,6 @@ namespace AgentTaskCenter.ScreenControl
         }
 
         private int S(int v) { return (int)Math.Round(v * _scale); }
-
-        private Point Place(Rectangle screen, int w, int h, string position)
-        {
-            int inset = S(52);
-            int left = position.EndsWith("Right", StringComparison.OrdinalIgnoreCase)
-                ? screen.Right - w - inset
-                : screen.Left + (screen.Width - w) / 2;
-            int top = position.StartsWith("Bottom", StringComparison.OrdinalIgnoreCase)
-                ? screen.Bottom - h - S(72)
-                : screen.Top + inset;
-            return new Point(left, top);
-        }
 
         protected override CreateParams CreateParams
         {
@@ -2772,6 +2768,314 @@ namespace AgentTaskCenter.ScreenControl
         }
     }
 
+    public class FeedEntry
+    {
+        /// <summary>user, assistant, tool or status.</summary>
+        public string Role = "";
+        public string Text = "";
+    }
+
+    /// <summary>
+    /// conversation.json, written by the desktop app while one of its agents drives the screen:
+    /// the latest turns of that agent's conversation, for the person watching.
+    /// </summary>
+    public class ConversationFeed
+    {
+        public string AgentId = "";
+        public string Agent = "";
+        public string Title = "";
+        public List<FeedEntry> Entries = new List<FeedEntry>();
+
+        private static string S(Dictionary<string, object> d, string key)
+        {
+            object v;
+            return d.TryGetValue(key, out v) && v is string ? (string)v : "";
+        }
+
+        public static ConversationFeed Read(string path)
+        {
+            string text = FileUtil.ReadShared(path);
+            if (text == null) return null;
+            Dictionary<string, object> root = MiniJson.TryParse(text.TrimStart((char)0xFEFF)) as Dictionary<string, object>;
+            if (root == null) return null;
+            ConversationFeed feed = new ConversationFeed();
+            feed.AgentId = S(root, "agent_id");
+            feed.Agent = S(root, "agent");
+            feed.Title = S(root, "title");
+            object list;
+            if (root.TryGetValue("entries", out list) && list is List<object>)
+            {
+                foreach (object item in (List<object>)list)
+                {
+                    Dictionary<string, object> e = item as Dictionary<string, object>;
+                    if (e == null) continue;
+                    FeedEntry entry = new FeedEntry();
+                    entry.Role = S(e, "role");
+                    entry.Text = S(e, "text").Trim();
+                    if (entry.Text.Length > 0) feed.Entries.Add(entry);
+                }
+            }
+            return feed;
+        }
+    }
+
+    /// <summary>
+    /// What is being said in the driving agent's conversation, newest at the bottom. Click-through
+    /// and never activated: it only informs, so it can never take a click meant for an app.
+    /// </summary>
+    public class ConversationPanel : Form
+    {
+        private readonly double _scale;
+        private ConversationFeed _feed;
+        private Color _accent = Color.FromArgb(255, 154, 31);
+
+        public ConversationPanel(double scale, Point location)
+        {
+            _scale = scale;
+            FormBorderStyle = FormBorderStyle.None;
+            ShowInTaskbar = false;
+            StartPosition = FormStartPosition.Manual;
+            TopMost = true;
+            BackColor = Color.FromArgb(18, 18, 20);
+            DoubleBuffered = true;
+            Opacity = 0.94;
+            Size = new Size(PanelDock.Width(scale), PanelDock.ConversationHeight(scale));
+            Location = location;
+        }
+
+        public bool HasContent { get { return _feed != null; } }
+
+        private int S(int v) { return (int)Math.Round(v * _scale); }
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams cp = base.CreateParams;
+                cp.ExStyle |= Native.EX_CLICK_THROUGH;
+                return cp;
+            }
+        }
+
+        protected override bool ShowWithoutActivation { get { return true; } }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            Native.HideFromCapture(Handle);
+        }
+
+        public void SetFeed(ConversationFeed feed, Color accent)
+        {
+            if (feed == _feed && accent == _accent) return;
+            _feed = feed;
+            _accent = accent;
+            Invalidate();
+        }
+
+        private static string Clip(string s, int max)
+        {
+            s = Regex.Replace(s, "\\s*\\n\\s*\\n\\s*", "\n");
+            return s.Length <= max ? s : s.Substring(0, max - 3).TrimEnd() + "...";
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+            Color back = Color.FromArgb(18, 18, 20);
+            g.Clear(back);
+            using (Pen border = new Pen(Color.FromArgb(150, _accent), 1))
+            {
+                g.DrawRectangle(border, 0, 0, Width - 1, Height - 1);
+            }
+            if (_feed == null) return;
+
+            int left = S(14), width = Width - S(28);
+            using (Font head = new Font("Segoe UI", (float)(7.5 * _scale), FontStyle.Regular))
+            using (Font body = new Font("Segoe UI", (float)(9.0 * _scale), FontStyle.Regular))
+            using (Font label = new Font("Segoe UI", (float)(7.5 * _scale), FontStyle.Bold))
+            using (Font small = new Font("Consolas", (float)(8.0 * _scale), FontStyle.Regular))
+            using (SolidBrush dim = new SolidBrush(Color.FromArgb(150, 150, 158)))
+            using (SolidBrush faint = new SolidBrush(Color.FromArgb(118, 118, 126)))
+            using (SolidBrush bright = new SolidBrush(Color.FromArgb(232, 232, 236)))
+            using (SolidBrush accent = new SolidBrush(_accent))
+            using (Pen rule = new Pen(Color.FromArgb(46, 46, 52), 1))
+            {
+                StringFormat line = new StringFormat();
+                line.Trimming = StringTrimming.EllipsisCharacter;
+                line.FormatFlags = StringFormatFlags.NoWrap;
+                StringFormat wrap = new StringFormat();
+                wrap.Trimming = StringTrimming.EllipsisWord;
+                wrap.FormatFlags = StringFormatFlags.LineLimit;
+
+                string title = "CONVERSATION" + (_feed.Title.Length > 0 ? "  -  " + _feed.Title : "");
+                g.DrawString(title, head, dim, new RectangleF(left, S(8), width, S(16)), line);
+                int top = S(28);
+                g.DrawLine(rule, left, top, left + width, top);
+                top += S(4);
+
+                // Newest at the bottom; older entries scroll off the top.
+                g.SetClip(new Rectangle(0, top, Width, Height - top));
+                float y = Height - S(10);
+                string agent = _feed.Agent.Length > 0 ? _feed.Agent : "Agent";
+                for (int i = _feed.Entries.Count - 1; i >= 0 && y > top; i--)
+                {
+                    FeedEntry entry = _feed.Entries[i];
+                    if (entry.Role == "tool" || entry.Role == "status")
+                    {
+                        float h = S(17);
+                        y -= h;
+                        string prefix = entry.Role == "tool" ? "> " : "";
+                        g.DrawString(prefix + Clip(entry.Text, 200).Replace('\n', ' '),
+                            entry.Role == "tool" ? small : body, entry.Role == "tool" ? faint : accent,
+                            new RectangleF(left, y, width, h), line);
+                        y -= S(3);
+                        continue;
+                    }
+                    string text = Clip(entry.Text, 600);
+                    SizeF size = g.MeasureString(text, body, width, wrap);
+                    float textHeight = Math.Min((float)Math.Ceiling(size.Height), S(120));
+                    y -= textHeight;
+                    g.DrawString(text, body, bright, new RectangleF(left, y, width, textHeight), wrap);
+                    y -= S(15);
+                    bool user = entry.Role == "user";
+                    g.DrawString(user ? "YOU" : agent.ToUpperInvariant(), label, user ? dim : accent,
+                        new RectangleF(left, y, width, S(15)), line);
+                    y -= S(8);
+                }
+                g.ResetClip();
+
+                // Fade what is cut off at the top.
+                Rectangle fade = new Rectangle(1, top, Width - 2, S(18));
+                using (LinearGradientBrush brush = new LinearGradientBrush(fade, back, Color.FromArgb(0, back), LinearGradientMode.Vertical))
+                {
+                    g.FillRectangle(brush, fade);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Places the status and conversation panels as one group and keeps them out of the agent's
+    /// way: off the window it is working in (its title bar and menus above all), and well clear
+    /// of the point it is about to click. Positions are screen anchors; the preferred one wins ties.
+    /// </summary>
+    public class PanelDock
+    {
+        public static readonly string[] Anchors = {
+            "TopCenter", "TopRight", "TopLeft", "BottomRight", "BottomLeft", "BottomCenter", "MiddleRight", "MiddleLeft"
+        };
+
+        public static int Width(double scale) { return (int)Math.Round(460 * scale); }
+        public static int StatusHeight(double scale) { return (int)Math.Round(80 * scale); }
+        public static int ConversationHeight(double scale) { return (int)Math.Round(230 * scale); }
+
+        private readonly Rectangle _area;
+        private readonly double _scale;
+        public string Anchor;
+
+        public PanelDock(Rectangle area, double scale, string preferred)
+        {
+            _area = area;
+            _scale = scale;
+            Anchor = Normalize(preferred);
+        }
+
+        private int S(int v) { return (int)Math.Round(v * _scale); }
+
+        public static string Normalize(string anchor)
+        {
+            foreach (string a in Anchors)
+                if (string.Equals(a, anchor, StringComparison.OrdinalIgnoreCase)) return a;
+            return "TopCenter";
+        }
+
+        /// <summary>The status panel sits nearest the screen edge; the conversation beside it, inward.</summary>
+        public void Layout(string anchor, bool withConversation, out Rectangle status, out Rectangle conversation)
+        {
+            int w = Width(_scale), sh = StatusHeight(_scale);
+            int ch = ConversationHeight(_scale), gap = S(8), inset = S(40);
+            int x = anchor.EndsWith("Left", StringComparison.Ordinal) ? _area.Left + inset
+                : anchor.EndsWith("Right", StringComparison.Ordinal) ? _area.Right - w - inset
+                : _area.Left + (_area.Width - w) / 2;
+            if (anchor.StartsWith("Bottom", StringComparison.Ordinal))
+            {
+                status = new Rectangle(x, _area.Bottom - inset - sh, w, sh);
+                conversation = new Rectangle(x, status.Top - gap - ch, w, ch);
+            }
+            else
+            {
+                int top = anchor.StartsWith("Top", StringComparison.Ordinal) ? _area.Top + inset
+                    : _area.Top + (_area.Height - (withConversation ? sh + gap + ch : sh)) / 2;
+                status = new Rectangle(x, top, w, sh);
+                conversation = new Rectangle(x, status.Bottom + gap, w, ch);
+            }
+        }
+
+        private static double Overlap(Rectangle a, Rectangle b)
+        {
+            Rectangle r = Rectangle.Intersect(a, b);
+            return r.IsEmpty ? 0 : (double)r.Width * r.Height;
+        }
+
+        private static double Distance(Rectangle r, Point p)
+        {
+            int dx = Math.Max(Math.Max(r.Left - p.X, 0), p.X - r.Right);
+            int dy = Math.Max(Math.Max(r.Top - p.Y, 0), p.Y - r.Bottom);
+            return Math.Sqrt((double)dx * dx + (double)dy * dy);
+        }
+
+        /// <summary>Lower is better. Points in <paramref name="hard"/> must not be covered at all.</summary>
+        public double Score(string anchor, Rectangle focus, List<Point> hard, List<Point> soft, bool withConversation)
+        {
+            Rectangle st, cv;
+            Layout(anchor, withConversation, out st, out cv);
+            List<Rectangle> parts = new List<Rectangle>();
+            parts.Add(st);
+            if (withConversation) parts.Add(cv);
+            double area = 0;
+            foreach (Rectangle r in parts) area += (double)r.Width * r.Height;
+
+            double score = 0;
+            if (!focus.IsEmpty)
+            {
+                // A window's top strip holds its title, menus and toolbars: the worst place to cover.
+                Rectangle head = new Rectangle(focus.X, focus.Y, focus.Width, Math.Min(focus.Height, S(140)));
+                foreach (Rectangle r in parts)
+                    score += (100 * Overlap(r, focus) + 120 * Overlap(r, head)) / area;
+            }
+            foreach (Point p in hard)
+                foreach (Rectangle r in parts)
+                    if (Distance(r, p) < S(30)) score += 10000;
+            foreach (Point p in soft)
+            {
+                double d = double.MaxValue;
+                foreach (Rectangle r in parts) d = Math.Min(d, Distance(r, p));
+                score += 40 * Math.Max(0, 1 - d / S(360));
+            }
+            return score;
+        }
+
+        /// <summary>The best anchor; the current one is kept unless another is clearly better.</summary>
+        public string Choose(string preferred, Rectangle focus, List<Point> hard, List<Point> soft, bool withConversation)
+        {
+            List<string> order = new List<string>();
+            order.Add(Normalize(preferred));
+            foreach (string a in Anchors) if (!order.Contains(a)) order.Add(a);
+            string best = Anchor;
+            double bestScore = double.MaxValue;
+            for (int i = 0; i < order.Count; i++)
+            {
+                double s = Score(order[i], focus, hard, soft, withConversation) + 0.5 * i;
+                if (order[i] == Anchor) s -= 6;
+                if (s < bestScore) { bestScore = s; best = order[i]; }
+            }
+            return best;
+        }
+    }
+
     public class Overlay
     {
         private enum StepKind { Check, Glide, Wait, Save, Jump, Down, Up, Wheel, Restore, Press, Pulse, Ack }
@@ -2798,6 +3102,13 @@ namespace AgentTaskCenter.ScreenControl
         private CursorSprite _sprite;
         private Graphics _cursorGraphics;
         private StatusPanel _panel;
+        private ConversationPanel _conversation;
+        private PanelDock _dock;
+        private bool _dockedWithConversation;
+        private Point _statusFrom, _statusTo, _conversationFrom, _conversationTo;
+        private double _dockMoveStart = -1;
+        private ConversationFeed _feed;
+        private DateTime _feedStamp = DateTime.MinValue;
         private ControlState _state;
         private Color _accent = Color.Empty;
         private int _thickness;
@@ -2888,10 +3199,16 @@ namespace AgentTaskCenter.ScreenControl
             _vx = _prevX = start.X; _vy = start.Y;
             _shownAt = _restSince = _prevT = _clock.Elapsed.TotalMilliseconds;
 
-            _panel = new StatusPanel(_scale, _screen, _state.PanelPosition);
+            _dock = new PanelDock(Screen.PrimaryScreen.WorkingArea, _scale, _state.PanelPosition);
+            Rectangle statusAt, conversationAt;
+            _dock.Layout(_dock.Anchor, false, out statusAt, out conversationAt);
+            _panel = new StatusPanel(_scale, statusAt.Location);
+            _conversation = new ConversationPanel(_scale, conversationAt.Location);
             _panel.Show();
 
             ApplyAccent(Accent(_state));
+            RefreshConversation();
+            Dock(_shownAt, true, null);
             InstallEscapeHook();
 
             try
@@ -3061,9 +3378,14 @@ namespace AgentTaskCenter.ScreenControl
                     ApplyAccent(Accent(_state));
                     _panel.Update(_state.Agent, _state.Action, Elapsed(_state.Started), _accent, _waiting,
                         _state.ReleaseRequested);
+                    if (_tick % 33 == 1) RefreshConversation();
+                    bool idle = _steps == null;
                     TakeCommand(now);
+                    // Out of the way of each new pointer target at once, and of the window as it moves.
+                    if ((idle && _steps != null) || _tick % 15 == 1) Dock(now, false, null);
                 }
             }
+            AnimateDock(now);
 
             // After a release the overlay shows red briefly, then gets out of the way.
             if (_state.ReleaseRequested)
@@ -3415,11 +3737,20 @@ namespace AgentTaskCenter.ScreenControl
             return true;
         }
 
+        private bool PanelsCover(int x, int y)
+        {
+            Rectangle near = new Rectangle(x - 4, y - 4, 9, 9);
+            return _panel.Bounds.IntersectsWith(near)
+                || (_conversation.Visible && _conversation.Bounds.IntersectsWith(near));
+        }
+
         private bool CheckTarget(int x, int y)
         {
+            // The panels are left out of the agent's screenshots, so it may well aim under them.
+            if (PanelsCover(x, y)) Dock(_clock.Elapsed.TotalMilliseconds, true, new Point(x, y));
             if (_panel.Bounds.Contains(x, y))
             {
-                Abort(false, "The target is under the status panel. Move the panel with start -Position.");
+                Abort(false, "The target is under the status panel, and there was nowhere to move it.");
                 return false;
             }
             IntPtr root = WindowOps.RootAt(x, y);
@@ -3522,6 +3853,108 @@ namespace AgentTaskCenter.ScreenControl
                 Native.SetWindowPos(_edges[i].Handle, Native.HWND_TOPMOST, 0, 0, 0, 0, flags);
             Native.SetWindowPos(_cursorWindow.Handle, Native.HWND_TOPMOST, 0, 0, 0, 0, flags);
             Native.SetWindowPos(_panel.Handle, Native.HWND_TOPMOST, 0, 0, 0, 0, flags);
+            if (_conversation.Visible) Native.SetWindowPos(_conversation.Handle, Native.HWND_TOPMOST, 0, 0, 0, 0, flags);
+        }
+
+        // ---------------------------------------------------------------------------------------
+        // The panels: kept clear of the window the agent works in and of where it is about to act
+        // ---------------------------------------------------------------------------------------
+
+        /// <summary>The agent's current window on screen, or empty when there is none to protect.</summary>
+        private Rectangle FocusRect()
+        {
+            if (_state.FocusHwnd == 0) return Rectangle.Empty;
+            IntPtr h = new IntPtr(_state.FocusHwnd);
+            if (!Native.IsWindow(h) || Native.IsIconic(h)) return Rectangle.Empty;
+            Rectangle r = WindowOps.Bounds(h);
+            r.Intersect(Screen.PrimaryScreen.Bounds);
+            return r;
+        }
+
+        /// <summary>
+        /// Picks where the panels belong now and moves them there: gliding, or at once when
+        /// <paramref name="snap"/> (a pointer command is about to act under them).
+        /// </summary>
+        private void Dock(double now, bool snap, Point? mustClear)
+        {
+            bool withConversation = _conversation.HasContent;
+            List<Point> hard = new List<Point>();
+            List<Point> soft = new List<Point>();
+            if (_steps != null)
+            {
+                hard.Add(new Point(_state.CursorX, _state.CursorY));
+                if (string.Equals(_state.CursorAction, "drag", StringComparison.OrdinalIgnoreCase))
+                    hard.Add(new Point(_state.CursorToX, _state.CursorToY));
+            }
+            if (mustClear.HasValue) hard.Add(mustClear.Value);
+            soft.Add(new Point((int)Math.Round(_vx), (int)Math.Round(_vy)));
+
+            string anchor = _dock.Choose(_state.PanelPosition, FocusRect(), hard, soft, withConversation);
+            bool changed = anchor != _dock.Anchor || withConversation != _dockedWithConversation;
+            if (!changed && !snap) return;
+            _dock.Anchor = anchor;
+            _dockedWithConversation = withConversation;
+
+            Rectangle status, conversation;
+            _dock.Layout(anchor, withConversation, out status, out conversation);
+            if (withConversation && !_conversation.Visible)
+            {
+                _conversation.Location = conversation.Location;
+                _conversation.Show();
+            }
+            else if (!withConversation && _conversation.Visible) _conversation.Hide();
+
+            if (snap)
+            {
+                _dockMoveStart = -1;
+                _panel.Location = status.Location;
+                _conversation.Location = conversation.Location;
+                return;
+            }
+            _statusFrom = _panel.Location;
+            _conversationFrom = _conversation.Location;
+            _statusTo = status.Location;
+            _conversationTo = conversation.Location;
+            _dockMoveStart = now;
+        }
+
+        private static Point Lerp(Point a, Point b, double t)
+        {
+            return new Point((int)Math.Round(a.X + (b.X - a.X) * t), (int)Math.Round(a.Y + (b.Y - a.Y) * t));
+        }
+
+        private void AnimateDock(double now)
+        {
+            if (_dockMoveStart < 0) return;
+            double t = Math.Min(1.0, (now - _dockMoveStart) / 260.0);
+            double eased = 1 - Math.Pow(1 - t, 3);
+            _panel.Location = Lerp(_statusFrom, _statusTo, eased);
+            _conversation.Location = Lerp(_conversationFrom, _conversationTo, eased);
+            if (t >= 1) _dockMoveStart = -1;
+        }
+
+        /// <summary>
+        /// conversation.json is shown only while it is fresh (the app rewrites it every few seconds)
+        /// and belongs to the agent now in control.
+        /// </summary>
+        private void RefreshConversation()
+        {
+            string path = Path.Combine(_stateDir, "conversation.json");
+            DateTime stamp = DateTime.MinValue;
+            try { if (File.Exists(path)) stamp = File.GetLastWriteTimeUtc(path); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            bool fresh = stamp != DateTime.MinValue && (DateTime.UtcNow - stamp).TotalSeconds < 45;
+            if (fresh && stamp != _feedStamp)
+            {
+                _feedStamp = stamp;
+                _feed = ConversationFeed.Read(path);
+            }
+            bool show = fresh && _feed != null && _feed.Entries.Count > 0
+                && _state.AgentId.Length > 0 && _feed.AgentId == _state.AgentId;
+            bool had = _conversation.HasContent;
+            _conversation.SetFeed(show ? _feed : null, _accent);
+            if (show != had) Dock(_clock.Elapsed.TotalMilliseconds, false, null);
         }
 
         private void Quit(Timer timer)

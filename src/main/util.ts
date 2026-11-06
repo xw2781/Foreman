@@ -132,6 +132,21 @@ export function linkDirectory(target: string, linkPath: string) {
 
 /** Removes a directory tree, unlinking junctions instead of following them. */
 export function removeTree(dir: string) {
+  // A moved account folder is itself a junction: unlink it, never empty its target.
+  let top: fs.Stats;
+  try {
+    top = fs.lstatSync(dir);
+  } catch {
+    return;
+  }
+  if (top.isSymbolicLink()) {
+    try {
+      fs.unlinkSync(dir);
+    } catch {
+      fs.rmdirSync(dir);
+    }
+    return;
+  }
   if (!exists(dir)) return;
   for (const entry of fs.readdirSync(dir)) {
     const full = path.join(dir, entry);

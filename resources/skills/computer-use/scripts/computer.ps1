@@ -268,8 +268,9 @@ function Agent-Name {
 
 function New-State([bool]$auto) {
     $position = OptStr 'position' 'TopCenter'
-    if (@('TopCenter', 'TopRight', 'BottomCenter', 'BottomRight') -notcontains $position) {
-        Quit 2 "-Position must be TopCenter, TopRight, BottomCenter or BottomRight."
+    $anchors = @('TopCenter', 'TopRight', 'TopLeft', 'BottomCenter', 'BottomRight', 'BottomLeft', 'MiddleRight', 'MiddleLeft')
+    if ($anchors -notcontains $position) {
+        Quit 2 ("-Position must be one of " + ($anchors -join ', ') + ".")
     }
     $idle = OptInt 'idleexitminutes' $(if ($auto) { 5 } else { 20 }) 'IdleExitMinutes'
     return [ordered]@{
@@ -302,6 +303,7 @@ function New-State([bool]$auto) {
         cursor_scroll_y   = 0
         cursor_window     = ''
         cursor_issued     = ''
+        focus_hwnd        = 0
     }
 }
 
@@ -374,6 +376,11 @@ function Assert-NotReleased {
     if ($state -and $state['release_requested'] -eq $true) { Quit-Released $state }
 }
 
+<# The window this command works in: the overlay keeps its panels clear of it. #>
+function Apply-Focus($state) {
+    if ($script:LogHwnd) { $state['focus_hwnd'] = [long]$script:LogHwnd }
+}
+
 function Apply-Identity($state) {
     if ($env:ATC_AGENT_ID -and [string]$state['agent_id'] -ne $env:ATC_AGENT_ID) {
         # Another agent is driving now; the desktop app shows whoever issued the last command.
@@ -389,6 +396,7 @@ function Touch-State([string]$say) {
     $state['heartbeat'] = Now-Iso
     if ($say) { $state['action'] = $say }
     Apply-Identity $state
+    Apply-Focus $state
     Write-State $state
 }
 
@@ -408,6 +416,7 @@ function Ensure-Session([string]$say) {
     if (Has 'action') { $state['action'] = OptStr 'action' }
     elseif ($say) { $state['action'] = $say }
     Apply-Identity $state
+    Apply-Focus $state
     Write-State $state
     if (-not (Get-OverlayProcess)) {
         $idle = [int]$state['idle_exit_minutes']
@@ -781,7 +790,7 @@ Act (the overlay starts automatically; every command checks the app policy first
   invoke     -Element n [-Pattern Invoke|Toggle|Expand|Collapse|Select|Focus|ScrollIntoView]
 
 Session
-  start [-Agent name] [-Action text] [-Position TopCenter|TopRight|BottomCenter|BottomRight]
+  start [-Agent name] [-Action text] [-Position TopCenter|TopRight|TopLeft|BottomCenter|...]
   action -Action text     stop     release     demo
 
 Coordinates: -X/-Y are real screen pixels; with -Image they are pixels of the last `state`

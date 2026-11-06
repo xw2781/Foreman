@@ -38,6 +38,7 @@ import { defaultModel } from '../shared/models';
 import { estimateSwitchCost } from './chat/switchCost';
 import { ClaudeStreamFormatter, describeToolInput } from './streamFormat';
 import type { HookEvent, HookServer } from './hookServer';
+import { screenToolLine, type ScreenFeed, type ScreenFeedEntry } from './computerUse';
 import type { ProfileService } from './profiles';
 import type { TelemetryClient } from './telemetry/client';
 import { killTree, type ProcessMonitor } from './processMonitor';
@@ -101,7 +102,12 @@ interface Session {
   exitWaiters: Array<() => void>;
   /** A Codex change made mid-turn: the turn running then ends before the one that rebuilds the cache. */
   rebuildSkipsTurn?: boolean;
+  /** Terminal agents: the conversation as hooks report it, for the on-screen panel while it drives the computer. */
+  screenFeed?: ScreenFeedEntry[];
 }
+
+const SCREEN_FEED_LIMIT = 14;
+
 
 export interface AgentManagerDeps {
   openExternal?: (url: string) => Promise<void>;
@@ -114,6 +120,8 @@ export interface AgentManagerDeps {
   appVersion: string;
   /** Arguments that give an agent Foreman's browser (none when it is off). */
   browserArgs?: (agentId: string, provider: Profile['provider']) => string[];
+  /** Readies an account before one of its agents starts (installs the computer-use skill). */
+  prepareProfile?: (profile: Profile) => void;
 }
 
 function newRunId() {
@@ -204,6 +212,7 @@ export class AgentManager {
     if (!exists(options.cwd)) throw new Error(`Folder not found: ${options.cwd}`);
     if (options.mode === 'task' && !options.prompt?.trim()) throw new Error('A background task needs a prompt.');
     if (AGENT_MODES.includes(options.mode) && !options.projectless) this.deps.profiles.prepareProject(profile, options.cwd);
+    if (AGENT_MODES.includes(options.mode)) this.deps.prepareProfile?.(profile);
     const settings = this.deps.settings();
     const cli = await locateCli(profile.provider, settings.cliPath[profile.provider]);
     if (!cli.path) throw new Error(cli.error ?? 'CLI not found');
@@ -234,7 +243,9 @@ export class AgentManager {
       }
       if (profile.provider === 'claude') {
         claudeSessionId = options.resumeSessionId ?? crypto.randomUUID();
-        if (Object.keys(idleCompaction.settings).length) settingsFile = this.deps.hooks.writeSettingsFile(id, idleCompaction.settings);
+        // The guard keeps desktop control on the computer-use skill (screenGuard.ts).
+        const chatSettings = { ...idleCompaction.settings, ...this.deps.hooks.guardSettings(id) };
+        if (Object.keys(chatSettings).length) settingsFile = this.deps.hooks.writeSettingsFile(id, chatSettings);
         args = claudeChatArgs({
           sessionId: options.resumeSessionId ? null : claudeSessionId,
           resumeSessionId: options.resumeSessionId,
@@ -1427,6 +1438,7 @@ export class AgentManager {
         if (session.info.status === 'starting') this.updateStatus(session, 'idle', null);
         break;
       case 'UserPromptSubmit':
+        if (typeof payload.prompt === 'string') this.pushScreenFeed(session, 'user', payload.prompt);
         session.hookStatus = 'working';
         session.needsInput = false;
         this.updateStatus(session, 'working', 'Thinking');
@@ -1435,6 +1447,7 @@ export class AgentManager {
         session.hookStatus = 'working';
         const tool = String(payload.tool_name ?? 'tool');
         const detail = describeToolInput(tool, payload.tool_input);
+        this.pushScreenFeed(session, 'tool', screenToolLine(tool, detail));
         if (!session.needsInput) this.updateStatus(session, 'working', detail ? `${tool}: ${detail}` : tool);
         break;
       }
@@ -1449,6 +1462,7 @@ export class AgentManager {
           session.needsInput = true;
           session.needsInputSince = Date.now();
           this.updateStatus(session, 'needs-input', typeof payload.message === 'string' ? payload.message : 'Waiting for your input');
+          this.pushScreenFeed(session, 'status', typeof payload.message === 'string' ? payload.message : 'Waiting for your input');
         } else if (type === 'idle_prompt') {
           session.hookStatus = 'idle';
           if (!session.needsInput) this.updateStatus(session, 'idle', null);
@@ -1456,6 +1470,7 @@ export class AgentManager {
         break;
       }
       case 'Stop':
+        if (typeof payload.last_assistant_message === 'string') this.pushScreenFeed(session, 'assistant', payload.last_assistant_message);
         session.hookStatus = 'idle';
         session.needsInput = false;
         this.updateStatus(session, 'idle', 'Turn complete');
@@ -1584,6 +1599,35 @@ export class AgentManager {
     }
     this.archive(info);
     this.changed.add(info.id);
+  }
+
+  private pushScreenFeed(session: Session, role: ScreenFeedEntry['role'], text: string) {
+    if (!text.trim()) return;
+    const feed = (session.screenFeed ??= []);
+    feed.push({ role, text: clipText(text, 1200) ?? '' });
+    if (feed.length > SCREEN_FEED_LIMIT) feed.splice(0, feed.length - SCREEN_FEED_LIMIT);
+  }
+
+  /**
+   * The latest turns of an agent's conversation, for the panel the computer-use overlay shows
+   * while that agent drives the screen. Chats have their log; terminal agents what hooks said.
+   */
+  screenFeed(id: string): ScreenFeed | null {
+    const session = this.sessions.get(id);
+    if (!session || session.info.endedAt) return null;
+    let entries: ScreenFeedEntry[];
+    if (session.chat) {
+      entries = [];
+      for (const item of session.chat.list().slice(-60)) {
+        if (item.kind === 'user' && item.text.trim()) entries.push({ role: 'user', text: item.text });
+        else if (item.kind === 'assistant' && item.text.trim()) entries.push({ role: 'assistant', text: item.text });
+        else if (item.kind === 'tool') entries.push({ role: 'tool', text: screenToolLine(item.tool, item.detail ?? item.title) });
+        else if (item.kind === 'approval' && item.state === 'pending') entries.push({ role: 'status', text: `Waiting for you: ${item.title}` });
+        else if (item.kind === 'notice' && item.tone !== 'info') entries.push({ role: 'status', text: item.text });
+      }
+      entries = entries.slice(-SCREEN_FEED_LIMIT).map((e) => ({ ...e, text: clipText(e.text, 1200) ?? '' }));
+    } else entries = [...(session.screenFeed ?? [])];
+    return { agentId: id, agent: PROVIDER_LABEL[session.profile.provider], title: session.info.title, entries };
   }
 
   setScreenDriver(agentId: string | null) {

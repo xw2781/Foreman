@@ -760,11 +760,18 @@ export interface AppSettings {
   browserProfile: BrowserProfileMode;
   /** Bring up the side panel's Browser tab when its agent starts using the browser. */
   browserAutoOpen: boolean;
+  /** Claude accounts the person turned the computer-use skill off for; every other Claude account gets it automatically. */
+  computerUseOptOut: string[];
+  /** Refuse agents' hand-written desktop control (SendKeys, SetCursorPos, screen capture…) and point them to the skill. */
+  computerUseGuard: boolean;
+  /** Show the driving agent's conversation in a panel beside the overlay's action panel. */
+  computerUseConversation: boolean;
   /**
-   * Folder that holds every account's session transcripts (<dir>/<account id>/projects, sessions…),
-   * linked from the account folders; '' keeps them inside each account folder. Changed with `sessionLogs.move`.
+   * Folder that holds every account folder (<dir>/<account id>) and the computer-use working folder
+   * (<dir>/computer-use), each linked back from its usual place by a junction; '' leaves them where
+   * the tools keep them. Changed with `dataDir.move`. Replaces `sessionLogsDir` (transcripts only).
    */
-  sessionLogsDir: string;
+  dataDir: string;
   /** Days Claude Code keeps transcripts (`cleanupPeriodDays`, written to each Claude account's settings.json). */
   claudeSessionRetentionDays: number;
 }

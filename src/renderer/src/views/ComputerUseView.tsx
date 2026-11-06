@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, Hand, Image as ImageIcon, Lock, MousePointer2, Play, Plus, Power, ShieldCheck, X, XCircle } from 'lucide-react';
-import { PROVIDER_LABEL, type ComputerUseAction } from '@shared/types';
+import { PROVIDER_LABEL, type AppSettings, type ComputerUseAction } from '@shared/types';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
 import { ago } from '../format';
@@ -54,6 +54,7 @@ export function ComputerUseView() {
   useTicker(5000);
   const status = useApp((s) => s.computerUse);
   const profiles = useApp((s) => s.profiles);
+  const settings = useApp((s) => s.settings);
   const toast = useApp((s) => s.toast);
   const [shot, setShot] = useState<string | null>(null);
   const [zoom, setZoom] = useState(false);
@@ -101,6 +102,14 @@ export function ComputerUseView() {
   const install = async (profileId: string, on: boolean) => {
     try {
       useApp.setState({ profiles: await call('computerUse.install', profileId, on) });
+    } catch (error) {
+      toast('error', errorMessage(error));
+    }
+  };
+
+  const updateSettings = async (patch: Partial<AppSettings>) => {
+    try {
+      useApp.setState({ settings: await call('settings.update', patch) });
     } catch (error) {
       toast('error', errorMessage(error));
     }
@@ -214,8 +223,34 @@ export function ComputerUseView() {
       </div>
 
       <div className="section-title">
+        <h2>While an agent is in control</h2>
+      </div>
+      <div className="card">
+        <div className="settings-list">
+          <div className="setting">
+            <div>
+              <div className="s-title">Show the conversation on screen</div>
+              <div className="s-desc">A panel beside the action panel shows what you and the agent are saying. Both panels move away from the window the agent works in and from where it is about to click.</div>
+            </div>
+            <div className="s-control">
+              <Switch on={settings?.computerUseConversation !== false} onChange={(on) => updateSettings({ computerUseConversation: on })} />
+            </div>
+          </div>
+          <div className="setting">
+            <div>
+              <div className="s-title">Keep Claude Code agents on the skill</div>
+              <div className="s-desc">Refuses commands and scripts that send keystrokes or clicks, or capture the screen, by hand (SendKeys, SetCursorPos, CopyFromScreen, pyautogui…). The agent is told to use the skill, which you can see and stop.</div>
+            </div>
+            <div className="s-control">
+              <Switch on={settings?.computerUseGuard !== false} onChange={(on) => updateSettings({ computerUseGuard: on })} />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="section-title">
         <h2>Skill installation</h2>
-        <span className="sub">The skill is plain files an agent reads on demand: SKILL.md plus a PowerShell script</span>
+        <span className="sub">Installed on every Claude Code account automatically, including new ones. Turn it off here to keep it off.</span>
       </div>
       <div className="card">
         {!status.skillSource ? (
@@ -247,7 +282,7 @@ export function ComputerUseView() {
         )}
       </div>
       <p className="muted" style={{ fontSize: 12, marginTop: 10 }}>
-        Codex also ships its own Computer Use plugin; installing this skill for a Codex account adds a second option alongside it. Ask an agent to "use the computer-use skill" to start.
+        Codex ships its own Computer Use plugin, so Codex accounts get this skill only when you turn it on. Agents use the skill on their own when a task needs a desktop app.
       </p>
 
       <div className="section-title">

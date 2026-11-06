@@ -16,9 +16,13 @@ in `reference.md`; when to ask the user first is in `confirmations.md`.
   brings that window to the front and checks it is still in front.
 - The person can take control back at any time by pressing Escape or clicking **Release**.
   From then on every command exits with code 3 (see "Stopping" below).
-- The overlay is excluded from screenshots, so you never see your own glow or panel. A click
-  aimed at the panel is refused; move it with `start -Position TopRight` or
-  `start -Position BottomCenter`.
+- The overlay is excluded from screenshots, so you never see your own glow or panels. The
+  panels (your action, and, when the desktop app runs you, your conversation) move by themselves
+  to stay off the window you work in and away from where you are about to click, so aim at what
+  the screenshot shows. `start -Position <anchor>` only sets where they prefer to be.
+- Never write your own input or screen-capture code (SendKeys, SetCursorPos, mouse_event,
+  SendInput, CopyFromScreen, pyautogui and the like), in a command or a script file. It skips
+  the indicator, the Release button and the app policy, and the desktop app refuses it.
 
 ## Choosing the target window
 

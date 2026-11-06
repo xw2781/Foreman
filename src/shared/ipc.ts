@@ -47,7 +47,7 @@ export interface InvokeMap {
   'settings.get': () => AppSettings;
   'settings.update': (patch: Partial<AppSettings>) => AppSettings;
   /** Moves every account's session transcripts into `dir` ('' back into each account folder). */
-  'sessionLogs.move': (dir: string) => AppSettings;
+  'dataDir.move': (dir: string) => AppSettings;
   'dialog.pickDirectory': (defaultPath?: string) => string | null;
   'dialog.pickFile': (title: string) => string | null;
   'shell.openPath': (target: string) => void;
@@ -200,7 +200,7 @@ export interface EventMap {
 export type EventName = keyof EventMap;
 
 export const INVOKE_CHANNELS: InvokeChannel[] = [
-  'env.get', 'env.refreshClis', 'cli.install', 'cli.rollback', 'settings.get', 'settings.update', 'dialog.pickDirectory', 'dialog.pickFile',
+  'env.get', 'env.refreshClis', 'cli.install', 'cli.rollback', 'settings.get', 'settings.update', 'dataDir.move', 'dialog.pickDirectory', 'dialog.pickFile',
   'shell.openPath', 'shell.showItem', 'shell.openExternal',
   'profiles.list', 'profiles.create', 'profiles.update', 'profiles.remove', 'profiles.setActive', 'profiles.refresh',
   'profiles.login', 'profiles.logout', 'profiles.setGlobalDefault', 'profiles.shareConfig', 'profiles.openShell',

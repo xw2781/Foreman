@@ -201,8 +201,8 @@ click (-Element <n> | -X <x> -Y <y> [-Image]) [-Button Left|Right|Middle|Double]
   itself, a window it owns, or another window of the same process; by text: title or process
   name contains it). With `-Element`/`-Image`, the observed window is the default guard.
 - The check is made twice: before anything moves, and again at the moment of the click. Both
-  the named window and the window under the point must pass the app policy. A point under
-  the overlay's panel is refused.
+  the named window and the window under the point must pass the app policy. If the point is
+  under one of the overlay's panels, the panels move out of the way first.
 
 The overlay glides its pointer to the target, borrows the real pointer for about 0.1 s,
 clicks, and puts the real pointer back. Output: `left click at 812,440 in Save As (notepad)`.
@@ -305,7 +305,7 @@ the timeout (default 10 s), usually because a modal dialog opened, it exits 0 wi
 
 | Command | Effect |
 | :--- | :--- |
-| `start [-Agent <name>] [-Action <text>] [-Position TopCenter\|TopRight\|BottomCenter\|BottomRight] [-Color #RRGGBB] [-Thickness <px>] [-NoCursor] [-NoEdges] [-IdleExitMinutes <n>]` | Begins a new session (clearing any release) and shows the overlay. Default idle exit is 20 minutes. |
+| `start [-Agent <name>] [-Action <text>] [-Position <anchor>] [-Color #RRGGBB] [-Thickness <px>] [-NoCursor] [-NoEdges] [-IdleExitMinutes <n>]` | Begins a new session (clearing any release) and shows the overlay. Default idle exit is 20 minutes. `-Position` is where the panels prefer to sit: `TopCenter` (default), `TopRight`, `TopLeft`, `BottomCenter`, `BottomRight`, `BottomLeft`, `MiddleRight` or `MiddleLeft`. They leave it whenever it would cover the window being worked in or the next pointer target. |
 | `action -Action <text>` | Replaces the panel's action line and refreshes the heartbeat. Exits 2 when no session is active. |
 | `stop` | Ends the session: `active` false, release cleared, overlay closed. |
 | `release` | Does what the panel's Release button does: sets `release_requested` (source `command`). The desktop app calls this. |
@@ -339,6 +339,7 @@ Written by the CLI. The overlay and `release` only change the release fields.
 | `auto_started` | bool | Started by an input command rather than `start`. |
 | `idle_exit_minutes` | int | The overlay exits after this long without a heartbeat. |
 | `color`, `thickness`, `show_cursor`, `show_edges`, `panel_position` | | Overlay appearance. |
+| `focus_hwnd` | int | The window the last command worked in; the panels keep clear of it. |
 | `cursor_seq`, `cursor_action`, `cursor_x`, `cursor_y`, `cursor_to_x`, `cursor_to_y`, `cursor_button`, `cursor_count`, `cursor_scroll_x`, `cursor_scroll_y`, `cursor_window`, `cursor_issued` | | The pointer command handed to the overlay (internal). |
 
 The agent is in control when `active && !release_requested` and the overlay is running.
@@ -423,6 +424,13 @@ it lists. The built-in deny list always applies, even with no `config.json`:
 `Codex`, `ChatGPT`, `claude`. The Windows Run dialog is refused as well. For Store apps
 hosted in `ApplicationFrameHost`, the app's own process is checked too.
 
+### conversation.json
+
+Written by the desktop app (UTF-8) while one of its agents drives the screen, and rewritten at
+least every 10 s: `agent_id`, `agent`, `title`, and `entries`, each `{ role, text }` with role
+`user`, `assistant`, `tool` or `status`. The overlay shows it in a click-through panel beside
+the action panel when `agent_id` matches `state.json`'s and the file is under 45 s old.
+
 ### shots/
 
 The `state-*.png` and `screenshot-*.png` files; the newest 30 of each are kept.
@@ -432,7 +440,7 @@ The `state-*.png` and `screenshot-*.png` files; the newest 30 of each are kept.
 - **Elevated windows.** Windows does not let a normal process send input to a window running
   as administrator; the input is dropped or refused. Tell the user.
 - **The secure desktop.** UAC prompts and the lock screen cannot be seen or driven.
-- **Multiple monitors.** Coordinates cover every monitor, but the edge glow and panel appear
+- **Multiple monitors.** Coordinates cover every monitor, but the edge glow and panels appear
   on the primary one only.
 - **Remote Desktop.** A minimized Remote Desktop client stops drawing the remote session, so
   captures and clicks fail. Covering the window is fine.

@@ -15,6 +15,30 @@ export const BUILTIN_DENIED = [
   'Foreman', 'Agent Task Center', 'Codex', 'ChatGPT', 'claude'
 ];
 
+export interface ScreenFeedEntry {
+  role: 'user' | 'assistant' | 'tool' | 'status';
+  text: string;
+}
+
+/** What the overlay's conversation panel shows: the driving agent's latest turns. */
+export interface ScreenFeed {
+  agentId: string;
+  /** Who speaks for the agent ("Claude Code"). */
+  agent: string;
+  title: string;
+  entries: ScreenFeedEntry[];
+}
+
+/** A tool call as one short line; computer-use commands read as what they do. */
+export function screenToolLine(tool: string, detail: string | null): string {
+  const skill = detail ? /computer\.ps1["']?\s+(.+)$/is.exec(detail) : null;
+  if (skill) return `computer-use ${skill[1].replace(/\s+/g, ' ').slice(0, 160)}`;
+  return detail ? `${tool}: ${detail.replace(/\s+/g, ' ').slice(0, 160)}` : tool;
+}
+
+/** The overlay hides a feed it hasn't seen rewritten for 45 seconds, so a stale one never lingers. */
+const FEED_REFRESH_MS = 10_000;
+
 function field<T = unknown>(record: Record<string, any> | null, ...keys: string[]): T | null {
   if (!record) return null;
   for (const key of keys) {
@@ -25,12 +49,17 @@ function field<T = unknown>(record: Record<string, any> | null, ...keys: string[
 
 export class ComputerUseService {
   readonly stateDir: string;
+  /** Set by ATC_COMPUTER_USE_DIR: then it stays put, whatever the data folder. */
+  readonly customStateDir: boolean;
   private lastKey = '';
   private builtinDenied: string[] = BUILTIN_DENIED;
+  private feedText: string | null = null;
+  private feedWrittenAt = 0;
   onChanged: (status: ComputerUseStatus) => void = () => {};
 
   constructor(private skillSource: string | null) {
     const appData = process.env.APPDATA ?? path.join(process.env.USERPROFILE ?? '', 'AppData', 'Roaming');
+    this.customStateDir = Boolean(process.env.ATC_COMPUTER_USE_DIR);
     this.stateDir = process.env.ATC_COMPUTER_USE_DIR || path.join(appData, 'AgentTaskCenter', 'computer-use');
   }
 
@@ -183,9 +212,64 @@ export class ComputerUseService {
     return this.status();
   }
 
+  /**
+   * Writes conversation.json for the overlay's conversation panel, or removes it (null).
+   * Rewritten when it changes and every few seconds besides: the overlay takes an old file
+   * to mean Foreman has gone.
+   */
+  writeConversation(feed: ScreenFeed | null) {
+    const file = path.join(this.stateDir, 'conversation.json');
+    if (!feed || feed.entries.length === 0) {
+      if (this.feedText !== null || exists(file)) {
+        try {
+          fs.rmSync(file, { force: true });
+        } catch {
+          // retried on the next poll
+          return;
+        }
+      }
+      this.feedText = null;
+      return;
+    }
+    const text = JSON.stringify({ agent_id: feed.agentId, agent: feed.agent, title: feed.title, entries: feed.entries });
+    if (text === this.feedText && Date.now() - this.feedWrittenAt < FEED_REFRESH_MS) return;
+    try {
+      fs.mkdirSync(this.stateDir, { recursive: true });
+      writeJsonFileAtomic(file, JSON.parse(text));
+      this.feedText = text;
+      this.feedWrittenAt = Date.now();
+    } catch {
+      // the next poll tries again
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Installing the skill into an account
   // -------------------------------------------------------------------------
+
+  /** Claude accounts get the skill unless the person turned it off for them; Codex has its own plugin. */
+  wanted(profile: Profile, optOut: string[]) {
+    return profile.provider === 'claude' && !optOut.includes(profile.id);
+  }
+
+  /**
+   * Installs the skill wherever it is wanted and missing, and refreshes installed copies.
+   * Returns the accounts it could not install into.
+   */
+  ensureInstalled(profiles: Profile[], optOut: string[]): string[] {
+    const failed: string[] = [];
+    if (!this.skillSource) return failed;
+    for (const profile of profiles) {
+      if (this.isInstalled(profile) || !this.wanted(profile, optOut)) continue;
+      try {
+        this.install(profile);
+      } catch {
+        failed.push(profile.label);
+      }
+    }
+    this.refreshInstalled(profiles);
+    return failed;
+  }
 
   skillDir(profile: Profile) {
     return path.join(profile.configDir, 'skills', SKILL_NAME);

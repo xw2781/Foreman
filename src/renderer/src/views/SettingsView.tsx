@@ -406,7 +406,7 @@ export function SettingsView() {
         </Setting>
       </div>
 
-      <SessionHistory />
+      <DataStorage />
 
       <div className="section-title">
         <h2>Updates</h2>
@@ -436,8 +436,8 @@ export function SettingsView() {
   );
 }
 
-/** Where session transcripts are kept, and for how long Claude Code keeps them. */
-function SessionHistory() {
+/** Where account folders and screenshots are kept, and for how long Claude Code keeps transcripts. */
+function DataStorage() {
   const settings = useApp((s) => s.settings)!;
   const toast = useApp((s) => s.toast);
   const [moving, setMoving] = useState(false);
@@ -446,23 +446,24 @@ function SessionHistory() {
 
   const move = async (dir: string) => {
     const { ok } = await confirmDialog({
-      title: dir ? 'Move session transcripts?' : 'Move transcripts back?',
+      title: dir ? 'Move Foreman\'s data?' : 'Move the data back?',
       message: dir ? (
         <>
-          Every account's transcripts move to <span className="mono">{dir}</span>, one folder per account, and are linked back from the account folders, so
-          Claude Code, Codex and resuming sessions work as before. Close Claude Code and Codex sessions outside Foreman first. Moving to another drive copies
-          everything and can take a while.
+          Every account folder (transcripts, settings, sign-in and all) moves to <span className="mono">{dir}</span>, one folder per account, and computer-use
+          screenshots and logs to its <span className="mono">computer-use</span> folder. Each is linked back from its usual place, so Claude Code, Codex and
+          resuming sessions work as before. Close Claude Code and Codex everywhere first, including VS Code. Moving to another drive copies everything and can
+          take a while.
         </>
       ) : (
-        'The transcripts move back into each account\'s own folder. Close Claude Code and Codex sessions outside Foreman first.'
+        'Each account folder and the computer-use folder move back to their usual places. Close Claude Code and Codex everywhere first, including VS Code.'
       ),
       confirmLabel: 'Move'
     });
     if (!ok) return;
     setMoving(true);
     try {
-      useApp.setState({ settings: await call('sessionLogs.move', dir) });
-      toast('success', 'Session transcripts moved.');
+      useApp.setState({ settings: await call('dataDir.move', dir) });
+      toast('success', 'Data moved.');
     } catch (error) {
       toast('error', errorMessage(error));
       useApp.setState({ settings: await call('settings.get') });
@@ -472,7 +473,7 @@ function SessionHistory() {
   };
 
   const choose = async () => {
-    const dir = await call('dialog.pickDirectory', settings.sessionLogsDir || undefined);
+    const dir = await call('dialog.pickDirectory', settings.dataDir || undefined);
     if (dir) await move(dir);
   };
 
@@ -493,30 +494,32 @@ function SessionHistory() {
   return (
     <>
       <div className="section-title">
-        <h2>Session history</h2>
+        <h2>Data storage</h2>
       </div>
       <div className="card settings-list">
         <Setting
-          title="Transcript folder"
+          title="Data folder"
           description={
-            settings.sessionLogsDir ? (
+            settings.dataDir ? (
               <>
-                <span className="mono">{settings.sessionLogsDir}</span>, one folder per account. Claude Code's project memory moves along with them.
+                <span className="mono">{settings.dataDir}</span> holds every account folder (one per account: transcripts, file history, settings) and the
+                computer-use screenshots, each linked back from its usual place.
               </>
             ) : (
               <>
-                Inside each account's folder (<span className="mono">.claude\projects</span>, <span className="mono">.codex\sessions</span>). Choose another folder
-                (another drive, say) to keep them all there. Stop running agents first.
+                Account folders stay where the tools keep them (<span className="mono">.claude</span>, <span className="mono">.codex</span>, Foreman's accounts
+                folder) and computer-use screenshots in AppData, all on the system drive. Choose one folder (another drive, say) to keep them all there. Stop
+                running agents first.
               </>
             )
           }
         >
-          {settings.sessionLogsDir ? (
-            <button className="btn ghost sm" onClick={() => call('shell.openPath', settings.sessionLogsDir)}>
+          {settings.dataDir ? (
+            <button className="btn ghost sm" onClick={() => call('shell.openPath', settings.dataDir)}>
               <FolderOpen size={14} /> Open
             </button>
           ) : null}
-          {settings.sessionLogsDir ? (
+          {settings.dataDir ? (
             <button className="btn sm" disabled={moving} onClick={() => move('')}>
               Move back
             </button>

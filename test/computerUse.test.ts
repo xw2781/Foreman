@@ -72,6 +72,26 @@ describe('computer-use skill', () => {
     expect(status.recent).toHaveLength(2);
   });
 
+  it('installs the skill on Claude accounts automatically, except where the person turned it off', () => {
+    const service = new ComputerUseService(SKILL);
+    const claude = profile(path.join(root, 'claude'));
+    const optedOut = { ...profile(path.join(root, 'claude-off')), id: 'claude-off' };
+    const codex = { ...profile(path.join(root, 'codex')), id: 'codex-x', provider: 'codex' as const };
+    expect(service.ensureInstalled([claude, optedOut, codex], ['claude-off'])).toEqual([]);
+    expect(service.isInstalled(claude)).toBe(true);
+    expect(service.isInstalled(optedOut)).toBe(false);
+    expect(service.isInstalled(codex)).toBe(false);
+  });
+
+  it('writes the conversation feed for the overlay and removes it when nobody drives', () => {
+    const service = new ComputerUseService(SKILL);
+    const file = path.join(root, 'state', 'conversation.json');
+    service.writeConversation({ agentId: 'a1', agent: 'Claude Code', title: 'Imports', entries: [{ role: 'user', text: 'Use the ResQ GUI — 导入' }] });
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ agent_id: 'a1', agent: 'Claude Code', title: 'Imports', entries: [{ role: 'user', text: 'Use the ResQ GUI — 导入' }] });
+    service.writeConversation(null);
+    expect(fs.existsSync(file)).toBe(false);
+  });
+
   it('writes a normalized app policy', () => {
     const service = new ComputerUseService(SKILL);
     const status = service.setPolicy({ allowedProcesses: ['excel.exe', 'EXCEL', ' notepad '], deniedProcesses: [] });

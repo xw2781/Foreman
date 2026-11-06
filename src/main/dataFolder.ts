@@ -3,15 +3,20 @@ import path from 'node:path';
 import type { Profile, Provider } from '../shared/types';
 import { readJsonFile, samePath, writeJsonFileAtomic } from './util';
 
-// Where session transcripts live, and how long Claude Code keeps them.
+// Where Foreman's data lives, and how long Claude Code keeps transcripts.
 //
-// Neither CLI can be told to write transcripts elsewhere: Claude Code always
-// uses <config>/projects, Codex <CODEX_HOME>/sessions and archived_sessions.
-// To store them in another folder, the folder moves to
-// <chosen>/<account id>/<name> and a directory junction is left in its place,
-// so the CLIs, `--resume` and the telemetry worker all keep the same paths.
+// One data folder (Settings -> Data storage) holds everything that grows:
+// every account folder at <chosen>/<account id> (transcripts, file history,
+// credentials and all) and the computer-use working folder (screenshots, the
+// action log) at <chosen>/computer-use. Each moves there and leaves a
+// directory junction at its usual path, so the CLIs, `--resume`, the skill
+// and the telemetry worker all keep using the same paths.
+//
+// Earlier versions moved only the transcript folders, to
+// <chosen>/<account id>/<name>: exactly where they belong inside a moved
+// account folder, so that layout folds into this one without copying.
 
-/** The folders of an account that hold its session transcripts. */
+/** The folders of an account that hold its session transcripts (moved on their own by earlier versions). */
 export const LOG_FOLDERS: Record<Provider, string[]> = {
   claude: ['projects'],
   codex: ['sessions', 'archived_sessions']
@@ -56,9 +61,12 @@ export function writeClaudeRetention(profile: Profile, days: number): boolean {
   return true;
 }
 
-/** Where a log folder belongs: inside the account folder, or `<root>/<account id>/<name>`. */
-export function wantedLocation(profile: Profile, name: string, root: string): string {
-  return root ? path.join(root, profile.id, name) : path.join(profile.configDir, name);
+/** The computer-use folder's name inside the data folder (account ids start with their provider). */
+export const COMPUTER_USE_FOLDER = 'computer-use';
+
+/** Where an account's folder belongs: where the CLI keeps it, or `<root>/<account id>`. */
+export function accountLocation(profile: Profile, root: string): string {
+  return root ? path.join(root, profile.id) : profile.configDir;
 }
 
 function isLink(file: string) {
@@ -96,6 +104,7 @@ function freeSibling(dir: string) {
 }
 
 const BUSY = new Set(['EBUSY', 'EPERM', 'EACCES']);
+const CLI_BUSY = 'Close Claude Code and Codex everywhere (VS Code, terminals, desktop apps), then try again.';
 
 /** Moves `from`'s contents into `to`, renaming where it can and copying across drives. Returns whether `from` emptied. */
 export async function mergeMove(from: string, to: string): Promise<boolean> {
@@ -145,7 +154,7 @@ export async function mergeMove(from: string, to: string): Promise<boolean> {
  * starts, so anything written meanwhile lands at the new place.
  * Returns a folder that kept files it couldn't move (null when none did).
  */
-export async function placeFolder(home: string, wanted: string): Promise<string | null> {
+export async function placeFolder(home: string, wanted: string, busyHint = CLI_BUSY): Promise<string | null> {
   const current = currentLocation(home);
   if (current && samePath(current, wanted)) return null;
   const parked: string[] = [];
@@ -155,7 +164,7 @@ export async function placeFolder(home: string, wanted: string): Promise<string 
       await fs.promises.rename(current, aside);
       parked.push(aside);
     } catch (error: any) {
-      if (BUSY.has(error?.code)) throw new Error(`${current} is in use. Close Claude Code and Codex sessions (including ones outside Foreman) and try again.`);
+      if (BUSY.has(error?.code)) throw new Error(`${current} is in use. ${busyHint}`);
       if (error?.code !== 'ENOENT') throw error;
       // A junction to a folder that is gone: nothing to move.
     }
@@ -180,56 +189,80 @@ export async function placeFolder(home: string, wanted: string): Promise<string 
   return leftover;
 }
 
-/** A chosen folder can't sit inside a log folder it would receive. */
-export function checkLogsRoot(root: string, profiles: Profile[]) {
+const inside = (dir: string, parent: string) =>
+  samePath(dir, parent) || path.resolve(dir).toLowerCase().startsWith(`${path.resolve(parent).toLowerCase()}${path.sep}`);
+
+/** A chosen folder can't sit inside a folder it would receive. */
+export function checkDataRoot(root: string, profiles: Profile[], computerUseHome: string | null = null) {
   if (!root) return;
   if (!path.isAbsolute(root)) throw new Error('Choose a full folder path.');
-  const inside = (dir: string, parent: string) => samePath(dir, parent) || path.resolve(dir).toLowerCase().startsWith(`${path.resolve(parent).toLowerCase()}${path.sep}`);
-  for (const profile of profiles) {
-    for (const name of LOG_FOLDERS[profile.provider]) {
-      const home = path.join(profile.configDir, name);
-      const current = currentLocation(home);
-      if (inside(root, home) || (current && inside(root, current))) throw new Error(`The folder can't be inside ${current ?? home}.`);
-    }
+  const homes = [...profiles.map((p) => p.configDir), ...(computerUseHome ? [computerUseHome] : [])];
+  for (const home of homes) {
+    const current = currentLocation(home);
+    if (inside(root, home) || (current && inside(root, current))) throw new Error(`The folder can't be inside ${current ?? home}.`);
   }
 }
 
 /**
- * Moves every account's log folders to `root` ('' puts them back inside each
- * account folder). A folder that can't move now (in use) doesn't stop the
- * others; moving again later finishes it.
+ * Puts one account's folder at `accountLocation`. Transcript folders an earlier
+ * version moved on their own come back inside it: unlinked when they already
+ * sit where the moved account folder puts them, moved in otherwise.
  */
-export async function placeSessionLogs(profiles: Profile[], root: string): Promise<{ leftovers: string[]; errors: string[] }> {
-  checkLogsRoot(root, profiles);
+async function placeAccount(profile: Profile, root: string): Promise<string[]> {
+  const wanted = accountLocation(profile, root);
+  const leftovers: string[] = [];
+  const separate: string[] = [];
+  for (const name of LOG_FOLDERS[profile.provider]) {
+    const home = path.join(profile.configDir, name);
+    if (!isLink(home)) continue;
+    if (samePath(currentLocation(home), path.join(wanted, name))) unlinkJunction(home);
+    else separate.push(name);
+  }
+  const leftover = await placeFolder(profile.configDir, wanted);
+  if (leftover) leftovers.push(leftover);
+  for (const name of separate) {
+    const home = path.join(profile.configDir, name);
+    const target = currentLocation(home);
+    if (!isLink(home)) continue;
+    unlinkJunction(home);
+    if (!target || !fs.existsSync(target)) continue;
+    if (await mergeMove(target, home)) {
+      await fs.promises.rmdir(target);
+      // The account's folder under the old transcript folder, once empty.
+      await fs.promises.rmdir(path.dirname(target)).catch(() => {});
+    } else leftovers.push(target);
+  }
+  return leftovers;
+}
+
+/**
+ * Moves every account folder, and the computer-use folder when given, to
+ * `root` ('' puts each back where it belongs). A folder that can't move now
+ * (in use) doesn't stop the others; moving again later finishes it.
+ */
+export async function placeDataFolders(profiles: Profile[], root: string, computerUseHome: string | null = null): Promise<{ leftovers: string[]; errors: string[] }> {
+  checkDataRoot(root, profiles, computerUseHome);
   const leftovers: string[] = [];
   const errors: string[] = [];
   for (const profile of profiles) {
-    const vacated = new Set<string>();
-    for (const name of LOG_FOLDERS[profile.provider]) {
-      const home = path.join(profile.configDir, name);
-      const previous = currentLocation(home);
-      try {
-        const leftover = await placeFolder(home, wantedLocation(profile, name, root));
-        if (leftover) leftovers.push(leftover);
-        if (previous && !samePath(previous, home)) vacated.add(path.dirname(previous));
-      } catch (error) {
-        errors.push(error instanceof Error ? error.message : String(error));
-      }
+    try {
+      leftovers.push(...(await placeAccount(profile, root)));
+    } catch (error) {
+      errors.push(`${profile.label}: ${error instanceof Error ? error.message : String(error)}`);
     }
-    // The account's folder under the previous chosen folder, once empty.
-    for (const dir of vacated) {
-      if (samePath(dir, profile.configDir)) continue;
-      try {
-        await fs.promises.rmdir(dir);
-      } catch {
-        // not empty, or already gone
-      }
+  }
+  if (computerUseHome) {
+    try {
+      const leftover = await placeFolder(computerUseHome, root ? path.join(root, COMPUTER_USE_FOLDER) : computerUseHome, 'Turn off the computer-use overlay (Computer Use page), then try again.');
+      if (leftover) leftovers.push(leftover);
+    } catch (error) {
+      errors.push(`Computer use: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   return { leftovers, errors };
 }
 
-/** The moved logs of an account, deleted with its data (`removeTree` only unlinks the junctions). */
-export function movedLogsDir(profile: Profile, root: string): string | null {
+/** A moved account folder, deleted with the account's data (`removeTree` only unlinks the junction). */
+export function movedAccountDir(profile: Profile, root: string): string | null {
   return root ? path.join(root, profile.id) : null;
 }

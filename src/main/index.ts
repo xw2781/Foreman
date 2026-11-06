@@ -26,6 +26,7 @@ import { listProjectDirectory, readProjectFile } from './projectFiles';
 import { gitCommit, gitDiff, gitStatus } from './gitStatus';
 import { AgentManager } from './agents';
 import { ComputerUseService } from './computerUse';
+import { guardDecision } from './screenGuard';
 import { forgetCli, locateCli } from './cliLocator';
 import { installCli, rollbackCli, updateManagedCli } from './cliInstall';
 import { logoutCommand } from './commands';
@@ -34,7 +35,7 @@ import { GitHubSync } from './githubSync';
 import { BrowserService } from './browser/browserService';
 import { BrowserMcpServer } from './browser/mcpServer';
 import { callTool } from './browser/tools';
-import { DEFAULT_RETENTION_DAYS, movedLogsDir, placeSessionLogs, readClaudeRetention, retentionDays, writeClaudeRetention } from './sessionLogs';
+import { DEFAULT_RETENTION_DAYS, movedAccountDir, placeDataFolders, readClaudeRetention, retentionDays, writeClaudeRetention } from './dataFolder';
 import { HOME, JsonStore, cleanEnv, exists, profilesRoot, readJsonFile, removeTree, run, writeJsonFileAtomic } from './util';
 
 app.setAppUserModelId('com.agenttaskcenter.app');
@@ -102,7 +103,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   browserAutoApprove: true,
   browserProfile: 'shared',
   browserAutoOpen: true,
-  sessionLogsDir: '',
+  computerUseOptOut: [],
+  computerUseGuard: true,
+  computerUseConversation: true,
+  dataDir: '',
   claudeSessionRetentionDays: DEFAULT_RETENTION_DAYS
 };
 
@@ -114,6 +118,11 @@ const windowStore = new JsonStore<{ bounds: Electron.Rectangle | null; maximized
   { bounds: null, maximized: false }
 );
 const settings = () => settingsStore.data;
+// Earlier versions moved only transcripts, to `sessionLogsDir`; the same folder now holds whole account folders.
+{
+  const legacy = (settingsStore.data as AppSettings & { sessionLogsDir?: string }).sessionLogsDir;
+  if (legacy && !settingsStore.data.dataDir) settingsStore.update({ dataDir: legacy });
+}
 
 const skillSource = app.isPackaged
   ? path.join(process.resourcesPath, 'skills', 'computer-use')
@@ -166,6 +175,13 @@ const agents = new AgentManager({
     const s = settings();
     if (!s.browserEnabled || !browserMcp.running) return [];
     return provider === 'claude' ? browserMcp.claudeArgs(agentId, s.browserAutoApprove) : browserMcp.codexArgs(agentId, s.browserAutoApprove);
+  },
+  // An agent asked to use a desktop app must find the skill, or it writes its own input code.
+  prepareProfile: (profile) => {
+    if (!computerUse.isInstalled(profile) && computerUse.wanted(profile, settings().computerUseOptOut ?? [])) {
+      computerUse.ensureInstalled([profile], settings().computerUseOptOut ?? []);
+      emit('profiles', views());
+    }
   }
 });
 const updates = new UpdateService();
@@ -251,15 +267,20 @@ async function applySessionStorage() {
     settingsStore.update({ claudeSessionRetentionDays: retentionDays(Math.max(DEFAULT_RETENTION_DAYS, ...existing)) });
   }
   for (const problem of applyRetention()) console.error('Transcript retention not applied:', problem);
-  if (!settings().sessionLogsDir) return;
+  if (!settings().dataDir) return;
   try {
     // Errors are usually a CLI holding a file open; tried again next start.
-    const { leftovers, errors } = await placeSessionLogs(profiles.list(), settings().sessionLogsDir);
-    if (errors.length) console.error('Session logs not moved:', errors);
-    if (leftovers.length) console.error('Session logs left behind in', leftovers);
+    const { leftovers, errors } = await placeDataFolders(profiles.list(), settings().dataDir, computerUseHome());
+    if (errors.length) console.error('Data folders not moved:', errors);
+    if (leftovers.length) console.error('Data left behind in', leftovers);
   } catch (error) {
-    console.error('Session logs not moved:', error);
+    console.error('Data folders not moved:', error);
   }
+}
+
+/** The computer-use folder, when the data folder decides where it lives. */
+function computerUseHome() {
+  return computerUse.customStateDir ? null : computerUse.stateDir;
 }
 
 telemetry.onProgress = (scanned) => emit('usage-progress', scanned);
@@ -294,6 +315,12 @@ if (process.env.ATC_CAPTURE_DIR) {
   };
 }
 updates.onChanged = (status) => emit('update', status);
+hooks.guard = (agentId, payload) => {
+  if (settings().computerUseGuard === false) return null;
+  const info = agents.get(agentId);
+  const profile = info ? profiles.list().find((p) => p.id === info.profileId) : undefined;
+  return guardDecision(payload, { skillDir: profile && computerUse.isInstalled(profile) ? computerUse.skillDir(profile) : null });
+};
 computerUse.onChanged = (status) => {
   emit('computer-use', status);
   agents.setScreenDriver(computerUse.currentDriver());
@@ -384,8 +411,8 @@ function registerIpc() {
   handle('settings.get', () => settings());
   handle('settings.update', async (patch) => {
     if ('chatFontSize' in patch) patch = { ...patch, chatFontSize: chatFontSize(patch.chatFontSize) };
-    // Moving the logs takes `sessionLogs.move`; a plain update would only change the setting.
-    const { sessionLogsDir: _, ...rest } = patch;
+    // Moving the data takes `dataDir.move`; a plain update would only change the setting.
+    const { dataDir: _, ...rest } = patch;
     patch = rest;
     if ('claudeSessionRetentionDays' in patch) patch = { ...patch, claudeSessionRetentionDays: retentionDays(patch.claudeSessionRetentionDays) };
     const next = settingsStore.update(patch);
@@ -400,15 +427,17 @@ function registerIpc() {
     emit('settings', next);
     return next;
   });
-  handle('sessionLogs.move', async (dir) => {
+  handle('dataDir.move', async (dir) => {
     const root = dir ? path.resolve(dir) : '';
     const busy = profiles.list().filter((p) => agents.runningCount(p.id) > 0);
-    if (busy.length) throw new Error('Stop running agents first: their transcripts are being written.');
-    const { leftovers, errors } = await placeSessionLogs(profiles.list(), root);
+    if (busy.length) throw new Error('Stop running agents first: their account folders are in use.');
+    if (computerUse.status().overlayRunning) throw new Error('Turn off the computer-use overlay first (Computer Use page).');
+    const { leftovers, errors } = await placeDataFolders(profiles.list(), root, computerUseHome());
     // Recorded even when a folder couldn't move yet: the next start moves it.
-    const next = settingsStore.update({ sessionLogsDir: root });
+    const next = settingsStore.update({ dataDir: root });
     emit('settings', next);
-    if (errors.length) throw new Error(`Some transcripts weren't moved (Foreman tries again when it starts): ${errors.join(' ')}`);
+    emit('computer-use', computerUse.status());
+    if (errors.length) throw new Error(`Some folders weren't moved (Foreman tries again when it starts): ${errors.join(' ')}`);
     if (leftovers.length) throw new Error(`Moved, but some files already existed at the new place and stayed in ${leftovers.join(', ')}.`);
     return next;
   });
@@ -438,13 +467,14 @@ function registerIpc() {
         // its settings.json is unreadable; the CLI's own default applies
       }
     }
-    if (settings().sessionLogsDir) {
-      // A new account has nothing to move yet, so this only links its folders.
-      await placeSessionLogs([profile], settings().sessionLogsDir).catch(() => {});
+    if (settings().dataDir) {
+      // A new account's folder starts out in the data folder.
+      await placeDataFolders([profile], settings().dataDir).catch(() => {});
     }
     const primary = profiles.list().find((p) => p.builtin && p.provider === input.provider);
-    if (primary && computerUse.isInstalled(primary) && !computerUse.isInstalled(profile)) {
-      // Keep computer use available on the new account if the primary has it.
+    if (computerUse.wanted(profile, settings().computerUseOptOut ?? [])) computerUse.ensureInstalled([profile], settings().computerUseOptOut ?? []);
+    else if (primary && computerUse.isInstalled(primary) && !computerUse.isInstalled(profile)) {
+      // A Codex account gets the skill when its primary has it.
       try {
         computerUse.install(profile);
       } catch {
@@ -461,8 +491,8 @@ function registerIpc() {
     if (agents.runningCount(id) > 0) throw new Error('Stop this account\'s running agents first.');
     const profile = profiles.require(id);
     profiles.remove(id, deleteData);
-    const moved = movedLogsDir(profile, settings().sessionLogsDir);
-    // Deleting the account folder only unlinks the junctions to its moved transcripts.
+    const moved = movedAccountDir(profile, settings().dataDir);
+    // Deleting the account folder only unlinks the junction to its moved folder.
     if (deleteData && moved && !profile.builtin) removeTree(moved);
     const active = settings().activeProfile;
     if (active[profile.provider] === id) {
@@ -650,6 +680,10 @@ function registerIpc() {
     const profile = profiles.require(profileId);
     if (install) computerUse.install(profile);
     else computerUse.uninstall(profile);
+    // Remembered, so the skill isn't put back on the next start.
+    const optOut = (settings().computerUseOptOut ?? []).filter((id) => id !== profileId);
+    if (!install) optOut.push(profileId);
+    emit('settings', settingsStore.update({ computerUseOptOut: optOut }));
     return views();
   });
   handle('computerUse.image', (file) => {
@@ -714,7 +748,12 @@ function startLoops() {
   };
   setTimeout(agentLoop, 500);
 
-  setInterval(() => computerUse.poll(), 1200);
+  setInterval(() => {
+    computerUse.poll();
+    // The overlay's conversation panel follows whichever app agent drives the screen.
+    const driver = settings().computerUseConversation === false ? null : computerUse.currentDriver();
+    computerUse.writeConversation(driver ? agents.screenFeed(driver) : null);
+  }, 1200);
 
   // Account identity and plan limits change rarely (limits refresh when an agent runs).
   setInterval(() => profiles.refresh().catch(() => {}), 3 * 60_000);
@@ -974,7 +1013,7 @@ app.whenReady().then(async () => {
   agents.restoreHistory().catch(() => {});
   agents.reopenWarm().catch(() => {});
   updates.start();
-  computerUse.refreshInstalled(profiles.list());
+  computerUse.ensureInstalled(profiles.list(), settings().computerUseOptOut ?? []);
   computerUse.loadPolicyFromSkill().catch(() => {});
   profiles.refresh().catch(() => {});
 });

@@ -2,6 +2,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { GUARDED_TOOLS } from './screenGuard';
 
 export interface HookEvent {
   agentId: string;
@@ -17,8 +18,11 @@ const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse']);
  * each agent starts a turn, runs a tool, waits for permission, or finishes.
  * Hooks are injected per agent through `claude --settings <file>`, which
  * Claude Code merges with the user's own settings: nothing the user owns is
- * modified. The server always answers `{}` immediately, i.e. "no decision",
- * so a hook never changes what Claude Code would have done.
+ * modified. The server answers `{}` immediately, i.e. "no decision", so a
+ * hook never changes what Claude Code would have done, with one exception:
+ * `guard` may refuse a PreToolUse (hand-written desktop control, see
+ * screenGuard.ts). Chats take their events over stdio and get only that
+ * guard, on the `/guard/<id>` route.
  */
 export class HookServer {
   private server: http.Server | null = null;
@@ -27,6 +31,8 @@ export class HookServer {
   onEvent: (event: HookEvent) => void = () => {};
   /** Returns the text Claude Code shows in its status bar for this agent. */
   onStatusLine: (agentId: string, payload: Record<string, any>) => Promise<string> = async () => '';
+  /** A PreToolUse reply that overrides "no decision", or null. */
+  guard: (agentId: string, payload: Record<string, any>) => Record<string, unknown> | null = () => null;
 
   constructor(private settingsDir: string) {}
 
@@ -50,7 +56,7 @@ export class HookServer {
   }
 
   private handle(req: http.IncomingMessage, res: http.ServerResponse) {
-    const match = /^\/(hook|statusline)\/([A-Za-z0-9_-]+)$/.exec(req.url ?? '');
+    const match = /^\/(hook|statusline|guard)\/([A-Za-z0-9_-]+)$/.exec(req.url ?? '');
     if (req.method !== 'POST' || !match || req.headers['x-atc-token'] !== this.token) {
       res.writeHead(404).end();
       return;
@@ -76,9 +82,17 @@ export class HookServer {
           .then((text) => res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }).end(text));
         return;
       }
-      res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}');
       const name = typeof payload.hook_event_name === 'string' ? payload.hook_event_name : 'unknown';
-      this.onEvent({ agentId, name, payload });
+      let reply: Record<string, unknown> | null = null;
+      if (name === 'PreToolUse') {
+        try {
+          reply = this.guard(agentId, payload);
+        } catch {
+          reply = null;
+        }
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(reply ?? {}));
+      if (route === 'hook') this.onEvent({ agentId, name, payload });
     });
   }
 
@@ -112,7 +126,14 @@ export class HookServer {
     return this.writeSettingsFile(agentId, settings);
   }
 
-  /** A per-agent settings file without hooks (chats get their events over stdio). */
+  /** Settings that give a chat only the PreToolUse guard (its other events come over stdio). */
+  guardSettings(agentId: string): Record<string, unknown> {
+    if (!this.url) return {};
+    const hook = { type: 'http', url: `${this.url}/guard/${agentId}`, headers: { 'X-ATC-Token': this.token } };
+    return { hooks: { PreToolUse: [{ matcher: GUARDED_TOOLS, hooks: [hook] }] } };
+  }
+
+  /** A per-agent settings file without the event hooks (chats get their events over stdio). */
   writeSettingsFile(agentId: string, settings: Record<string, unknown>): string {
     const file = path.join(this.settingsDir, `${agentId}.json`);
     fs.mkdirSync(this.settingsDir, { recursive: true });
