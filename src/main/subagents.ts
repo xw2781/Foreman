@@ -114,7 +114,7 @@ export class SubagentTracker {
   private claudeStep(nodeId: string, tool: string, input: any) {
     const node = this.nodes.get(nodeId);
     if (!node) return;
-    this.put({ ...node, activity: activityOf(claudeToolTitle(tool), claudeToolDetail(tool, input)), toolUses: node.toolUses + 1 });
+    this.put({ ...node, activity: activityOf(claudeToolTitle(tool, input), claudeToolDetail(tool, input)), toolUses: node.toolUses + 1 });
   }
 
   /** The agent tool's result: the subagent's answer, or (in the background) word that it was launched. */

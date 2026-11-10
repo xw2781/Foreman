@@ -114,7 +114,7 @@ describe('Claude chat protocol', () => {
     const items = log.list();
     expect(kinds(items)).toEqual(['user', 'tool', 'assistant', 'turn']);
     const tool = items[1];
-    expect(tool.kind === 'tool' && [tool.title, tool.detail, tool.input, tool.output, tool.status]).toEqual(['Ran', 'echo hello', 'echo hello', 'hello', 'done']);
+    expect(tool.kind === 'tool' && [tool.title, tool.detail, tool.input, tool.output, tool.status]).toEqual(['Ran', 'Print hello', 'echo hello', 'hello', 'done']);
     const reply = items[2];
     expect(reply.kind === 'assistant' && [reply.text, reply.streaming]).toEqual(['The command ran.', false]);
     const footer = items[3];

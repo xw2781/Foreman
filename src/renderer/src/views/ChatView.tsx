@@ -263,12 +263,15 @@ const ToolRow = memo(function ToolRow({ item }: { item: Item<'tool'> }) {
   const [open, setOpen] = useState(false);
   const hasBody = Boolean(item.input || item.output || item.files?.length);
   const inputIsDetail = item.input && item.input === item.detail;
+  const shell = /bash|powershell|shell/i.test(item.tool);
+  // A command reads as code; a description of one ("Run the tests") or the files it read as text.
+  const detailIsCommand = shell && Boolean(item.detail && item.input?.replace(/\s+/g, ' ').trim().startsWith(item.detail.replace(/…$/, '')));
   return (
     <div className={`tool-row ${item.status} ${open ? 'open' : ''}`}>
       <button type="button" className="tool-line" onClick={() => hasBody && setOpen(!open)} disabled={!hasBody}>
         <span className="tool-icon">{toolIcon(item)}</span>
         <span className="tool-title">{item.status === 'running' ? IN_PROGRESS[item.title] ?? item.title : item.title}</span>
-        {item.detail ? <span className={`tool-detail ellipsis ${item.tool.match(/bash|powershell|shell/i) ? 'mono' : ''}`}>{item.detail}</span> : null}
+        {item.detail ? <span className={`tool-detail ellipsis ${detailIsCommand ? 'mono' : ''}`} title={shell && !detailIsCommand ? item.input ?? undefined : undefined}>{item.detail}</span> : null}
         {item.files?.length ? <DiffCount files={item.files} /> : null}
         <span className="tool-state">
           {item.status === 'running' ? (
@@ -285,7 +288,7 @@ const ToolRow = memo(function ToolRow({ item }: { item: Item<'tool'> }) {
       </button>
       {open ? (
         <div className="tool-body">
-          {item.input && !(inputIsDetail && !item.input.includes('\n') && item.input.length < 120) ? <Output label={item.tool.match(/bash|powershell|shell/i) ? 'Command' : 'Input'} text={item.input} /> : null}
+          {item.input && !(inputIsDetail && !item.input.includes('\n') && item.input.length < 120) ? <Output label={shell ? 'Command' : 'Input'} text={item.input} /> : null}
           {item.files?.length ? <DiffView files={item.files} open /> : null}
           {item.output ? <Output label={item.status === 'error' ? 'Error' : 'Output'} text={item.output} /> : null}
         </div>

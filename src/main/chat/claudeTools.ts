@@ -4,6 +4,7 @@ import type { ChatEntry, ChatFileChange, ChatToolStatus } from '../../shared/typ
 import { describeToolInput } from '../streamFormat';
 import { clipText } from './log';
 import { browserToolDetail, browserToolTitle } from './browserTools';
+import { summarizeCommand } from './shellCommand';
 
 const DIFF_LINE_LIMIT = 600;
 
@@ -68,6 +69,10 @@ const TITLES: Record<string, string> = {
   AskUserQuestion: 'Asked'
 };
 
+function isShell(tool: string) {
+  return tool === 'Bash' || tool === 'PowerShell';
+}
+
 function baseName(value: string) {
   return value.split(/[\\/]/).filter(Boolean).pop() ?? value;
 }
@@ -81,6 +86,11 @@ export function claudeToolDetail(tool: string, input: Record<string, any> | null
   if (tool === 'TodoWrite' && Array.isArray(input.todos)) {
     const done = input.todos.filter((t: any) => t?.status === 'completed').length;
     return `${done}/${input.todos.length} done`;
+  }
+  if (isShell(tool) && typeof input.command === 'string') {
+    // What the command does, in words: the files it reads, else the agent's own description of it.
+    const described = typeof input.description === 'string' ? input.description.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
+    return summarizeCommand(input.command)?.detail || described || describeToolInput(tool, input) || null;
   }
   if (tool === 'Skill' && typeof input.skill === 'string') return input.skill;
   if (tool.startsWith('mcp__')) {
@@ -106,7 +116,9 @@ export function claudeToolInput(tool: string, input: Record<string, any> | null 
   return clipText(JSON.stringify(input, null, 2), 8000);
 }
 
-export function claudeToolTitle(tool: string): string {
+/** `input` lets a shell command that only reads, searches or lists say so instead of "Ran". */
+export function claudeToolTitle(tool: string, input?: Record<string, any> | null): string {
+  if (isShell(tool) && typeof input?.command === 'string') return summarizeCommand(input.command)?.title ?? TITLES[tool];
   if (TITLES[tool]) return TITLES[tool];
   if (tool.startsWith('mcp__')) {
     const [, server, name] = tool.split('__');
@@ -120,7 +132,7 @@ export function claudeToolEntry(id: string, tool: string, input: Record<string, 
     kind: 'tool',
     id,
     tool,
-    title: claudeToolTitle(tool),
+    title: claudeToolTitle(tool, input),
     detail: claudeToolDetail(tool, input),
     input: claudeToolInput(tool, input),
     output: null,

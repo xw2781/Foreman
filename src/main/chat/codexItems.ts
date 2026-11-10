@@ -7,6 +7,7 @@ import { contentImages } from '../../shared/chatImages';
 import type { ChatEntry, ChatFileChange, ChatToolStatus } from '../../shared/types';
 import { clipText } from './log';
 import { browserToolDetail, browserToolTitle } from './browserTools';
+import { summarizeCommand } from './shellCommand';
 
 function pick(item: Record<string, any>, ...keys: string[]): any {
   for (const key of keys) if (item[key] !== undefined && item[key] !== null) return item[key];
@@ -148,7 +149,7 @@ export function codexItemEntry(raw: any): ChatEntry | null {
     case 'commandExecution': {
       const command = codexCommand(raw.command);
       const exitCode = pick(raw, 'exitCode', 'exit_code');
-      const named = commandTitle(pick(raw, 'commandActions', 'parsed_cmd'));
+      const named = commandTitle(pick(raw, 'commandActions', 'parsed_cmd')) ?? summarizeCommand(command);
       const output = pick(raw, 'aggregatedOutput', 'aggregated_output', 'formatted_output');
       return {
         kind: 'tool',
