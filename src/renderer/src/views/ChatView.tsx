@@ -324,7 +324,11 @@ function ToolGroup({ items, active, defaultExpanded = false }: { items: Array<It
 }
 
 function Reasoning({ item }: { item: Item<'reasoning'> }) {
-  const [open, setOpen] = useState(false);
+  const showByDefault = useApp((s) => s.settings?.chatShowThinking !== false);
+  const [toggled, setToggled] = useState<boolean | null>(null);
+  // Follows the setting until this block is clicked, so changing it applies to blocks already on screen.
+  const open = toggled ?? showByDefault;
+  const setOpen = (value: boolean) => setToggled(value);
   return (
     <div className={`reasoning ${open ? 'open' : ''}`}>
       <button type="button" className="reasoning-head" onClick={() => setOpen(!open)}>

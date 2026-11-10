@@ -750,6 +750,8 @@ export interface AppSettings {
   chatSendMode: ChatSendMode;
   /** Offer the next steps an agent suggests at the end of a task as cards to click. */
   chatNextSteps: boolean;
+  /** Show an agent's thinking expanded in chat; off folds it under a "Thought" line. */
+  chatShowThinking: boolean;
   /** Whisper model for voice input (see shared/voiceModels). */
   voiceModel: string;
   /** Give new agents Foreman's built-in browser (an MCP server of browser tools). */

@@ -258,6 +258,12 @@ export function SettingsView() {
           <Switch on={settings.chatNextSteps !== false} onChange={(v) => update({ chatNextSteps: v })} />
         </Setting>
         <Setting
+          title="Show thinking"
+          description="Show an agent's thinking expanded in the chat. Turn off to fold it under a Thought line you can click to open."
+        >
+          <Switch on={settings.chatShowThinking !== false} onChange={(v) => update({ chatShowThinking: v })} />
+        </Setting>
+        <Setting
           title="Voice input model"
           description="The speech-to-text model behind the microphone button. It runs on this computer; a larger model is more accurate but slower and downloads once on first use. Dictated messages also tell the agent to correct mishearings from context."
         >
