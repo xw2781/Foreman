@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import type { ChatItem } from '@shared/types';
 import { parseAnnotatedMessage } from '../annotations';
 
@@ -22,15 +22,15 @@ function messageElement(container: HTMLElement, id: string) {
 
 /**
  * Every message the person sent, as ticks down the right edge of the conversation:
- * the one in view is marked, hovering lists them with a preview, and a click
- * scrolls back to the message.
+ * the one in view is marked, hovering a tick previews that one message beside it,
+ * and a click scrolls back to the message. Arrow keys move between ticks.
  */
 export function MessageNavigator({ messages, scrollRef }: { messages: UserItem[]; scrollRef: RefObject<HTMLDivElement | null> }) {
   const [current, setCurrent] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [height, setHeight] = useState(0);
-  const listRef = useRef<HTMLDivElement>(null);
+  const railRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | null>(null);
 
   // The message in view: the last one whose top is above a third of the way down.
@@ -63,12 +63,6 @@ export function MessageNavigator({ messages, scrollRef }: { messages: UserItem[]
     };
   }, [scrollRef, messages]);
 
-  // Keep the highlighted row of the open list in sight.
-  const focus = hovered ?? current;
-  useLayoutEffect(() => {
-    if (!open || !focus) return;
-    listRef.current?.querySelector<HTMLElement>(`[data-row="${CSS.escape(focus)}"]`)?.scrollIntoView({ block: 'nearest' });
-  }, [open, focus]);
   useEffect(() => () => {
     if (closeTimer.current) window.clearTimeout(closeTimer.current);
   }, []);
@@ -80,7 +74,7 @@ export function MessageNavigator({ messages, scrollRef }: { messages: UserItem[]
     closeTimer.current = null;
     setOpen(true);
   };
-  // A short grace period, so moving from the rail to the list doesn't close it.
+  // A short grace period, so moving from the rail to the preview doesn't close it.
   const hide = () => {
     if (closeTimer.current) window.clearTimeout(closeTimer.current);
     closeTimer.current = window.setTimeout(() => {
@@ -102,39 +96,45 @@ export function MessageNavigator({ messages, scrollRef }: { messages: UserItem[]
     setCurrent(id);
   };
 
+  const focus = hovered ?? current ?? messages[0].id;
+  const focusIndex = Math.max(0, messages.findIndex((m) => m.id === focus));
+  const focused = messages[focusIndex];
   const spacing = Math.max(2, Math.min(TICK_SPACING, ((height || 400) * RAIL_MAX) / messages.length));
+  // Rail padding (6px) + the focused tick's centre: the preview sits level with it.
+  const previewTop = 6 + focusIndex * spacing + spacing / 2;
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : event.key === 'Home' ? -Infinity : event.key === 'End' ? Infinity : 0;
+    if (!step) return;
+    event.preventDefault();
+    const next = messages[Math.max(0, Math.min(messages.length - 1, focusIndex + step))];
+    setHovered(next.id);
+    railRef.current?.querySelector<HTMLElement>(`[data-tick="${CSS.escape(next.id)}"]`)?.focus();
+  };
+
   return (
     <nav className={`msg-nav ${open ? 'open' : ''}`} aria-label="Your messages" onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide}>
-      {open ? (
-        <div className="msg-nav-list" ref={listRef} role="list">
-          <div className="msg-nav-head">Your messages · {messages.length}</div>
-          {messages.map((m, index) => (
-            <button
-              key={m.id}
-              type="button"
-              role="listitem"
-              data-row={m.id}
-              className={`msg-nav-row ${m.id === focus ? 'on' : ''} ${m.id === current ? 'current' : ''}`}
-              onMouseEnter={() => setHovered(m.id)}
-              onClick={() => go(m.id)}
-            >
-              <span className="msg-nav-index num">{index + 1}</span>
-              <span className="msg-nav-text">{preview(m)}</span>
-            </button>
-          ))}
-        </div>
+      {open && focused ? (
+        <button type="button" className="msg-nav-preview" style={{ top: previewTop }} onClick={() => go(focused.id)} tabIndex={-1}>
+          <span className={`msg-nav-index num ${focused.id === current ? 'current' : ''}`}>
+            {focusIndex + 1} / {messages.length}
+          </span>
+          <span className="msg-nav-text">{preview(focused)}</span>
+        </button>
       ) : null}
       {/* Each tick's button is its whole slot, so even closely packed ticks are easy to hit. */}
-      <div className="msg-nav-rail" style={{ ['--tick-line' as string]: `${spacing > 4 ? 2 : 1}px` }}>
+      <div className="msg-nav-rail" ref={railRef} onKeyDown={onKeyDown} style={{ ['--tick-line' as string]: `${spacing > 4 ? 2 : 1}px` }}>
         {messages.map((m) => (
           <button
             key={m.id}
             type="button"
-            tabIndex={-1}
+            data-tick={m.id}
+            tabIndex={m.id === focus ? 0 : -1}
             aria-label={preview(m)}
             className={`msg-nav-tick ${m.id === current ? 'current' : ''} ${m.id === hovered ? 'hovered' : ''}`}
             style={{ height: spacing }}
             onMouseEnter={() => setHovered(m.id)}
+            onFocus={() => setHovered(m.id)}
             onClick={() => go(m.id)}
           />
         ))}
