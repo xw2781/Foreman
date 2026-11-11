@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chatLinkKind } from '../src/shared/chatLinks';
+import { chatLinkKind, normalizeFileLinks } from '../src/shared/chatLinks';
 import { resolveChatFile } from '../src/main/chat/fileLinks';
 
 describe('chat file links', () => {
@@ -33,6 +33,40 @@ describe('chat file links', () => {
     expect(resolveChatFile('file://server/share/report.xlsx', cwd, home)).toBe('\\\\server\\share\\report.xlsx');
     expect(() => resolveChatFile('file:///C:/bad%00name', cwd, home)).toThrow();
     expect(() => resolveChatFile('bad%ZZname.xlsx', cwd, home)).toThrow();
+  });
+
+  it('repairs file links Markdown would show as raw text', () => {
+    const dir = 'file:///Z:/Rate Indications/2026Q3 Penn';
+    expect(normalizeFileLinks(`- <${dir}/data/Net Trend Penn 3Q2026.xlsx>`))
+      .toBe('- [Net Trend Penn 3Q2026.xlsx](file:///Z:/Rate%20Indications/2026Q3%20Penn/data/Net%20Trend%20Penn%203Q2026.xlsx)');
+    expect(normalizeFileLinks('<C:\\My Docs\\a_b.xlsx>')).toBe('[a\\_b.xlsx](C:/My%20Docs/a_b.xlsx)');
+    expect(normalizeFileLinks('<\\\\server\\share\\My Report.xlsx>')).toBe('[My Report.xlsx](file://server/share/My%20Report.xlsx)');
+    expect(normalizeFileLinks('[Report](C:/My Docs/Report (1).xlsx)')).toBe('[Report](C:/My%20Docs/Report%20%281%29.xlsx)');
+    expect(normalizeFileLinks('[Report](data/My Report #2.xlsx)')).toBe('[Report](data/My%20Report%20%232.xlsx)');
+    expect(normalizeFileLinks('[main](src/my file.ts#L20-L30)')).toBe('[main](src/my%20file.ts#L20-L30)');
+    expect(normalizeFileLinks('Saved to file:///C:/out/report.xlsx.')).toBe('Saved to [report.xlsx](file:///C:/out/report.xlsx).');
+    expect(normalizeFileLinks('<file:///C:/out/50% off.xlsx>')).toBe('[50% off.xlsx](file:///C:/out/50%25%20off.xlsx)');
+  });
+
+  it('repaired links resolve to the file the agent meant', () => {
+    const href = (text: string) => /\]\((.*)\)$/.exec(normalizeFileLinks(text))![1];
+    expect(resolveChatFile(href('<file:///Z:/Rate Indications/Net Trend #2.xlsx>'), cwd, home)).toBe('Z:\\Rate Indications\\Net Trend #2.xlsx');
+    expect(resolveChatFile(href('<\\\\server\\share\\My Report.xlsx>'), cwd, home)).toBe('\\\\server\\share\\My Report.xlsx');
+    expect(resolveChatFile(href('[r](out/50% off (1).xlsx)'), cwd, home)).toBe('E:\\Projects\\Report\\out\\50% off (1).xlsx');
+  });
+
+  it('leaves valid Markdown, web links and code alone', () => {
+    for (const text of [
+      '[Report](<file:///C:/My Docs/a.xlsx>)',
+      '[Report](C:/Docs/a.xlsx)',
+      '[site](https://example.com "A title")',
+      '[file](report.xlsx "A title")',
+      '[note](see the thing)',
+      '<https://example.com/a b>',
+      'Use `<file:///C:/My Docs/a.xlsx>` here',
+      '```\n<file:///C:/My Docs/a.xlsx>\n```',
+      'a < b and c:/x > d'
+    ]) expect(normalizeFileLinks(text)).toBe(text);
   });
 
   it('also resolves POSIX paths without using the app cwd', () => {

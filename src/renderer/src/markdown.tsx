@@ -7,7 +7,7 @@ import 'katex/dist/katex.min.css';
 import { Check, Copy, FolderOpen } from 'lucide-react';
 import { call, errorMessage } from './api';
 import { useApp } from './store';
-import { chatLinkKind } from '@shared/chatLinks';
+import { chatLinkKind, normalizeFileLinks } from '@shared/chatLinks';
 import { escapeCurrencyDollars, normalizeDisplayMath } from './displayMath';
 import { HighlightedCode } from './HighlightedCode';
 
@@ -101,7 +101,7 @@ export const Markdown = memo(function Markdown({ text, agentId }: { text: string
   return (
     <div className="md selectable">
       <ReactMarkdown remarkPlugins={plugins} rehypePlugins={rehypePlugins} components={renderers} urlTransform={(url, key, node) => node.tagName === 'a' && key === 'href' ? url : ''}>
-        {escapeCurrencyDollars(normalizeDisplayMath(text))}
+        {escapeCurrencyDollars(normalizeDisplayMath(normalizeFileLinks(text)))}
       </ReactMarkdown>
     </div>
   );
