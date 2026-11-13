@@ -8,6 +8,7 @@ import type { ChatEntry, ChatFileChange, ChatToolStatus } from '../../shared/typ
 import { clipText } from './log';
 import { browserToolDetail, browserToolTitle } from './browserTools';
 import { summarizeCommand } from './shellCommand';
+import { commandBody } from '../../shared/commandText';
 
 function pick(item: Record<string, any>, ...keys: string[]): any {
   for (const key of keys) if (item[key] !== undefined && item[key] !== null) return item[key];
@@ -156,7 +157,7 @@ export function codexItemEntry(raw: any): ChatEntry | null {
         id,
         tool: 'shell',
         title: named?.title ?? 'Ran',
-        detail: named?.detail ?? command,
+        detail: named?.detail ?? commandBody(command),
         input: command,
         output: clipText(typeof output === 'string' ? output : null),
         status: toolStatus(raw.status, exitCode),

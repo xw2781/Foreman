@@ -86,6 +86,12 @@ Foreman adds session instructions encouraging both agents to use their question 
 
 These cards apply to **Chat** mode. **Terminal** mode uses the CLI's own interaction UI. Models still decide when to call a tool, and older CLIs may not expose every interactive feature.
 
+## Reading the steps
+
+Each step an agent takes is one line in the chat. Shell commands are named for what they do when that is plain from the command: *Read*, *Searched*, *Listed files*, *Edited* (an in-place `sed -i`), *Checked* (a version) and *Ran script …*. Other Claude commands show the description the agent gave them; the rest show the command itself, without the `cd` into the project that most of them start with. Open a step to see the whole command, the folder it ran in and one statement per line, with its output. **Copy** gives the command exactly as it ran.
+
+**Explain this step**, inside an opened step, says in two or three sentences what the step did and whether it worked. It is written on request by the account's small model (Claude's Haiku; for Codex the cheapest model the account lists) in a separate one-off run that is sent that step only: its command or input, its output, its file changes. The conversation isn't sent, added to, or needed running, which is why an explanation costs a fraction of a cent however long the conversation is. Explanations last until the app closes, and their cost isn't counted in Usage.
+
 ## Fork, side chat and message navigator
 
 - **Fork** (header button) starts a new chat, on the same account, model and folder, that continues from a copy of the conversation; the original is untouched. To branch from an earlier point, hover one of your messages and click **Fork from here**: the new chat holds everything *before* that message and puts the message in its box to edit and send. Claude Code forks with `--fork-session` (and `--resume-session-at` for an earlier point); Codex with `thread/fork` (and `lastTurnId`). A fork links back to its original under its title.

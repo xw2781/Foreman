@@ -72,6 +72,8 @@ import { switchCostNotice, useSwitchCosts } from '../switchCost';
 import { SubagentPill } from './SubagentMap';
 import { MessageNavigator } from './MessageNavigator';
 import { askSide, forkAgent, sidePending, useSideChats } from '../sideChat';
+import { explainStep, explanationKey, useExplanations } from '../explain';
+import { commandBody, layoutCommand } from '@shared/commandText';
 import { extractNextSteps, type NextStep } from '../nextSteps';
 import { composerInsert, FILE_REF_TYPE, fileRef, formatRef, insertAt, spaceDrop } from '../fileRefs';
 import '../chat.css';
@@ -96,6 +98,7 @@ function toolIcon(item: Item<'tool'>) {
     if (item.title === 'Read') return <FileText size={size} />;
     if (item.title === 'Searched') return <Search size={size} />;
     if (item.title === 'Listed files') return <FolderSearch size={size} />;
+    if (item.title === 'Edited') return <FilePen size={size} />;
     return <Terminal size={size} />;
   }
   if (t === 'read') return <FileText size={size} />;
@@ -242,6 +245,54 @@ function Output({ text, label }: { text: string; label: string }) {
   );
 }
 
+/** A shell command laid out for reading: the folder it starts in beside the label, one statement per line. Copying gives the command as it ran. */
+function CommandBlock({ command }: { command: string }) {
+  const { folder, text } = useMemo(() => layoutCommand(command), [command]);
+  return (
+    <div className="tool-block">
+      <div className="tool-block-head">
+        <span>Command</span>
+        {folder ? <span className="tool-block-note ellipsis" title={folder}>in {folder}</span> : null}
+        <CopyButton text={command} />
+      </div>
+      <pre className="selectable">{text}</pre>
+    </div>
+  );
+}
+
+/** What the step did, in plain words: asked for with a click, written by the account's small model from the step alone. */
+function StepExplanation({ agentId, item }: { agentId: string; item: Item<'tool'> }) {
+  const explanation = useExplanations((s) => s.steps[explanationKey(agentId, item.id)]);
+  if (explanation?.state === 'done') {
+    return (
+      <div className="tool-block explain">
+        <div className="tool-block-head">
+          <span>In plain words</span>
+          {explanation.model ? <span className="tool-block-note ellipsis">by {modelLabel(explanation.model)}</span> : null}
+          <CopyButton text={explanation.text} />
+        </div>
+        <p className="selectable">{explanation.text}</p>
+      </div>
+    );
+  }
+  const pending = explanation?.state === 'pending';
+  return (
+    <div className="tool-explain">
+      <button
+        type="button"
+        className="btn ghost sm"
+        disabled={pending || item.status === 'running'}
+        title="Says what this step did, in plain words. Sends only this step to the account's small model, not the conversation"
+        onClick={() => void explainStep(agentId, item.id)}
+      >
+        {pending ? <LoaderCircle size={13} className="spin" /> : <Sparkles size={13} />}
+        {pending ? 'Explaining…' : explanation?.state === 'error' ? 'Try again' : 'Explain this step'}
+      </button>
+      {explanation?.state === 'error' ? <span className="tool-explain-error selectable">Couldn't explain it: {explanation.error}</span> : null}
+    </div>
+  );
+}
+
 /** Titles are written for finished steps; one still running reads in the present. */
 const IN_PROGRESS: Record<string, string> = {
   Ran: 'Running',
@@ -249,6 +300,7 @@ const IN_PROGRESS: Record<string, string> = {
   Wrote: 'Writing',
   Edited: 'Editing',
   Created: 'Creating',
+  Checked: 'Checking',
   Searched: 'Searching',
   'Listed files': 'Listing files',
   Fetched: 'Fetching',
@@ -259,13 +311,16 @@ const IN_PROGRESS: Record<string, string> = {
   'Loaded tools': 'Loading tools'
 };
 
-const ToolRow = memo(function ToolRow({ item }: { item: Item<'tool'> }) {
+const flat = (text: string) => text.replace(/\s+/g, ' ').trim();
+
+const ToolRow = memo(function ToolRow({ item, agentId }: { item: Item<'tool'>; agentId: string }) {
   const [open, setOpen] = useState(false);
   const hasBody = Boolean(item.input || item.output || item.files?.length);
   const inputIsDetail = item.input && item.input === item.detail;
   const shell = /bash|powershell|shell/i.test(item.tool);
-  // A command reads as code; a description of one ("Run the tests") or the files it read as text.
-  const detailIsCommand = shell && Boolean(item.detail && item.input?.replace(/\s+/g, ' ').trim().startsWith(item.detail.replace(/…$/, '')));
+  // A command reads as code (with or without the `cd` it starts with); a description of one ("Run the tests") or the files it read as text.
+  const shown = item.detail ? flat(item.detail).replace(/…$/, '') : '';
+  const detailIsCommand = shell && Boolean(shown && item.input && (flat(item.input).startsWith(shown) || flat(commandBody(item.input)).startsWith(shown)));
   return (
     <div className={`tool-row ${item.status} ${open ? 'open' : ''}`}>
       <button type="button" className="tool-line" onClick={() => hasBody && setOpen(!open)} disabled={!hasBody}>
@@ -288,7 +343,8 @@ const ToolRow = memo(function ToolRow({ item }: { item: Item<'tool'> }) {
       </button>
       {open ? (
         <div className="tool-body">
-          {item.input && !(inputIsDetail && !item.input.includes('\n') && item.input.length < 120) ? <Output label={shell ? 'Command' : 'Input'} text={item.input} /> : null}
+          <StepExplanation agentId={agentId} item={item} />
+          {!item.input || (inputIsDetail && !item.input.includes('\n') && item.input.length < 120) ? null : shell ? <CommandBlock command={item.input} /> : <Output label="Input" text={item.input} />}
           {item.files?.length ? <DiffView files={item.files} open /> : null}
           {item.output ? <Output label={item.status === 'error' ? 'Error' : 'Output'} text={item.output} /> : null}
         </div>
@@ -306,7 +362,7 @@ function stepSummary(tools: Array<Item<'tool'>>) {
 }
 
 /** Consecutive tool calls; long finished runs fold into one line that toggles them. */
-function ToolGroup({ items, active, defaultExpanded = false }: { items: Array<Item<'tool'>>; active: boolean; defaultExpanded?: boolean }) {
+function ToolGroup({ items, agentId, active, defaultExpanded = false }: { items: Array<Item<'tool'>>; agentId: string; active: boolean; defaultExpanded?: boolean }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const foldable = items.length > 3 && !active && items.every((i) => i.status !== 'running');
   return (
@@ -321,7 +377,7 @@ function ToolGroup({ items, active, defaultExpanded = false }: { items: Array<It
           <ChevronRight size={13} className={`chev ${expanded ? 'open' : ''}`} />
         </button>
       ) : null}
-      {!foldable || expanded ? items.map((item) => <ToolRow key={item.id} item={item} />) : null}
+      {!foldable || expanded ? items.map((item) => <ToolRow key={item.id} item={item} agentId={agentId} />) : null}
     </div>
   );
 }
@@ -542,7 +598,7 @@ function renderEntries(items: ChatItem[], agent: AgentInfo, activeTail: boolean,
     if (!tools.length) return;
     const group = tools;
     tools = [];
-    nodes.push(<ToolGroup key={`g-${group[0].id}`} items={group} active={last && activeTail} defaultExpanded={groupsOpen} />);
+    nodes.push(<ToolGroup key={`g-${group[0].id}`} items={group} agentId={agent.id} active={last && activeTail} defaultExpanded={groupsOpen} />);
   };
   items.forEach((item, index) => {
     if (item.kind === 'tool') {

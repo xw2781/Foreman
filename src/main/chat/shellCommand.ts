@@ -1,15 +1,19 @@
 // What a shell command does, for the chat's step line: "Read main.ts" in place
-// of "Ran Get-Content src\main.ts". Only commands that plainly read, search or
-// list are named; anything unrecognized stays "Ran", so a command that changes
-// something is never shown as a read. Pure: shared by the live drivers (main
-// process) and history loading (telemetry worker).
+// of "Ran Get-Content src\main.ts". Only commands that plainly read, search,
+// list, edit a file in place, run a script or ask for a version are named;
+// anything unrecognized stays "Ran" with the command itself, so a command that
+// changes something is never shown as a read. Pure: shared by the live drivers
+// (main process) and history loading (telemetry worker).
 
 export interface CommandSummary {
-  title: 'Read' | 'Searched' | 'Listed files';
+  /** 'Ran' names what was run ("script build.ps1", "Python code") in place of the command text. */
+  title: 'Read' | 'Searched' | 'Listed files' | 'Edited' | 'Checked' | 'Ran';
   detail: string | null;
 }
 
-type Kind = 'read' | 'search' | 'list';
+/** read, search, list and check change nothing; edit rewrites a file; run starts a script, which may do anything. */
+type Kind = 'read' | 'search' | 'list' | 'check' | 'edit' | 'run';
+type ArgKind = 'read' | 'search' | 'list';
 
 interface Token {
   text: string;
@@ -56,6 +60,8 @@ function tokenize(command: string): Token[] | null {
     } else if (c === '|' || c === '&') {
       flush();
       const double = command[i + 1] === c;
+      // PowerShell's call operator: `& "build.ps1"` runs the script, where a trailing `&` would background one.
+      if (c === '&' && !double && (!out.length || out[out.length - 1].op)) continue;
       out.push({ text: double ? c + c : c, op: true });
       if (double) i += 1;
     } else if (c === '>' || c === '<') {
@@ -95,7 +101,7 @@ const FILTERS = new Set([
 ]);
 
 /** Flags followed by a value, so the value isn't taken for a file or pattern. PowerShell's are matched lowercased. */
-const VALUE_FLAGS: Record<Kind, Set<string>> = {
+const VALUE_FLAGS: Record<ArgKind, Set<string>> = {
   read: new Set(['-n', '-c', '-totalcount', '-tail', '-first', '-last', '-head', '-skip', '-encoding', '-readcount', '-delimiter']),
   search: new Set([
     '-A', '-B', '-C', '-m', '-f', '-g', '-t', '-T', '-d', '-j', '--glob', '--type', '--include', '--exclude', '--exclude-dir', '--max-count',
@@ -108,12 +114,12 @@ function baseName(value: string) {
   return value.split(/[\\/]/).filter(Boolean).pop() ?? value;
 }
 
-function hasValue(kind: Kind, flag: string) {
+function hasValue(kind: ArgKind, flag: string) {
   return VALUE_FLAGS[kind].has(flag) || VALUE_FLAGS[kind].has(flag.toLowerCase());
 }
 
 /** Arguments that aren't flags or a flag's value, plus the values of the flags in `named`. */
-function args(kind: Kind, words: string[], named: string[]) {
+function args(kind: ArgKind, words: string[], named: string[]) {
   const positional: string[] = [];
   const byFlag: string[] = [];
   for (let i = 0; i < words.length; i += 1) {
@@ -138,6 +144,37 @@ function head(words: string[]) {
   return (words[0] ?? '').toLowerCase().replace(/\.exe$/, '');
 }
 
+const SCRIPT_FILE = /\.(ps1|sh|bash|py|js|mjs|cjs|ts|bat|cmd|r|rb|pl|vbs|sas)$/i;
+/** Programs that run a script file, with what their inline code is called (null: a shell, whose inline code is a command like any other). */
+const INTERPRETERS: Record<string, string | null> = {
+  python: 'Python', python3: 'Python', py: 'Python', node: 'Node.js', rscript: 'R', ruby: 'Ruby', perl: 'Perl',
+  tsx: null, 'ts-node': null, cscript: null, wscript: null, bash: null, sh: null, zsh: null, pwsh: null, powershell: null
+};
+const INLINE_CODE = new Set(['-c', '-e', '--eval', '-p', '--print', '-command', '-encodedcommand']);
+/** An interpreter's flags that take a value; `-file` names the script itself. */
+const INTERPRETER_VALUE_FLAGS = new Set(['-executionpolicy', '-ep', '-windowstyle', '-workingdirectory', '-w', '-x', '-r', '--require', '--import', '--loader']);
+/** Tools whose lone `-v` prints a version; elsewhere it means verbose. */
+const SHORT_VERSION = new Set(['node', 'npm', 'npx', 'pnpm', 'yarn', 'bun', 'tsc', 'ruby', 'php', 'go', 'docker', 'gh']);
+
+/** `python build.py`, `powershell -File run.ps1`, `./run.sh`, `python -c "…"`: what gets run, in words. */
+function scriptRun(words: string[]): string | null {
+  if (words[0] === '.') words = words.slice(1); // dot-sourcing
+  if (!words.length) return null;
+  if (SCRIPT_FILE.test(words[0])) return `script ${baseName(words[0])}`;
+  const name = baseName(head(words));
+  if (!Object.hasOwn(INTERPRETERS, name)) return null;
+  for (let i = 1; i < words.length; i += 1) {
+    const word = words[i];
+    const flag = word.toLowerCase();
+    if (flag === '-file' || flag === '-f') return words[i + 1] ? `script ${baseName(words[i + 1])}` : null;
+    if (INLINE_CODE.has(flag)) return INTERPRETERS[name] ? `${INTERPRETERS[name]} code` : null;
+    if (flag === '-m' || word === '-') return null; // a module, or code from standard input
+    if (INTERPRETER_VALUE_FLAGS.has(flag)) i += 1;
+    else if (!word.startsWith('-')) return SCRIPT_FILE.test(word) ? `script ${baseName(word)}` : null;
+  }
+  return null;
+}
+
 /** The first command of a pipeline; null when it isn't one that only reads. */
 function stage(words: string[]): Stage | null {
   let name = head(words);
@@ -148,9 +185,15 @@ function stage(words: string[]): Stage | null {
   }
   if (name === 'sed') {
     // `sed -n '10,20p' file` prints part of a file; -i rewrites it.
-    if (rest.some((w) => /^(-i|--in-place)/.test(w)) || !rest.includes('-n')) return null;
-    const { positional } = args('read', rest.filter((w) => w !== '-n'), ['-e']);
-    return { kind: 'read', names: positional.slice(rest.includes('-e') ? 0 : 1).map(baseName) };
+    const inPlace = rest.some((w) => /^(-i|--in-place)/.test(w));
+    if (!inPlace && !rest.includes('-n')) return null;
+    const { positional } = args('read', rest.filter((w) => !/^(-n|-E|-r|-i.*|--in-place.*)$/.test(w)), ['-e']);
+    const files = positional.slice(rest.includes('-e') ? 0 : 1).map(baseName);
+    if (inPlace) return files.length ? { kind: 'edit', names: files } : null;
+    return { kind: 'read', names: files };
+  }
+  if (words.length === 2 && (/^(--version|-version|-V)$/.test(rest[0]) || (rest[0] === '-v' && SHORT_VERSION.has(baseName(name))))) {
+    return { kind: 'check', names: [baseName(name)] };
   }
   if (READ.has(name)) {
     const { positional, byFlag } = args('read', rest, ['-path', '-literalpath']);
@@ -167,7 +210,8 @@ function stage(words: string[]): Stage | null {
     const where = [...byFlag, ...positional].find((p) => !(name === 'dir' && /^\/[a-z]+$/i.test(p)));
     return { kind: 'list', names: where && where !== '.' ? [where] : [] };
   }
-  return null;
+  const run = scriptRun(words);
+  return run ? { kind: 'run', names: [run] } : null;
 }
 
 function isFilter(words: string[]) {
@@ -176,9 +220,17 @@ function isFilter(words: string[]) {
   return name !== 'sed' || !words.some((w) => /^(-i|--in-place)/.test(w));
 }
 
-const TITLES: Record<Kind, CommandSummary['title']> = { read: 'Read', search: 'Searched', list: 'Listed files' };
+const TITLES: Record<Kind, CommandSummary['title']> = { read: 'Read', search: 'Searched', list: 'Listed files', check: 'Checked', edit: 'Edited', run: 'Ran' };
 
-/** Names the command when every part of it only reads files, searches or lists; null otherwise. */
+function listed(names: string[]) {
+  return names.length > 3 ? `${names.slice(0, 3).join(', ')} +${names.length - 3}` : names.join(', ');
+}
+
+/**
+ * Names the command when every part of it is recognized; null otherwise. A script run or an
+ * in-place edit may come with reads and searches (checking the result) and is still named
+ * for the run or the edit; reads of different kinds, or an edit beside a run, stay unnamed.
+ */
 export function summarizeCommand(command: string | null | undefined): CommandSummary | null {
   if (!command || command.length > 4000) return null;
   const tokens = tokenize(command.trim());
@@ -194,7 +246,7 @@ export function summarizeCommand(command: string | null | undefined): CommandSum
     else return null; // a redirect to a file, or `&`
   }
 
-  let found: Stage | null = null;
+  const stages: Stage[] = [];
   for (const pipeline of statements) {
     if (pipeline.length === 1 && pipeline[0].length === 0) continue;
     if (pipeline.some((words) => words.length === 0)) return null;
@@ -205,13 +257,20 @@ export function summarizeCommand(command: string | null | undefined): CommandSum
     if (!current) return null;
     // `Get-ChildItem -Recurse | Select-String x` is a search of those files.
     const search = current.kind === 'list' ? filters.find((words) => SEARCH.has(head(words))) : undefined;
-    const resolved = search ? stage(search) ?? current : current;
-    if (found && found.kind !== resolved.kind) return null;
-    found = found ? { kind: found.kind, names: [...found.names, ...resolved.names] } : resolved;
+    stages.push(search ? stage(search) ?? current : current);
   }
-  if (!found) return null;
+  if (!stages.length) return null;
 
-  const names = found.names.filter((name, index, all) => all.indexOf(name) === index);
-  const detail = found.kind === 'read' ? (names.length > 3 ? `${names.slice(0, 3).join(', ')} +${names.length - 3}` : names.join(', ')) : names[0] ?? '';
-  return { title: TITLES[found.kind], detail: detail || null };
+  const kinds = new Set(stages.map((s) => s.kind));
+  let kind: Kind;
+  if (kinds.size === 1) kind = stages[0].kind;
+  else if (kinds.has('run') !== kinds.has('edit')) kind = kinds.has('run') ? 'run' : 'edit';
+  else return null;
+
+  const names = stages.filter((s) => s.kind === kind).flatMap((s) => s.names).filter((name, index, all) => all.indexOf(name) === index);
+  const detail =
+    kind === 'search' || kind === 'list' ? names[0] ?? ''
+    : kind === 'check' ? `${listed(names)} version${names.length > 1 ? 's' : ''}`
+    : listed(names);
+  return { title: TITLES[kind], detail: detail || null };
 }

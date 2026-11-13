@@ -1,4 +1,4 @@
-import type { ChatImage, ChatMessage, SideChatExchange } from './types';
+import type { ChatImage, ChatMessage, SideChatExchange, StepExplanation } from './types';
 import type {
   AgentInfo,
   IdleMode,
@@ -111,6 +111,11 @@ export interface InvokeMap {
   'chat.side': (id: string, question: string, earlier: SideChatExchange[]) => string;
   /** Forgets the side chat's own thread (Codex), so the next question starts afresh. */
   'chat.sideReset': (id: string) => void;
+  /**
+   * Explains one step (a tool call) in plain words. A one-off run of the account's small model that
+   * is given the step alone: the conversation isn't sent, added to, or needed running.
+   */
+  'chat.explain': (id: string, itemId: string) => StepExplanation;
   /** The agents archived in the session list: keep-warm skips them. */
   'agents.setArchived': (ids: string[]) => void;
   /** Starts sign-in for a connector and opens its page in the browser; returns the page. */
@@ -208,7 +213,7 @@ export const INVOKE_CHANNELS: InvokeChannel[] = [
   'agents.rename', 'agents.resume', 'agents.buffer', 'agents.fork',
   'chat.file', 'chat.items', 'chat.send', 'chat.interrupt', 'chat.respond', 'chat.configure', 'chat.switchCost', 'chat.commands', 'chat.queued',
   'chat.connectors', 'chat.connectorSignIn', 'chat.connectorReconnect', 'chat.contextUsage',
-  'chat.setIdleMode', 'chat.setKeepWarm', 'agents.setArchived', 'chat.side', 'chat.sideReset',
+  'chat.setIdleMode', 'chat.setKeepWarm', 'agents.setArchived', 'chat.side', 'chat.sideReset', 'chat.explain',
   'files.list', 'files.read', 'git.status', 'git.diff', 'git.commit',
   'processes.external', 'processes.kill',
   'usage.report', 'usage.export', 'usage.import', 'usage.forgetMachine', 'pricing.status', 'pricing.edit',

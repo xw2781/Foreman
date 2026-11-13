@@ -1,7 +1,7 @@
 {
   "name": "agent-task-center",
   "productName": "Foreman",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Run Claude Code and Codex side by side, watch every agent in one task manager, track context and cost, switch accounts, and let agents use the computer.",
   "main": "out/main/index.js",
   "author": "xwei",

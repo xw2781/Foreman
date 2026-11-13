@@ -366,6 +366,41 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* Beside a block's label: the folder a command ran in, the model that wrote an explanation. */
+.tool-block-note {
+  flex: 1;
+  min-width: 0;
+  margin-left: 8px;
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+/* A step in plain words: prose, where the blocks around it are code. */
+.tool-block.explain p {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.tool-explain {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.tool-explain .btn {
+  flex-shrink: 0;
+  margin-left: -9px;
+}
+.tool-explain .btn:not(:disabled):hover {
+  background: var(--surface-3);
+}
+.tool-explain-error {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--critical);
+  overflow-wrap: anywhere;
+}
 
 .tool-line.folded.expanded {
   border-bottom: 1px solid var(--border);

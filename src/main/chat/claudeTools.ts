@@ -5,6 +5,7 @@ import { describeToolInput } from '../streamFormat';
 import { clipText } from './log';
 import { browserToolDetail, browserToolTitle } from './browserTools';
 import { summarizeCommand } from './shellCommand';
+import { commandBody } from '../../shared/commandText';
 
 const DIFF_LINE_LIMIT = 600;
 
@@ -88,9 +89,12 @@ export function claudeToolDetail(tool: string, input: Record<string, any> | null
     return `${done}/${input.todos.length} done`;
   }
   if (isShell(tool) && typeof input.command === 'string') {
-    // What the command does, in words: the files it reads, else the agent's own description of it.
+    // What the command does, in words: the files it reads or edits, else the agent's own description
+    // of it, else the script it runs, else the command without the `cd` it starts with.
     const described = typeof input.description === 'string' ? input.description.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
-    return summarizeCommand(input.command)?.detail || described || describeToolInput(tool, input) || null;
+    const summary = summarizeCommand(input.command);
+    const named = summary && summary.title !== 'Ran' ? summary.detail : null;
+    return named || described || summary?.detail || describeToolInput(tool, { command: commandBody(input.command) }) || null;
   }
   if (tool === 'Skill' && typeof input.skill === 'string') return input.skill;
   if (tool.startsWith('mcp__')) {

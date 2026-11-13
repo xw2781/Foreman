@@ -1,5 +1,6 @@
-import type { ChatEntry, ChatImage, ChatMessage, ForkPoint, ForkSource, SettingsChange, SideChatExchange, SwitchCost } from '../shared/types';
+import type { ChatEntry, ChatImage, ChatMessage, ForkPoint, ForkSource, SettingsChange, SideChatExchange, StepExplanation, SwitchCost } from '../shared/types';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import { validateChatImages } from '../shared/chatImages';
 import path from 'node:path';
 import { resolveChatWorkspace } from './chatWorkspace';
@@ -32,6 +33,7 @@ import { ClaudeChat, claudeChatArgs } from './chat/claudeChat';
 import { KEEPALIVE_PROMPT, claudeCompactsIdle, idleCompactDue, keepaliveCosts, keepaliveDue, keepWarmAllowed } from './chat/idleCache';
 import { CodexChat } from './chat/codexChat';
 import { forkItems, forkPoint } from './chat/fork';
+import { cheapestModel, explainStep } from './chat/explain';
 import { LineSplitter, type ChatDriver, type ChatHost } from './chat/driver';
 import { locateCli, spawnSpec } from './cliLocator';
 import { defaultModel } from '../shared/models';
@@ -130,6 +132,8 @@ function newRunId() {
 
 export class AgentManager {
   private sessions = new Map<string, Session>();
+  /** Step explanations being written, by agent and step: a second request for one joins the first. */
+  private explaining = new Map<string, Promise<StepExplanation>>();
   private history: JsonStore<{ agents: AgentInfo[] }>;
   /** Each chat's last context breakdown, shown once the CLI that reported it has gone (it can only be asked while running). */
   private contextUsage: JsonStore<{ byAgent: Record<string, ContextUsage> }>;
@@ -818,6 +822,45 @@ export class AgentManager {
 
   chatSideReset(id: string) {
     this.sessions.get(id)?.driver?.resetSideChat?.();
+  }
+
+  /**
+   * Explains one step of the conversation in plain words: a one-off run of the account's small
+   * model that is given the step alone. Works for a conversation that has ended, too.
+   */
+  chatExplain(id: string, itemId: string): Promise<StepExplanation> {
+    const key = `${id}:${itemId}`;
+    const running = this.explaining.get(key);
+    if (running) return running;
+    const task = this.explain(id, itemId).finally(() => this.explaining.delete(key));
+    this.explaining.set(key, task);
+    return task;
+  }
+
+  private async explain(id: string, itemId: string): Promise<StepExplanation> {
+    const info = this.get(id);
+    const profile = info ? this.deps.profiles.get(info.profileId) : undefined;
+    if (!info || !profile) throw new Error('This conversation is no longer available.');
+    const item = (await this.chatItems(id)).find((entry) => entry.id === itemId);
+    if (!item || item.kind !== 'tool') throw new Error('That step is no longer in the conversation.');
+    const cli = await locateCli(profile.provider, this.deps.settings().cliPath[profile.provider]);
+    if (!cli.path) throw new Error(cli.error ?? 'CLI not found');
+    const env = this.deps.profiles.envFor(profile, cleanEnv());
+    if (profile.provider === 'claude' && cli.source === 'Foreman managed') env.DISABLE_AUTOUPDATER = '1';
+    // Claude Code's `haiku` is always its small model; Codex has no such name, so the cheapest the account lists.
+    const model = profile.provider === 'claude' ? 'haiku' : cheapestModel((this.deps.profiles.cliDefaults(profile).discoveredModels ?? []).map((m) => m.id));
+    const cwd = path.join(this.deps.userDataDir, 'explain');
+    fs.mkdirSync(cwd, { recursive: true });
+    return explainStep(item, {
+      provider: profile.provider,
+      cli: cli.path,
+      env,
+      cwd,
+      model,
+      // A new Codex thread can spend two minutes falling back from WebSockets on a network that blocks them.
+      timeoutMs: profile.provider === 'codex' ? 240_000 : 90_000,
+      kill: (pid) => void killTree(pid)
+    });
   }
 
   async chatCommands(id: string): Promise<ChatCommand[]> {

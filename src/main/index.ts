@@ -555,6 +555,7 @@ function registerIpc() {
   handle('agents.fork', (id, itemId) => agents.fork(id, typeof itemId === 'string' ? itemId : undefined));
   handle('chat.side', (id, question, earlier) => agents.chatSide(id, String(question ?? ''), Array.isArray(earlier) ? earlier : []));
   handle('chat.sideReset', (id) => agents.chatSideReset(id));
+  handle('chat.explain', (id, itemId) => agents.chatExplain(id, String(itemId ?? '')));
   handle('chat.items', (id) => agents.chatItems(id));
   handle('chat.file', async (id, href, action) => {
     const agent = agents.get(id);
@@ -821,13 +822,39 @@ function windowChrome() {
   return settings().lightPalette === 'grey' ? { page: '#d7d9dd', symbols: '#343a46' } : { page: '#ebe6dc', symbols: '#3d3629' };
 }
 
+/**
+ * Windows 10 (and Server up to 2022) draws the left, right and bottom edges of a window that has no
+ * native title bar, but not the top one; Windows 11 draws all four. There the page draws the top edge.
+ */
+const PAGE_DRAWS_TOP_EDGE = process.platform === 'win32' && Number(os.release().split('.')[2]) < 22000;
+
+function topEdgeShown() {
+  return PAGE_DRAWS_TOP_EDGE && !!mainWindow && !mainWindow.isMaximized() && !mainWindow.isFullScreen();
+}
+
+/**
+ * The native caption buttons sit on top of the page. While the page draws the top edge their background
+ * is the page color at zero alpha, so the edge shows through and the hover shade still suits the theme.
+ */
+function titleBarOverlay(chrome: ReturnType<typeof windowChrome>, seeThrough: boolean) {
+  return { color: seeThrough ? `${chrome.page}00` : chrome.page, symbolColor: chrome.symbols, height: 40 };
+}
+
+/** Shows the top edge only on a floating window: a maximized or full-screen one has no edges. */
+function syncTopEdge() {
+  if (!PAGE_DRAWS_TOP_EDGE || !mainWindow || mainWindow.isDestroyed()) return;
+  const shown = topEdgeShown();
+  mainWindow.setTitleBarOverlay(titleBarOverlay(windowChrome(), shown));
+  mainWindow.webContents.executeJavaScript(`document.documentElement.toggleAttribute('data-top-edge', ${shown})`).catch(() => {});
+}
+
 function applyTheme() {
   const theme = settings().theme;
   nativeTheme.themeSource = theme;
   if (mainWindow && !mainWindow.isDestroyed()) {
     const chrome = windowChrome();
     try {
-      mainWindow.setTitleBarOverlay({ color: chrome.page, symbolColor: chrome.symbols, height: 40 });
+      mainWindow.setTitleBarOverlay(titleBarOverlay(chrome, topEdgeShown()));
     } catch {
       // only on Windows with titleBarOverlay
     }
@@ -897,6 +924,8 @@ function createWindow() {
   });
   if (windowStore.data.maximized) mainWindow.maximize();
   mainWindow.once('ready-to-show', () => mainWindow?.show());
+  for (const event of ['maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen'] as const) mainWindow.on(event as 'maximize', syncTopEdge);
+  mainWindow.webContents.on('did-finish-load', syncTopEdge);
   const saveBounds = () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     windowStore.update({ bounds: mainWindow.isMaximized() ? windowStore.data.bounds : mainWindow.getBounds(), maximized: mainWindow.isMaximized() });

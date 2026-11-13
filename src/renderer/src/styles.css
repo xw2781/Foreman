@@ -30,6 +30,7 @@
   --overlay: rgba(6, 8, 12, 0.62);
   --border: rgba(255, 255, 255, 0.075);
   --border-strong: rgba(255, 255, 255, 0.14);
+  --window-edge: rgba(255, 255, 255, 0.2); /* the top edge Windows 10 doesn't draw */
   --text-primary: #eef1f6;
   --text-secondary: #a9b1c1;
   --text-muted: #6f7890;
@@ -76,6 +77,7 @@
 :root[data-theme='cream'],
 :root[data-theme='grey'] {
   color-scheme: light;
+  --window-edge: rgba(0, 0, 0, 0.3);
   --good-soft: rgba(12, 163, 12, 0.12);
   --warning-soft: rgba(250, 178, 25, 0.2);
   --critical-soft: rgba(208, 59, 59, 0.12);
@@ -218,6 +220,16 @@ button {
   -webkit-app-region: drag;
   border-bottom: 1px solid var(--border);
   background: var(--page);
+}
+/* Windows 10 leaves the top edge of the window undrawn; main sets data-top-edge while the window floats. */
+:root[data-top-edge]::before {
+  content: '';
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--window-edge);
+  z-index: 10000;
+  pointer-events: none;
 }
 .titlebar .brand {
   display: flex;

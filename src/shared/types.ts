@@ -173,6 +173,13 @@ export interface SideChatExchange {
   answer: string;
 }
 
+/** What one step of a conversation did, in plain words: written on request by the account's small model. */
+export interface StepExplanation {
+  text: string;
+  /** The model that wrote it, when the CLI said. */
+  model: string | null;
+}
+
 export interface TokenUsage {
   inputTokens: number;
   cachedInputTokens: number;
