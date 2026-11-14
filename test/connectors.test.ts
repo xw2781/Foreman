@@ -6,7 +6,7 @@ import type { ChatHost } from '../src/main/chat/driver';
 
 function fakeHost() {
   const log = new ChatLog();
-  const host: ChatHost = { log, changed: () => {}, status: () => {}, session: () => {}, turnComplete: () => {}, limits: () => {}, requeue: () => {} };
+  const host: ChatHost = { log, changed: () => {}, status: () => {}, session: () => {}, turnComplete: () => {}, limits: () => {}, cost: (usd) => usd, requeue: () => {} };
   return { host, log };
 }
 

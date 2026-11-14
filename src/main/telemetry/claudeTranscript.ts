@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { TokenUsage } from '../../shared/types';
-import { emptyUsage, modelKey, recordRequest, type ModelAccumulator } from './pricing';
+import { addUsage, emptyUsage, modelKey, recordRequest, type ModelAccumulator } from './pricing';
 import {
   IncrementalLineReader,
   addToDay,
@@ -49,6 +49,19 @@ export interface ClaudeTranscriptState {
   reportedCostUsd: number | null;
   /** Model ids as Claude Code names them, e.g. "claude-opus-5-5[1m]". */
   reportedModels: string[];
+  /** That record's tokens and cost per model, by normalized model id. */
+  reportedByModel: Record<string, ReportedModelCost>;
+}
+
+/** One model's entry in a `cost-state` record: every request the CLI made, background ones included. */
+export interface ReportedModelCost {
+  usage: TokenUsage;
+  usd: number;
+  /**
+   * The tokens alone account for the cost: the record splits cache writes by lifetime and
+   * has no per-request fees (web searches). Older records lack the split.
+   */
+  exact: boolean;
 }
 
 function initialState(filePath: string): ClaudeTranscriptState {
@@ -76,7 +89,8 @@ function initialState(filePath: string): ClaudeTranscriptState {
     lastCompactionAt: null,
     turn: null,
     reportedCostUsd: null,
-    reportedModels: []
+    reportedModels: [],
+    reportedByModel: {}
   };
 }
 
@@ -268,7 +282,38 @@ export class ClaudeTranscriptParser {
     const total = Number(record.totalCostUSD);
     if (Number.isFinite(total) && total >= 0) s.reportedCostUsd = total;
     const models = object(record.modelUsage);
-    if (models) s.reportedModels = Object.keys(models);
+    if (!models) return;
+    s.reportedModels = Object.keys(models);
+    // Each record is the running total, so the latest replaces the one before.
+    s.reportedByModel = {};
+    for (const [id, value] of Object.entries(models)) {
+      const entry = object(value);
+      const usd = Number(entry?.costUSD);
+      if (!entry || !Number.isFinite(usd) || usd < 0) continue;
+      const read = nonNegative(entry.cacheReadInputTokens);
+      const written = nonNegative(entry.cacheCreationInputTokens);
+      const split = 'cacheCreationEphemeral1hInputTokens' in entry;
+      const input = nonNegative(entry.inputTokens) + read + written;
+      const output = nonNegative(entry.outputTokens);
+      const usage: TokenUsage = {
+        inputTokens: input,
+        cachedInputTokens: read,
+        cacheWriteInputTokens: written,
+        // Claude Code writes 1-hour entries; records without the split are priced as such.
+        cacheWriteLongInputTokens: split ? nonNegative(entry.cacheCreationEphemeral1hInputTokens) : written,
+        outputTokens: output,
+        reasoningOutputTokens: nonNegative(entry.thinkingTokens),
+        totalTokens: input + output
+      };
+      const key = modelKey(id);
+      const existing = s.reportedByModel[key];
+      const exact = split && nonNegative(entry.webSearchRequests) === 0;
+      if (existing) {
+        addUsage(existing.usage, usage);
+        existing.usd += usd;
+        existing.exact = existing.exact && exact;
+      } else s.reportedByModel[key] = { usage, usd, exact };
+    }
   }
 }
 

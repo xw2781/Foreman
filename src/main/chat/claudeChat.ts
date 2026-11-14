@@ -98,7 +98,6 @@ export class ClaudeChat implements ChatDriver {
   private steering = new Set<string>();
   /** Whether the CLI reports `command_lifecycle` for the messages it's given (older ones don't). */
   private lifecycle = false;
-  private lastTotalCost = 0;
   /** The CLI's reply to `initialize` (null if it refused). */
   private initialized: Promise<any> | null = null;
   /** From each turn's init event: which commands are skills, which only work in the terminal. */
@@ -415,8 +414,7 @@ export class ClaudeChat implements ChatDriver {
     this.busy = next;
     const ok = !event.is_error && event.subtype === 'success';
     const total = typeof event.total_cost_usd === 'number' ? event.total_cost_usd : null;
-    const cost = total !== null && total >= this.lastTotalCost ? total - this.lastTotalCost : total;
-    if (total !== null) this.lastTotalCost = total;
+    const cost = total === null ? null : this.host.cost(total);
     let text: string | null = null;
     if (interrupted) text = 'Interrupted';
     else if (!ok) text = (typeof event.result === 'string' && event.result) || (Array.isArray(event.errors) ? event.errors.join('\n') : '') || String(event.subtype ?? 'Failed');

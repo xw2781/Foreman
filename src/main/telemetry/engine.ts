@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type {
+  PriceMismatch,
   ProfileLimits,
   Provider,
   SessionTelemetry,
@@ -16,7 +17,7 @@ import type {
   UsageReport,
   UsageSessionRow
 } from '../../shared/types';
-import { contextWindowForModel, costFromModels, currentPricing, pricingVersion, type ModelAccumulator } from './pricing';
+import { contextWindowForModel, costFromModels, currentPricing, priceUsage, pricingVersion, rateForModel, type ModelAccumulator } from './pricing';
 import {
   ClaudeTranscriptParser,
   claudeContextWindow,
@@ -84,11 +85,17 @@ export interface FileSummary {
   limits: ProfileLimits | null;
   /** pricingVersion() the costs were computed with. */
   pricing?: string;
+  /** Claude: per model, what Claude Code says the session's tokens cost and what the price table makes of the same tokens. */
+  priceChecks?: Record<string, { reportedUsd: number; tableUsd: number }>;
+  cliVersion?: string | null;
 }
 
 const ACTIVE_WRITE_MS = 45_000;
+/** Claude Code's price for a model and the table's may differ by this share before it's reported. */
+const PRICE_MISMATCH = 0.03;
 // 7: retain child turns whose timestamps were flattened during rollout migration.
-const CACHE_VERSION = 8;
+// 9: price checks against Claude Code's own figures.
+const CACHE_VERSION = 9;
 
 type Parser = ClaudeTranscriptParser | CodexRolloutParser;
 
@@ -225,6 +232,11 @@ export class TelemetryEngine {
       percent = snapshot.contextPercent ?? (used / contextWindow) * 100;
     }
     const reported = snapshot?.costUsd ?? state.reportedCostUsd;
+    // Requests Claude Code makes in the background (small-model housekeeping) never reach the
+    // transcript; its saved figures are all there is for a model seen nowhere else.
+    for (const [model, entry] of Object.entries(state.reportedByModel)) {
+      if (!byModel.has(model)) byModel.set(model, { usage: { ...entry.usage }, usd: entry.usd, priced: true, requests: 0 });
+    }
     return {
       provider: 'claude',
       sessionId: state.sessionId,
@@ -245,7 +257,7 @@ export class TelemetryEngine {
       compactions: state.compactions,
       lastCompactionAt: state.lastCompactionAt,
       taskActive: state.turn === null ? null : state.turn === 'working',
-      cost: costFromModels(byModel, reported),
+      cost: { ...costFromModels(byModel, reported), savedUsd: state.reportedCostUsd },
       limits: null,
       source: snapshot && snapshotFresh ? 'status-line' : 'transcript'
     };
@@ -527,7 +539,9 @@ export class TelemetryEngine {
       contextPercent: claudeContextPercent(state, window),
       compactions: state.compactions,
       working: state.turn === 'working',
-      limits: null
+      limits: null,
+      priceChecks: priceChecks(state),
+      cliVersion: state.version
     };
   }
 
@@ -679,8 +693,16 @@ export class TelemetryEngine {
     const models = new Map<string, UsageModelRow>();
     const profileIds = new Set(this.profiles.map((p) => p.id));
 
+    const checks = new Map<string, FileSummary>();
+
     for (const summary of this.summaries.values()) {
       if (!profileIds.has(summary.profileId)) continue;
+      // Claude Code's rates ship with it: the newest version to use a model (its latest session) is the one to compare with.
+      for (const model of Object.keys(summary.priceChecks ?? {})) {
+        const best = checks.get(model);
+        const newer = best ? compareVersions(summary.cliVersion, best.cliVersion) : 1;
+        if (newer > 0 || (newer === 0 && summary.mtimeMs > best!.mtimeMs)) checks.set(model, summary);
+      }
       let sessionUsd = 0;
       let sessionPriced = false;
       let rangeTokens = 0;
@@ -787,7 +809,16 @@ export class TelemetryEngine {
           .sort((a, b) => a.name.localeCompare(b.name))
           .map((m): UsageMachine => ({ id: m.id, name: m.name, local: false, dataAt: m.dataAt || null }))
       ],
-      remoteAccounts
+      remoteAccounts,
+      priceMismatches: [...checks]
+        .map(([model, summary]): PriceMismatch => ({
+          model,
+          ...summary.priceChecks![model],
+          cliVersion: summary.cliVersion ?? null,
+          sessionAt: summary.updatedAt
+        }))
+        .filter((check) => Math.abs(check.tableUsd - check.reportedUsd) > PRICE_MISMATCH * check.reportedUsd)
+        .sort((a, b) => a.model.localeCompare(b.model))
     };
   }
 
@@ -973,6 +1004,32 @@ function addFacts(
     fact.tokens += entry.tokens;
     fact.requests += entry.requests;
   }
+}
+
+/**
+ * Prices the tokens Claude Code counted per model with the table's rates, next to its own
+ * figure. Both price the same tokens, so a gap can only be a rate. Left out: models without
+ * a rate, figures the tokens don't fully account for, and amounts too small to compare.
+ */
+function priceChecks(state: ClaudeTranscriptState): FileSummary['priceChecks'] {
+  const checks: NonNullable<FileSummary['priceChecks']> = {};
+  for (const [model, entry] of Object.entries(state.reportedByModel)) {
+    const rate = rateForModel(model);
+    if (!rate || !entry.exact || entry.usd < 0.01) continue;
+    checks[model] = { reportedUsd: entry.usd, tableUsd: priceUsage(rate, entry.usage) };
+  }
+  return Object.keys(checks).length ? checks : undefined;
+}
+
+/** Orders dotted version numbers ("2.1.322"); an unknown version sorts first. */
+function compareVersions(a: string | null | undefined, b: string | null | undefined): number {
+  const parts = (v: string | null | undefined) => (v ?? '').split('.').map((n) => parseInt(n, 10) || 0);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i += 1) {
+    const diff = (x[i] ?? 0) - (y[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
 }
 
 function modelsRecord(byModel: Map<string, ModelAccumulator>) {

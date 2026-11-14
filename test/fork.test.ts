@@ -110,6 +110,7 @@ function fakeHost() {
     session: (info) => sessions.push(info),
     turnComplete: () => {},
     limits: () => {},
+    cost: (usd) => usd,
     requeue: () => {}
   };
   return { host, log, sessions };

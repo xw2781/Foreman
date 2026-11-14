@@ -49,6 +49,7 @@ import { JsonStore, cleanEnv, exists } from './util';
 import { SubagentTracker, settleSubagents } from './subagents';
 import { savedSession } from './savedSession';
 import { claudeLoginUrl } from './loginUrl';
+import { trackReportedCost } from './reportedCost';
 import { defaultStatusText, originalStatusLine, parseStatusPayload, runStatusCommand, type StatusSnapshot } from './statusLine';
 
 const BUFFER_LIMIT = 2_500_000;
@@ -91,6 +92,8 @@ interface Session {
   lastTelemetryKey: string;
   discoveryAttempts: number;
   statusLine: StatusSnapshot | null;
+  /** Claude: the total saved in the resumed session's file at launch, which the CLI's cost counter starts from. */
+  costRestored: number | null;
   /** Chat mode: the conversation and the protocol driver behind it. */
   chat: ChatLog | null;
   driver: (ChatDriver & { dispose?: (reason: string) => void }) | null;
@@ -316,6 +319,7 @@ export class AgentManager {
       completedAt: previous?.completedAt ?? null,
       commandLine: [cli.path, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' '),
       telemetry: options.resumeSessionId ? previous?.telemetry ?? null : null,
+      reportedCost: options.resumeSessionId ? previous?.reportedCost ?? null : null,
       resources: null,
       usesScreen: false,
       prompt: options.prompt ?? previous?.prompt ?? null,
@@ -330,6 +334,7 @@ export class AgentManager {
       formatter: headless && profile.provider === 'claude' ? new ClaudeStreamFormatter() : null,
       claudeSessionId,
       settingsFile,
+      costRestored: (options.resumeSessionId && previous?.telemetry?.sessionId === options.resumeSessionId ? previous.telemetry.cost.savedUsd : null) ?? null,
       chat,
       commands: previousSession?.commands ?? [],
       titleLocked: info.titleCustom === true || options.mode === 'login'
@@ -391,6 +396,7 @@ export class AgentManager {
       lastTelemetryKey: '',
       discoveryAttempts: 0,
       statusLine: null,
+      costRestored: null,
       chat: null,
       driver: null,
       subagents,
@@ -608,6 +614,7 @@ export class AgentManager {
         this.syncTitle(session);
       },
       limits: (limits) => this.deps.profiles.applyReportedLimits(session.profile.id, limits),
+      cost: (counterUsd) => this.trackCost(session, counterUsd),
       requeue: (itemId) => {
         session.chat?.update(itemId, 'user', () => ({ delivery: 'queued' }));
         this.scheduleChatFlush();
@@ -728,6 +735,7 @@ export class AgentManager {
       info.transcriptPath = file;
       info.sessionId = telemetry.sessionId ?? info.sessionId;
       info.telemetry = telemetry;
+      this.applyReportedCost(info);
       if (!info.titleCustom && telemetry.title) info.title = telemetry.title;
       if (telemetry.model) info.model = telemetry.model;
       this.archive(info);
@@ -1256,6 +1264,8 @@ export class AgentManager {
     if (session.settingsFile) this.deps.hooks.removeSettingsFile(info.id);
     if (info.mode === 'task' && !session.stopping) this.onAttention(info, status === 'failed' ? 'failed' : 'task-complete');
     if (info.mode === 'login') this.deps.profiles.refresh([session.profile.id]).catch(() => {});
+    const taskCost = session.formatter?.result?.costUsd;
+    if (typeof taskCost === 'number') this.trackCost(session, taskCost);
     // Pick up the final telemetry once, then archive.
     this.refreshTelemetry(session)
       .catch(() => {})
@@ -1536,6 +1546,7 @@ export class AgentManager {
     if (!session) return '';
     const snapshot = parseStatusPayload(payload);
     session.statusLine = snapshot;
+    if (snapshot.costUsd !== null) this.trackCost(session, snapshot.costUsd);
     if (snapshot.limits) this.deps.profiles.applyReportedLimits(session.profile.id, snapshot.limits);
     if (session.info.telemetry) {
       this.applyStatusLine(session);
@@ -1551,10 +1562,36 @@ export class AgentManager {
     return defaultStatusText(snapshot, session.profile.label);
   }
 
+  /**
+   * Folds a reading of the CLI's own cost counter into the agent's running total
+   * (`trackReportedCost`) and returns what it added.
+   */
+  private trackCost(session: Session, counterUsd: number): number {
+    const info = session.info;
+    const { cost, addedUsd } = trackReportedCost(info.reportedCost, info.runId, counterUsd, session.costRestored);
+    info.reportedCost = cost;
+    if (addedUsd > 0) {
+      this.applyReportedCost(info);
+      this.markChanged(info.id);
+    }
+    return addedUsd;
+  }
+
+  /** Telemetry comes fresh from the session file each time: put the agent's own total back on it. */
+  private applyReportedCost(info: AgentInfo) {
+    const t = info.telemetry;
+    if (!t || !info.reportedCost) return;
+    // A CLI that exited cleanly saved its final count, which can be a request ahead of the last reading.
+    t.cost = { ...t.cost, reportedUsd: Math.max(info.reportedCost.totalUsd, t.cost.savedUsd ?? 0) };
+  }
+
   private applyStatusLine(session: Session) {
     const t = session.info.telemetry;
+    if (!t) return;
+    // Unlike context size, cost doesn't go stale: an idle session's total can't grow.
+    this.applyReportedCost(session.info);
     const s = session.statusLine;
-    if (!t || !s || Date.now() - s.at > 10 * 60_000) return;
+    if (!s || Date.now() - s.at > 10 * 60_000) return;
     // A status line drawn before the latest compaction (an idle one, say) still shows the old context.
     const beforeCompaction = t.lastCompactionAt !== null && s.at < Date.parse(t.lastCompactionAt);
     if (s.contextWindow > 0 && !beforeCompaction) {
@@ -1563,7 +1600,6 @@ export class AgentManager {
       t.contextUsedTokens = s.usedTokens || t.contextUsedTokens;
       t.contextPercent = s.usedPercent ?? (t.contextUsedTokens / s.contextWindow) * 100;
     }
-    if (s.costUsd !== null) t.cost = { ...t.cost, reportedUsd: s.costUsd };
     t.source = 'status-line';
     this.changed.add(session.info.id);
   }

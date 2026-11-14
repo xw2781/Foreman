@@ -23,6 +23,7 @@ function fakeHost() {
       turns += 1;
     },
     limits: () => {},
+    cost: (usd) => usd,
     requeue: (id) => {
       requeued.push(id);
       log.update(id, 'user', () => ({ delivery: 'queued' }));

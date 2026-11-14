@@ -128,6 +128,32 @@ describe('Claude transcript parser', () => {
     expect(claudeContextWindow(state, 200_000, 500_000, { 'claude-opus-5-5': 300_000 })).toEqual({ window: 300_000, assumed: true });
   });
 
+  it("keeps the latest cost-state record's tokens and cost per model", async () => {
+    const file = path.join(dir, `${SESSION}.jsonl`);
+    const record = (modelUsage: Record<string, unknown>) => JSON.stringify({ type: 'cost-state', totalCostUSD: 1, modelUsage });
+    fs.writeFileSync(
+      file,
+      [
+        record({ 'claude-opus-5-5': { inputTokens: 1, outputTokens: 1, costUSD: 0.5 } }),
+        record({
+          'claude-sonnet-5-5[1m]': { inputTokens: 80, outputTokens: 29_885, thinkingTokens: 5_663, cacheReadInputTokens: 3_340_077, cacheCreationInputTokens: 95_078, cacheCreationEphemeral5mInputTokens: 0, cacheCreationEphemeral1hInputTokens: 95_078, webSearchRequests: 0, costUSD: 1.0133297 },
+          'claude-haiku-5-5': { inputTokens: 24_922, outputTokens: 1_707, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, cacheCreationEphemeral5mInputTokens: 0, cacheCreationEphemeral1hInputTokens: 0, webSearchRequests: 2, costUSD: 0.0233457 },
+          'claude-haiku-4-5-20251001': { inputTokens: 971, outputTokens: 13, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, webSearchRequests: 0, costUSD: 0.001036 }
+        })
+      ].join('\n') + '\n'
+    );
+    const { reportedByModel } = await new ClaudeTranscriptParser(file).update();
+    expect(Object.keys(reportedByModel).sort()).toEqual(['claude-haiku-4-5', 'claude-haiku-5-5', 'claude-sonnet-5-5']);
+    expect(reportedByModel['claude-sonnet-5-5']).toEqual({
+      usage: { inputTokens: 80 + 3_340_077 + 95_078, cachedInputTokens: 3_340_077, cacheWriteInputTokens: 95_078, cacheWriteLongInputTokens: 95_078, outputTokens: 29_885, reasoningOutputTokens: 5_663, totalTokens: 80 + 3_340_077 + 95_078 + 29_885 },
+      usd: 1.0133297,
+      exact: true
+    });
+    // Web searches are billed per request, and older records don't say how long cache writes last.
+    expect(reportedByModel['claude-haiku-5-5'].exact).toBe(false);
+    expect(reportedByModel['claude-haiku-4-5'].exact).toBe(false);
+  });
+
   it('attributes subagent transcripts to their parent session', () => {
     expect(sessionIdForTranscript(path.join('C:', 'u', '.claude', 'projects', 'C--repo', SESSION, 'subagents', 'agent-abc.jsonl'))).toBe(SESSION);
     expect(sessionIdForTranscript(path.join('C:', 'u', '.claude', 'projects', 'C--repo', `${SESSION}.jsonl`))).toBe(SESSION);

@@ -3,6 +3,7 @@ import { Download, FolderOpen, RefreshCw } from 'lucide-react';
 import { PROVIDERS, PROVIDER_LABEL, type AppSettings, type PricingStatus, type UpdateStatus } from '@shared/types';
 import { call, errorMessage, listen } from '../api';
 import { useApp } from '../store';
+import { usd } from '../format';
 import { VOICE_MODELS, voiceModel } from '@shared/voiceModels';
 import { describeVoiceStatus, prepareVoiceModel, useVoiceStatus } from '../voice/engine';
 import { Segmented, Select, Switch, confirmDialog } from '../ui';
@@ -43,6 +44,7 @@ export function SettingsView() {
   const env = useApp((s) => s.env);
   const appUpdate = useApp((s) => s.update);
   const toast = useApp((s) => s.toast);
+  const priceMismatches = useApp((s) => s.usage?.priceMismatches) ?? [];
   const [overrideModel, setOverrideModel] = useState('');
   const [overrideSize, setOverrideSize] = useState('');
   const [pricing, setPricing] = useState<PricingStatus | null>(null);
@@ -396,6 +398,13 @@ export function SettingsView() {
               {pricing?.exists ? 'Your pricing.json is applied over the built-in table' : 'Edit prices to add models or correct rates without waiting for an app update'}; changes apply when the file is saved.
               {pricing?.error ? <span style={{ color: 'var(--critical)' }}> {pricing.error}</span> : null}
               {pricing?.problems.length ? <span style={{ color: 'var(--critical)' }}> Skipped: {pricing.problems.join('; ')}</span> : null}
+              {priceMismatches.map((m) => (
+                <span key={m.model} style={{ display: 'block', color: 'var(--critical)' }}>
+                  Claude Code{m.cliVersion ? ` ${m.cliVersion}` : ''} prices {m.model} differently: {usd(m.reportedUsd)} for tokens this table prices at {usd(m.tableUsd)} (
+                  {m.tableUsd > m.reportedUsd ? '+' : '−'}
+                  {Math.round((Math.abs(m.tableUsd - m.reportedUsd) / m.reportedUsd) * 100)}%). Check the model’s rates, or update Claude Code if it’s the one out of date.
+                </span>
+              ))}
             </>
           }
         >

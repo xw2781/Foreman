@@ -193,10 +193,24 @@ export interface TokenUsage {
 export interface CostEstimate {
   /** null when no request in the session could be priced. */
   totalUsd: number | null;
-  /** Claude Code's own client-side estimate, when a status-line capture reported one. */
+  /**
+   * Claude Code's own figure for the session: the agent's running total of what the CLI
+   * reported (chat turns, status line), else the total saved in the session file.
+   */
   reportedUsd: number | null;
+  /** The total in the session file's latest `cost-state` record: where Claude Code's count starts when the session is resumed. */
+  savedUsd?: number | null;
   unpricedModels: string[];
   byModel: Array<{ model: string; usd: number | null; usage: TokenUsage }>;
+}
+
+/** What Claude Code has reported an agent's session to cost, summed over every process it ran under. */
+export interface ReportedCost {
+  totalUsd: number;
+  /** The run (`AgentInfo.runId`) the counter below belongs to. */
+  runId: string;
+  /** The CLI's cost counter when last read in that run; it starts over with each process. */
+  counterUsd: number;
 }
 
 export interface SessionTelemetry {
@@ -263,6 +277,8 @@ export interface AgentInfo {
   reopenOnStart?: boolean;
   commandLine: string;
   telemetry: SessionTelemetry | null;
+  /** Claude: the cost the CLI itself reported, kept across restarts and resumes. */
+  reportedCost?: ReportedCost | null;
   resources: AgentResources | null;
   usesScreen: boolean;
   prompt: string | null;
@@ -639,6 +655,21 @@ export interface UsageReport {
   machines: UsageMachine[];
   /** Accounts on other computers that match no account here (by email). */
   remoteAccounts: UsageRemoteAccount[];
+  /** Claude models whose latest session Claude Code priced differently from the price table. */
+  priceMismatches: PriceMismatch[];
+}
+
+/**
+ * One model's tokens in a session, as Claude Code priced them and as the price table does.
+ * A gap means one of the two has a wrong rate for the model.
+ */
+export interface PriceMismatch {
+  model: string;
+  reportedUsd: number;
+  tableUsd: number;
+  /** The Claude Code version that reported it: older versions carry older rates. */
+  cliVersion: string | null;
+  sessionAt: string | null;
 }
 
 export interface UsageMachine {

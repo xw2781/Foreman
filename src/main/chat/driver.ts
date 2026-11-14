@@ -14,6 +14,12 @@ export interface ChatHost {
   session(info: { sessionId?: string; transcriptPath?: string; model?: string; permission?: string; title?: string }): void;
   turnComplete(): void;
   limits(limits: ProfileLimits): void;
+  /**
+   * The CLI's own cost counter after a turn (Claude Code). It runs for the life of the
+   * process and may start from a resumed session's saved total, so the host keeps the
+   * session's total; returns what this turn added.
+   */
+  cost(counterUsd: number): number;
   /** A message meant for the running turn couldn't go in; hold it for the next one. */
   requeue(itemId: string): void;
 }

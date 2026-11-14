@@ -1,35 +1,35 @@
-# Cost estimates: fixes and to-do
+# Cost estimates: fixes
 
-Claude cost estimates came out 23–58% higher than the real API cost. The error grew with context size, because cache reads are a bigger share of the tokens in long contexts. Foreman read the tokens from the transcripts correctly. The cause was a wrong rate in the price table. This note records the fix and the follow-up changes still to make.
+Claude cost estimates came out 23–58% higher than the real API cost. The error grew with context size, because cache reads are a bigger share of the tokens in long contexts. Foreman read the tokens from the transcripts correctly. The cause was a wrong rate in the price table. This note records the fix and the follow-up changes, all of which are now made.
 
-## Done
+## The rate fix
 
 - **Claude Sonnet 5.5 cache-read rate.** `src/main/telemetry/prices.json` had `cachedInput: 0.2` (the Claude Opus 5.5 rate). The published rate is `0.1`. Fixed, with `pricingDate` moved to 2026-11-13 so the shipped table outranks older `pricing.json` override copies (which carry the old rate). `test/pricing.test.ts` had the wrong rate written into it too; corrected.
   - After the fix, recomputed estimates match real cost to within about 1%.
   - Installed builds keep the wrong rate until a release ships. Until then, a user can fix it in Settings → Context & cost → Model prices: set Sonnet 5.5 `cachedInput` to `0.1` and `pricingDate` to `2026-11-13`.
 
-## To do
+## Follow-ups
 
-### 1. Use Claude Code's own cost for chat sessions
+### 1. Chat sessions use Claude Code's own cost
 
-Claude Code sends `total_cost_usd` in every stream-json `result` event. `ClaudeChat.onResult` (`src/main/chat/claudeChat.ts`, around line 417) uses it only for the per-turn cost in the chat log. The session's `telemetry.cost.reportedUsd` is never set from it, so the agent list, details panel and Task Manager fall back to the transcript estimate for every chat session. The UI already prefers `reportedUsd` over `totalUsd`.
+`ClaudeChat.onResult` hands each `result` event's `total_cost_usd` to the host (`ChatHost.cost`). `AgentManager.trackCost` folds it into `AgentInfo.reportedCost`, a running total that is archived with the agent and put back on `telemetry.cost.reportedUsd` each time telemetry is re-read. The agent list, details panel and Task Manager already prefer `reportedUsd`. Background tasks record the cost of their one `result` the same way.
 
-- Pass the per-turn cost from the driver to `AgentManager`, add it to a running total for the session, and set `t.cost.reportedUsd` from that total, the same way `applyStatusLine` does for terminal agents (`src/main/agents.ts`, around line 1566).
-- `total_cost_usd` counts from zero each time the CLI process starts, so a restart or resume starts over. Keep the running total on Foreman's side (the existing `lastTotalCost` difference already handles one process) and save it with the session's archived info so it survives restarts.
-- Check how Claude Code's count behaves after `--resume`: whether it starts from zero or restores the previous total. Build the running total to fit.
+How the count behaves after `--resume` (checked with Claude Code 2.1.323, print mode, two processes on one session): on a clean exit the CLI appends a `cost-state` record to the session file, and a resumed process starts its counter from that record's total, not from zero. A process that is killed writes no record, and Foreman stops agents by killing them, so the next process starts from whatever older record the file holds, or from zero. `trackReportedCost` (`src/main/reportedCost.ts`) covers both: it keeps the total on Foreman's side, and at the first reading of a new process it subtracts the saved total (`cost.savedUsd`, read when the process was launched) if the counter starts at or above it. This also fixed the chat log's per-turn cost, which showed the whole restored total on the first turn after a resume.
 
-### 2. Keep the last status-line cost instead of dropping it after 10 minutes
+### 2. The last status-line cost is kept
 
-`applyStatusLine` ignores a status-line snapshot more than 10 minutes old, so an idle terminal agent goes back to the estimate. The 10-minute rule makes sense for context size, which goes stale. Cost doesn't go stale: an idle session's cost can't grow. Keep the last reported cost (subject to the same per-run caveat as item 1) and apply the age rule only to the context fields.
+Status-line cost goes through the same running total, so it no longer depends on the snapshot's age. `applyStatusLine` applies the 10-minute rule to the context fields only.
 
-### 3. Flag prices that disagree with Claude Code's
+### 3. Prices that disagree with Claude Code's are flagged
 
-When a session has both a reported cost and a transcript estimate, compare them. A gap of more than a few percent most likely means a wrong rate in the table. The `cost-state` record's `modelUsage` gives `costUSD` and token counts per model, so a gap can be traced to one model. Show the mismatch in Settings → Model prices or log it. The Sonnet 5.5 rate would have been caught on its first session.
+The parser keeps the latest `cost-state` record's per-model tokens and cost (`reportedByModel`). For each model the usage scan prices those same tokens with the table and stores both figures with the file's summary. The usage report lists a model in `priceMismatches` when the two differ by more than 3%, and Settings → Model prices shows it. Both figures price the same tokens, so a gap can only be a rate.
 
-### 4. Check each Claude model's rates against a real figure
+Two limits keep the check exact. It uses only records that split cache writes into 5-minute and 1-hour tokens (Claude Code 2.1.311 and later) and have no web searches, which are billed per request. And per model it compares against the session from the newest Claude Code version, because the CLI's own rates change between versions: 2.1.288 priced Sonnet 5.5 cache reads at $0.20, and 2.1.318 priced Fable 5.2 at $5/$25 against a published $8/$40. A flag therefore means the table and the current CLI disagree; either can be the one that is wrong.
 
-`test/pricing.test.ts` checks Claude Opus 5.5 against a real `cost-state` figure. The Sonnet 5.5 test only repeated the table's own value, so it couldn't catch the mistake. Add a test that checks a real `cost-state` `modelUsage` entry for each current Claude model (Sonnet 5.5, Haiku 5.5, Fable 5.x) whenever its rate is added or changed.
+### 4. Each current Claude model is checked against a real figure
 
-### 5. Small gap: background requests missing from transcripts
+`test/pricing.test.ts` prices one real `cost-state` `modelUsage` entry each for Fable 5.2, Sonnet 5.5, Opus 5.5 and Haiku 5.5 and expects Claude Code's `costUSD` to six decimals. Fable 5.2, Mythos 5.2 and Haiku 5.5 were missing from the table and were added at their published rates. Haiku 5.5 costs 5x for prompts over 100K tokens; the table has no way to say that and lists the base rate.
 
-`cost-state` `modelUsage` includes small Claude Haiku 5.5 requests that Claude Code makes in the background and that never show up as assistant records in the transcript. The transcript estimate leaves these out. They're too small to matter on their own. Item 1 covers them for live sessions; for history, consider adding the `cost-state` per-model figures when they're present.
+### 5. Background requests count toward a session's cost
+
+Claude Code's small background requests (Haiku) appear in `cost-state` `modelUsage` but never as assistant records. Session telemetry now adds the record's figures for any model that neither the transcript nor its subagent transcripts mention. The Usage page still totals transcripts only: its per-file summaries can't tell a background model from one a subagent used, and the amounts are fractions of a cent per session.

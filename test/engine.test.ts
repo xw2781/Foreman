@@ -90,6 +90,48 @@ describe('usage report', () => {
     expect(report.sessions[0].models.sort()).toEqual(['claude-made-up-9', 'claude-sonnet-5']);
   });
 
+  it("checks the price table against Claude Code's own figures and counts its background requests", async () => {
+    const stamp = new Date().toISOString();
+    const claudeDir = path.join(root, 'claude');
+    const file = path.join(claudeDir, 'projects', 'C--work', `${SESSION}.jsonl`);
+    const reported = (tokens: Record<string, number>, costUSD: number) => ({
+      inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, cacheCreationEphemeral5mInputTokens: 0, cacheCreationEphemeral1hInputTokens: 0, webSearchRequests: 0, ...tokens, costUSD
+    });
+    write(file, [
+      {
+        type: 'assistant', cwd: 'C:\\work', version: '2.1.288', sessionId: SESSION, requestId: 'r1', timestamp: stamp,
+        message: { id: 'r1', model: 'claude-sonnet-5-5', stop_reason: 'end_turn', usage: { input_tokens: 0, cache_read_input_tokens: 10_000_000, output_tokens: 0 } }
+      },
+      {
+        type: 'cost-state', totalCostUSD: 2.2002,
+        modelUsage: {
+          // Priced by a CLI that charged $0.20/M for Sonnet 5.5 cache reads; the table says $0.10.
+          'claude-sonnet-5-5': reported({ cacheReadInputTokens: 10_000_000 }, 2),
+          'claude-opus-5-5': reported({ cacheReadInputTokens: 1_000_000 }, 0.2),
+          // A background request: in no transcript, and too small to check a rate with.
+          'claude-haiku-5-5': reported({ inputTokens: 1_500, outputTokens: 100 }, 0.0002)
+        }
+      }
+    ]);
+    const engine = new TelemetryEngine(null, () => {}, { machine: { id: 'pc', name: 'PC' } });
+    engine.configure([{ id: 'claude-a', provider: 'claude', configDir: claudeDir }], { usageDays: 7 });
+    const report = await engine.usageReport(true);
+    expect(report.priceMismatches).toEqual([
+      { model: 'claude-sonnet-5-5', reportedUsd: 2, tableUsd: expect.closeTo(1, 9), cliVersion: '2.1.288', sessionAt: stamp }
+    ]);
+
+    const telemetry = await engine.sessionTelemetry('claude', 'claude-a', file);
+    expect(telemetry?.cost.savedUsd).toBe(2.2002);
+    expect(telemetry?.cost.reportedUsd).toBe(2.2002);
+    // The transcript's own request, plus the models only the cost-state record knows.
+    expect(telemetry?.cost.byModel.map((m) => [m.model, m.usd])).toEqual([
+      ['claude-sonnet-5-5', expect.closeTo(1, 9)],
+      ['claude-opus-5-5', 0.2],
+      ['claude-haiku-5-5', 0.0002]
+    ]);
+    expect(telemetry?.requests).toBe(1);
+  });
+
   it('finds the rollout a freshly launched Codex agent wrote', async () => {
     const codexDir = path.join(root, 'codex');
     const now = new Date();

@@ -57,6 +57,29 @@ describe('pricing', () => {
     expect(cost).toBeCloseTo(4.6846498, 6);
   });
 
+  // One `modelUsage` entry of a real cost-state record per current Claude model, as Claude Code
+  // wrote it: input, output, cache read, 5-minute and 1-hour cache write tokens, and its costUSD.
+  // When a model's rate is added or changed, replace its row with a fresh record (the CLI's own
+  // table changes between versions, so take one from a current version).
+  it.each([
+    ['claude-fable-5-2', '2.1.322', 28, 5_992, 842_716, 0, 58_873, 1.3504152],
+    ['claude-sonnet-5-5', '2.1.312', 80, 29_885, 3_340_077, 0, 95_078, 1.0133297],
+    ['claude-opus-5-5', '2.1.318', 4_203, 184_485, 87_988_192, 188, 514_992, 25.4250264],
+    ['claude-haiku-5-5', '2.1.323', 2, 3, 649, 0, 3_198, 0.00064779]
+  ])("matches Claude Code's own cost for %s (Claude Code %s)", (model, _version, input, output, cacheRead, write5m, write1h, costUsd) => {
+    const cost = priceUsage(
+      rateForModel(model)!,
+      usage({
+        inputTokens: input + cacheRead + write5m + write1h,
+        cachedInputTokens: cacheRead,
+        cacheWriteInputTokens: write5m + write1h,
+        cacheWriteLongInputTokens: write1h,
+        outputTokens: output
+      })
+    );
+    expect(cost).toBeCloseTo(costUsd, 6);
+  });
+
   it('prices Fable 5.1 cache reads at its own published rate', () => {
     const rate = rateForModel('claude-fable-5-1')!;
     expect(priceUsage(rate, usage({ inputTokens: 1_000_000, cachedInputTokens: 1_000_000 }))).toBeCloseTo(0.25, 6);

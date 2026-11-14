@@ -10,6 +10,7 @@
     "contextWindow (tokens). null means 'no separate rate: bill as input'.",
     "Omitted values default by provider. claude: cachedInput 0.1x input, cacheWrite 1.25x input, cacheWriteLong 2x input, contextWindow 1000000.",
     "codex: cachedInput, cacheWrite and cacheWriteLong null, longContext false, contextWindow unknown.",
+    "claude-haiku-5-5 is listed at its rate for prompts up to 100K tokens; larger prompts cost 5x, which this table can't express.",
     "A copy named pricing.json in Foreman's data folder (Settings > Context & cost > Model prices) overrides this table without an app update:",
     "for each model, the entry from whichever file has the later pricingDate wins; models found in only one file are always used. Foreman reloads it on save."
   ],
@@ -48,6 +49,8 @@
     { "model": "gpt-5-nano", "provider": "codex", "input": 0.05, "cachedInput": 0.005, "output": 0.4 },
     { "model": "gpt-5-pro", "provider": "codex", "input": 15, "output": 120 },
 
+    { "model": "claude-fable-5-2", "provider": "claude", "input": 8, "output": 40, "cachedInput": 0.2 },
+    { "model": "claude-mythos-5-2", "provider": "claude", "input": 8, "output": 40, "cachedInput": 0.2 },
     { "model": "claude-fable-5-1", "provider": "claude", "input": 10, "output": 50, "cachedInput": 0.25 },
     { "model": "claude-mythos-5-1", "provider": "claude", "input": 10, "output": 50, "cachedInput": 0.25 },
     { "model": "claude-fable-5", "provider": "claude", "input": 10, "output": 50 },
@@ -60,6 +63,7 @@
     { "model": "claude-sonnet-5-5", "provider": "claude", "input": 2, "output": 10, "cachedInput": 0.1, "cacheWrite": 2.5, "cacheWriteLong": 4 },
     { "model": "claude-sonnet-5", "provider": "claude", "input": 2, "output": 10 },
     { "model": "claude-sonnet-4-6", "provider": "claude", "input": 3, "output": 15 },
+    { "model": "claude-haiku-5-5", "provider": "claude", "input": 0.1, "output": 0.5 },
     { "model": "claude-haiku-4-5", "provider": "claude", "input": 1, "output": 5, "contextWindow": 200000 }
   ]
 }

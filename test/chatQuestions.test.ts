@@ -11,7 +11,7 @@ function session(provider: 'claude' | 'codex') {
   const log = new ChatLog();
   const sent: any[] = [];
   const status = vi.fn();
-  const host: ChatHost = { log, status, changed() {}, session() {}, turnComplete() {}, limits() {}, requeue() {} };
+  const host: ChatHost = { log, status, changed() {}, session() {}, turnComplete() {}, limits() {}, cost: (usd) => usd, requeue() {} };
   const write = (message: object) => sent.push(message);
   const chat = provider === 'claude' ? new ClaudeChat(host, write) : new CodexChat(host, write, { cwd: 'C:\\project', appVersion: 'test' });
   const ask = (id: number, optional = true, extra: object = {}) => {
