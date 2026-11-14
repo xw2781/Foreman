@@ -26,10 +26,10 @@ describe('model ids', () => {
 describe('pricing', () => {
   it('prices Sonnet 5.5 input, cache reads, both cache writes, and output', () => {
     const rate = rateForModel('claude-sonnet-5-5-20260928[1m]')!;
-    expect(rate).toMatchObject({ input: 2, cachedInput: 0.2, cacheWrite: 2.5, cacheWriteLong: 4, output: 10 });
+    expect(rate).toMatchObject({ input: 2, cachedInput: 0.1, cacheWrite: 2.5, cacheWriteLong: 4, output: 10 });
     const byModel = new Map<string, ModelAccumulator>();
     const cost = recordRequest(byModel, rate.model, usage({ inputTokens: 4_000_000, cachedInputTokens: 1_000_000, cacheWriteInputTokens: 2_000_000, cacheWriteLongInputTokens: 1_000_000, outputTokens: 1_000_000 }));
-    expect(cost).toBeCloseTo(18.7, 6);
+    expect(cost).toBeCloseTo(18.6, 6);
     expect(costFromModels(byModel).unpricedModels).toEqual([]);
   });
 

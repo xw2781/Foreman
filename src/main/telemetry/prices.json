@@ -13,7 +13,7 @@
     "A copy named pricing.json in Foreman's data folder (Settings > Context & cost > Model prices) overrides this table without an app update:",
     "for each model, the entry from whichever file has the later pricingDate wins; models found in only one file are always used. Foreman reloads it on save."
   ],
-  "pricingDate": "2026-10-28",
+  "pricingDate": "2026-11-13",
   "sources": {
     "claude": "https://platform.claude.com/docs/en/about-claude/pricing",
     "sonnet55": "https://platform.claude.com/docs/en/models/sonnet-5-5/overview",
@@ -57,7 +57,7 @@
     { "model": "claude-opus-4-8", "provider": "claude", "input": 5, "output": 25 },
     { "model": "claude-opus-4-7", "provider": "claude", "input": 5, "output": 25 },
     { "model": "claude-opus-4-6", "provider": "claude", "input": 5, "output": 25 },
-    { "model": "claude-sonnet-5-5", "provider": "claude", "input": 2, "output": 10, "cachedInput": 0.2, "cacheWrite": 2.5, "cacheWriteLong": 4 },
+    { "model": "claude-sonnet-5-5", "provider": "claude", "input": 2, "output": 10, "cachedInput": 0.1, "cacheWrite": 2.5, "cacheWriteLong": 4 },
     { "model": "claude-sonnet-5", "provider": "claude", "input": 2, "output": 10 },
     { "model": "claude-sonnet-4-6", "provider": "claude", "input": 3, "output": 15 },
     { "model": "claude-haiku-4-5", "provider": "claude", "input": 1, "output": 5, "contextWindow": 200000 }
