@@ -2933,12 +2933,13 @@ body.dragging-split .bp-canvas {
   overflow: hidden;
   background: var(--page);
 }
+/* Sized inline to the page's own box, so the pointer maps to the page 1:1 and the bars beside it aren't part of it. */
 .bp-canvas {
   position: absolute;
-  inset: 0;
+  left: 0;
+  top: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;
   outline: none;
 }
 .bp-canvas:focus-visible {

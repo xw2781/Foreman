@@ -107,12 +107,19 @@ function Viewport({ agentId, state }: { agentId: string; state: BrowserState }) 
     return () => observer.disconnect();
   }, [frame.width, frame.height]);
 
-  // Page pixels under a mouse event.
+  // The page's size in its own (CSS) pixels: what mouse coordinates are in. A frame can have more
+  // pixels than that on a scaled display, so the frame's size only gives the aspect ratio.
+  const page = useRef(state.viewport);
+  page.current = state.viewport;
+
+  // Page pixels under a mouse event. The canvas is laid out exactly over the drawn page (see `fit`),
+  // so its box is the page.
   const toPage = (event: { clientX: number; clientY: number }) => {
     const target = canvas.current;
     if (!target || !target.width) return null;
     const rect = target.getBoundingClientRect();
-    return { x: ((event.clientX - rect.left) / rect.width) * target.width, y: ((event.clientY - rect.top) / rect.height) * target.height };
+    if (!rect.width || !rect.height) return null;
+    return { x: ((event.clientX - rect.left) / rect.width) * page.current.width, y: ((event.clientY - rect.top) / rect.height) * page.current.height };
   };
 
   useEffect(() => {
@@ -190,13 +197,19 @@ function Viewport({ agentId, state }: { agentId: string; state: BrowserState }) 
   const pointer = state.pointer && Date.now() - state.pointer.at < 2500 && fit && frame.width ? state.pointer : null;
   return (
     <div className="bp-viewport" ref={box}>
-      <canvas ref={canvas} className="bp-canvas" tabIndex={0} aria-label="Agent browser page" />
+      <canvas
+        ref={canvas}
+        className="bp-canvas"
+        tabIndex={0}
+        aria-label="Agent browser page"
+        style={fit ? { left: fit.left, top: fit.top, width: fit.width, height: fit.height } : undefined}
+      />
       {!frame.width ? <div className="bp-blank muted">Loading…</div> : null}
       {pointer && fit ? (
         <span
           key={pointer.at}
           className="bp-pointer"
-          style={{ left: fit.left + pointer.x * fit.scale, top: fit.top + pointer.y * fit.scale }}
+          style={{ left: fit.left + (pointer.x / state.viewport.width) * fit.width, top: fit.top + (pointer.y / state.viewport.height) * fit.height }}
           aria-hidden
         />
       ) : null}
