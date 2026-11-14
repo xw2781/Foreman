@@ -2959,30 +2959,75 @@ body.dragging-split .bp-canvas {
   position: absolute;
   inset: 0;
 }
-/* Where the agent last clicked or pointed. */
+/* The agent's pointer, drawn like computer use's: a grey arrow with a white rim over an accent glow.
+   The box is a zero-size point at the arrow's tip, moved with a transform. */
 .bp-pointer {
   position: absolute;
-  width: 26px;
-  height: 26px;
-  margin: -13px 0 0 -13px;
-  border-radius: 50%;
-  border: 2px solid var(--accent);
-  background: var(--accent-soft);
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
   pointer-events: none;
-  animation: bp-ping 1.4s ease-out forwards;
+  opacity: 0;
+  transition: opacity 0.4s ease;
 }
-@keyframes bp-ping {
+.bp-pointer.on {
+  opacity: 1;
+}
+.bp-pointer-glow {
+  position: absolute;
+  left: -24px;
+  top: -21px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--accent), transparent);
+  opacity: 0.45;
+}
+.bp-pointer-arrow {
+  position: absolute;
+  left: -2px;
+  top: -2px;
+  overflow: visible;
+  transform-origin: 2px 2px;
+  filter: drop-shadow(1px 2px 2px rgba(0, 0, 0, 0.35));
+}
+.bp-pointer-arrow.press {
+  animation: bp-press 0.3s ease-out;
+}
+.bp-pointer-arrow path {
+  fill: rgba(78, 75, 72, 0.95);
+  stroke: rgba(255, 255, 255, 0.94);
+  stroke-width: 1.7;
+  stroke-linejoin: round;
+}
+/* A click: plays when the pointer arrives (the delay is its travel time). */
+.bp-pointer-ring {
+  position: absolute;
+  left: -30px;
+  top: -30px;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: 2.5px solid var(--accent);
+  opacity: 0;
+  animation: bp-ripple 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes bp-ripple {
   0% {
-    transform: scale(0.4);
-    opacity: 1;
-  }
-  60% {
-    transform: scale(1);
-    opacity: 1;
+    transform: scale(0.13);
+    opacity: 0.9;
   }
   100% {
-    transform: scale(1.4);
+    transform: scale(1);
     opacity: 0;
+  }
+}
+/* Not switched off for reduced motion: where the pointer travels and clicks is what it is there to show,
+   and Windows Server reports reduced motion by default. */
+@keyframes bp-press {
+  35% {
+    transform: scale(0.82);
   }
 }
 .bp-status {

@@ -334,7 +334,7 @@ const HANDLERS: Record<string, (browser: AgentBrowser, args: Record<string, any>
   async browser_hover(browser, args) {
     const tab = await browser.ensureTab();
     const point = await pointAt(browser, tab, str(args, 'ref', true));
-    browser.point(point.x, point.y);
+    browser.point(point.x, point.y, false);
     await browser.mouse(tab, 'mouseMoved', point.x, point.y);
     browser.log('agent', `Hovered over ${describeTarget(args, point)}`);
     await browser.settle(tab, 300);

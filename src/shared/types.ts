@@ -867,11 +867,13 @@ export interface BrowserState {
   paused: boolean;
   /** A browser tool call is running. */
   busy: boolean;
+  /** When a browser tool call last started or finished (ms); 0 if the agent hasn't used the browser. */
+  agentAt: number;
   viewport: { width: number; height: number };
   /** Newest last. */
   actions: BrowserActionEntry[];
-  /** Where the agent last pointed, in page pixels; `at` is a timestamp (ms). */
-  pointer: { x: number; y: number; at: number } | null;
+  /** Where the agent last pointed, in page pixels; `at` is a timestamp (ms); `press`: it clicked there rather than just moved. */
+  pointer: { x: number; y: number; at: number; press: boolean } | null;
   /** The last dialog a page showed (answered at once, so nothing waits on it). */
   dialog: BrowserDialogInfo | null;
   /** A page asked for files and is waiting for the agent to choose them. */

@@ -223,8 +223,8 @@ export class AgentBrowser {
     this.service.scheduleState(this);
   }
 
-  point(x: number, y: number) {
-    this.pointer = { x: Math.round(x), y: Math.round(y), at: Date.now() };
+  point(x: number, y: number, press = true) {
+    this.pointer = { x: Math.round(x), y: Math.round(y), at: Date.now(), press };
     this.changed();
   }
 
@@ -235,6 +235,7 @@ export class AgentBrowser {
       activeTabId: this.activeId,
       paused: this.paused,
       busy: this.busy,
+      agentAt: this.lastAgentAt,
       viewport: this.viewport,
       actions: this.actions,
       pointer: this.pointer,

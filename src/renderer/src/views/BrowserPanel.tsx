@@ -85,12 +85,54 @@ function useFrames(agentId: string, canvas: React.RefObject<HTMLCanvasElement | 
   }, [agentId]);
 }
 
+/** The agent's pointer stays up this long after its last browser tool call, so it doesn't blink between steps. */
+const POINTER_LINGER_MS = 8000;
+
+/** How long the pointer takes to travel a distance in pixels: longer for longer reaches, as computer use's does. */
+function glideMs(distance: number) {
+  return distance < 1 ? 0 : Math.round(Math.max(180, Math.min(950, 200 + 115 * Math.log2(1 + distance / 35))));
+}
+
+/**
+ * The agent's own pointer over the page, the same arrow computer use draws on the screen: it glides
+ * to wherever the agent points and ripples there. Shown while the agent is using the browser; the
+ * page itself has no cursor, since the agent's input goes straight in over DevTools.
+ */
+function AgentPointer({ state, fit }: { state: BrowserState; fit: Fit }) {
+  useTicker(500);
+  const travel = useRef({ at: 0, x: 0, y: 0, ms: 0 });
+  const pointer = state.pointer;
+  if (!pointer) return null;
+  const x = fit.left + (pointer.x / state.viewport.width) * fit.width;
+  const y = fit.top + (pointer.y / state.viewport.height) * fit.height;
+  const last = travel.current;
+  if (last.at !== pointer.at) travel.current = { at: pointer.at, x, y, ms: last.at ? glideMs(Math.hypot(x - last.x, y - last.y)) : 0 };
+  const { ms } = travel.current;
+  const now = Date.now();
+  const shown = !state.paused && (state.busy || now - Math.max(pointer.at, state.agentAt) < POINTER_LINGER_MS);
+  // The move is animated only while it travels, so resizing the panel doesn't send the pointer gliding.
+  const gliding = now - pointer.at < ms + 200;
+  const arrive = { animationDelay: `${ms}ms` };
+  return (
+    <span
+      className={`bp-pointer ${shown ? 'on' : ''}`}
+      style={{ transform: `translate(${x}px, ${y}px)`, transition: gliding ? `transform ${ms}ms cubic-bezier(0.65, 0, 0.35, 1), opacity 0.4s ease` : undefined }}
+      aria-hidden
+    >
+      <span className="bp-pointer-glow" />
+      {pointer.press ? <span key={pointer.at} className="bp-pointer-ring" style={arrive} /> : null}
+      <svg key={`arrow${pointer.at}`} className={`bp-pointer-arrow ${pointer.press ? 'press' : ''}`} style={arrive} width="20" height="26" viewBox="-2 -2 20 26">
+        <path d="M0 0V17L4.4 13.3L7.6 20.4L10.5 19.1L7.4 12.3H13.2Z" />
+      </svg>
+    </span>
+  );
+}
+
 function Viewport({ agentId, state }: { agentId: string; state: BrowserState }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const [frame, setFrame] = useState({ width: 0, height: 0 });
   const [fit, setFit] = useState<Fit | null>(null);
-  useTicker(500);
   useFrames(agentId, canvas, (width, height) => setFrame({ width, height }));
 
   useLayoutEffect(() => {
@@ -194,7 +236,6 @@ function Viewport({ agentId, state }: { agentId: string; state: BrowserState }) 
     };
   }, [agentId]);
 
-  const pointer = state.pointer && Date.now() - state.pointer.at < 2500 && fit && frame.width ? state.pointer : null;
   return (
     <div className="bp-viewport" ref={box}>
       <canvas
@@ -205,14 +246,7 @@ function Viewport({ agentId, state }: { agentId: string; state: BrowserState }) 
         style={fit ? { left: fit.left, top: fit.top, width: fit.width, height: fit.height } : undefined}
       />
       {!frame.width ? <div className="bp-blank muted">Loading…</div> : null}
-      {pointer && fit ? (
-        <span
-          key={pointer.at}
-          className="bp-pointer"
-          style={{ left: fit.left + (pointer.x / state.viewport.width) * fit.width, top: fit.top + (pointer.y / state.viewport.height) * fit.height }}
-          aria-hidden
-        />
-      ) : null}
+      {fit && frame.width ? <AgentPointer state={state} fit={fit} /> : null}
     </div>
   );
 }
