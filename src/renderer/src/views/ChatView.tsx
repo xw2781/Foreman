@@ -1527,22 +1527,13 @@ ${VOICE_NOTE}`;
           className="composer-input"
           rows={1}
           value={text}
-          // The key hints live in the placeholder: shown, muted, only while the box is empty.
-          placeholder={[
+          placeholder={
             annotations.length
               ? 'Ask for follow-up changes…'
-              : !live
-              ? null
-              : midTurn
-                ? mode === 'steer'
-                  ? `Steer ${name}: it reads this after its current step`
-                  : `Queue a message for when ${name} finishes this turn`
-                : `Message ${name}…`,
-            midTurn ? `Ctrl+Enter to ${OTHER_MODE[mode]}` : null,
-            'Shift+Enter for a new line',
-            agent.provider === 'codex' ? '/ for commands, $ for skills' : '/ for commands',
-            working ? 'Esc to stop' : null
-          ].filter(Boolean).join(' · ')}
+              : agent.provider === 'codex'
+                ? 'Type / for commands, $ for skills'
+                : 'Type / for commands'
+          }
           aria-autocomplete="list"
           aria-expanded={menuOpen}
           onChange={(e) => {
