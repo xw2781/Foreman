@@ -381,21 +381,72 @@ function Apply-Focus($state) {
     if ($script:LogHwnd) { $state['focus_hwnd'] = [long]$script:LogHwnd }
 }
 
-function Apply-Identity($state) {
-    if ($env:ATC_AGENT_ID -and [string]$state['agent_id'] -ne $env:ATC_AGENT_ID) {
-        # Another agent is driving now; the desktop app shows whoever issued the last command.
-        $state['agent_id'] = $env:ATC_AGENT_ID
-        $state['agent'] = (Agent-Name)
-    }
+function Test-OwnSession($state) {
+    return ([string]$state['agent_id'] -eq [string]$env:ATC_AGENT_ID)
 }
 
-<# Heartbeat for an active session, so the overlay knows the agent is still at work. #>
+<#
+    One agent drives at a time. A session belongs to the agent that opened it (agent_id, from
+    ATC_AGENT_ID) for as long as its indicator is up: until stop, a release, or the overlay's
+    idle exit. Returns that session when it is someone else's and still alive, else $null.
+    Agents run without ATC_AGENT_ID all count as one, because nothing tells them apart.
+#>
+function Get-OtherDriver($state) {
+    if (-not $state -or $state['active'] -ne $true -or $state['release_requested'] -eq $true) { return $null }
+    if (Test-OwnSession $state) { return $null }
+    if (Get-OverlayProcess) { return $state }
+    # No overlay: it is still starting if the session was touched a moment ago. Otherwise the
+    # owner is gone (killed before it could stop) and the session is free to take.
+    if ((Get-IdleSeconds $state) -lt 30) { return $state }
+    return $null
+}
+
+function Get-IdleSeconds($state) {
+    $beat = [DateTime]::MinValue
+    $ok = [DateTime]::TryParse([string]$state['heartbeat'], [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::RoundtripKind, [ref]$beat)
+    if (-not $ok) { return [int]::MaxValue }
+    return [int][Math]::Min([int]::MaxValue, [Math]::Abs(([DateTime]::Now - $beat.ToLocalTime()).TotalSeconds))
+}
+
+function Quit-Busy($state) {
+    $who = [string]$state['agent']
+    if (-not $who) { $who = 'unnamed' }
+    Quit 4 ("Computer use is in use by another agent ($who, last command $(Get-IdleSeconds $state) s ago). " +
+        "Only one agent drives the screen at a time. Do not retry in a loop, and do not try to end its " +
+        "session: wait until it has finished, or tell the user. Looking still works (apps, windows, " +
+        "state, screenshot).")
+}
+
+function Assert-Driver {
+    $other = Get-OtherDriver (Read-State)
+    if ($other) { Quit-Busy $other }
+}
+
+<#
+    Held while a session is checked and claimed, so two agents that start at the same moment
+    cannot both find the screen free.
+#>
+function Enter-Gate {
+    $name = 'AgentTaskCenter.ComputerUse.' + [regex]::Replace($StateDir.ToLowerInvariant(), '[^a-z0-9]', '_')
+    if ($name.Length -gt 240) { $name = $name.Substring(0, 240) }
+    $gate = [Threading.Mutex]::new($false, $name)
+    try { [void]$gate.WaitOne(5000) } catch [Threading.AbandonedMutexException] { }
+    return $gate
+}
+
+function Exit-Gate($gate) {
+    try { $gate.ReleaseMutex() } catch { }
+    $gate.Dispose()
+}
+
+<# Heartbeat for this agent's own session, so the overlay knows the agent is still at work. #>
 function Touch-State([string]$say) {
     $state = Read-State
-    if (-not $state -or $state['active'] -ne $true) { return }
+    # Looking at the screen neither takes another agent's session nor keeps it alive.
+    if (-not $state -or $state['active'] -ne $true -or -not (Test-OwnSession $state)) { return }
     $state['heartbeat'] = Now-Iso
     if ($say) { $state['action'] = $say }
-    Apply-Identity $state
     Apply-Focus $state
     Write-State $state
 }
@@ -405,19 +456,25 @@ function Touch-State([string]$say) {
     ATC_AGENT_NAME, short idle exit) or refresh the running one, and make sure it is drawing.
 #>
 function Ensure-Session([string]$say) {
-    $state = Read-State
-    if ($state -and $state['release_requested'] -eq $true) { Quit-Released $state }
-    if (-not $state -or $state['active'] -ne $true) {
-        $state = New-State $true
-        Remove-Quietly @($script:AckPath, $script:OverlayLog)
-        Write-State $state -ClearRelease
+    $gate = Enter-Gate
+    try {
+        $state = Read-State
+        if ($state -and $state['release_requested'] -eq $true) { Quit-Released $state }
+        $other = Get-OtherDriver $state
+        if ($other) { Quit-Busy $other }
+        # A session left behind by an agent that is gone is replaced, not continued.
+        if (-not $state -or $state['active'] -ne $true -or -not (Test-OwnSession $state)) {
+            $state = New-State $true
+            Remove-Quietly @($script:AckPath, $script:OverlayLog)
+            Write-State $state -ClearRelease
+        }
+        $state['heartbeat'] = Now-Iso
+        if (Has 'action') { $state['action'] = OptStr 'action' }
+        elseif ($say) { $state['action'] = $say }
+        Apply-Focus $state
+        Write-State $state
     }
-    $state['heartbeat'] = Now-Iso
-    if (Has 'action') { $state['action'] = OptStr 'action' }
-    elseif ($say) { $state['action'] = $say }
-    Apply-Identity $state
-    Apply-Focus $state
-    Write-State $state
+    finally { Exit-Gate $gate }
     if (-not (Get-OverlayProcess)) {
         $idle = [int]$state['idle_exit_minutes']
         if ($idle -le 0) { $idle = 5 }
@@ -854,7 +911,13 @@ function Command-State {
     $timeout = OptInt 'timeoutseconds' 20 'TimeoutSeconds'
     $script:LogArgs = "text=$tree shot=$(-not $noShot)"
     $obs = $OB::Take($w.Handle, $out, $tree, $zoom, [Math]::Max(1, $max), 1000 * [Math]::Max(1, $timeout))
-    [void]$FU::WriteAtomic($script:ObsPath, $obs.ToJson())
+    $other = Get-OtherDriver (Read-State)
+    if ($other) {
+        # -Element and -Image belong to the driving agent's own observation; leave it alone.
+        [Console]::Error.WriteLine("computer-use: note: $($other['agent']) is driving the screen, so this " +
+            "observation was not recorded. You can look, but not act, until it has finished.")
+    }
+    else { [void]$FU::WriteAtomic($script:ObsPath, $obs.ToJson()) }
     $FU::Prune($script:ShotsDir, 'state-*.png', 30)
     Touch-State ''
     if ($script:Opt['json']) { Say $obs.ToJson() } else { [Console]::Out.Write($obs.ToText()) }
@@ -1166,6 +1229,9 @@ try {
 
     # Once the person has taken control back, every command but these exits 3.
     if (@('start', 'stop', 'release', 'status', 'policy', 'demo') -notcontains $script:Command) { Assert-NotReleased }
+    # Refuse early, before anything is launched or brought forward; Ensure-Session checks again.
+    if (@('launch', 'activate', 'move', 'click', 'drag', 'scroll', 'type', 'key', 'set-value', 'invoke',
+            'start', 'action', 'demo') -contains $script:Command) { Assert-Driver }
 
     switch ($script:Command) {
         'apps' { Command-Apps }
@@ -1192,9 +1258,14 @@ try {
         'policy' { Command-Policy }
         'demo' { Command-Demo }
         'start' {
-            $state = New-State $false
-            Remove-Quietly @($script:AckPath, $script:OverlayLog)
-            Write-State $state -ClearRelease
+            $gate = Enter-Gate
+            try {
+                Assert-Driver
+                $state = New-State $false
+                Remove-Quietly @($script:AckPath, $script:OverlayLog)
+                Write-State $state -ClearRelease
+            }
+            finally { Exit-Gate $gate }
             if (-not (Start-Overlay ([int]$state['idle_exit_minutes']))) {
                 Quit 4 ("The overlay could not be started. Run it in the foreground to see why: " +
                     "powershell -NoProfile -STA -File `"$PSCommandPath`" overlay")
@@ -1205,8 +1276,8 @@ try {
             $state = Read-State
             if (-not $state -or $state['active'] -ne $true) { Quit 2 "Not started. Run 'start' first (input commands start it automatically)." }
             $state['action'] = OptStr 'action'
+            if (-not (Test-OwnSession $state)) { Quit 2 "Not started. Run 'start' first (input commands start it automatically)." }
             $state['heartbeat'] = Now-Iso
-            Apply-Identity $state
             Write-State $state
             if (-not (Get-OverlayProcess)) { [void](Start-Overlay ([int]$state['idle_exit_minutes'])) }
         }
@@ -1215,6 +1286,9 @@ try {
             Say 'release requested: every computer-use command now exits 3 until stop or start.'
         }
         'stop' {
+            # An agent ends only its own session. Run without an agent id (the person, or the
+            # desktop app on their behalf), stop ends whichever session is open.
+            if ($env:ATC_AGENT_ID) { Assert-Driver }
             Stop-Overlay
             Say 'computer use: off'
         }

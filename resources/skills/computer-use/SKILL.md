@@ -83,7 +83,7 @@ UI Automation actions do not move the pointer: `set-value -Element n -Value text
 | 0 | Done | Observe, then continue. |
 | 2 | Bad arguments | Fix the command. |
 | 3 | **The user took back control** (Esc, the Release button, or the app) | **Stop immediately.** Send no more commands, not even `stop` or `start`, and tell the user. Resume only if the user asks you to, starting with `start`. |
-| 4 | Refused or failed; stderr says why | Read the message. Refusals (the app policy, the Windows key) are final. For other failures, observe again before retrying. |
+| 4 | Refused or failed; stderr says why | Read the message. Refusals (the app policy, the Windows key) are final. "In use by another agent" means wait or tell the user; you can still look. For other failures, observe again before retrying. |
 
 ## Rules that always apply
 

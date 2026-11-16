@@ -347,6 +347,32 @@ try {
     }
     Check 'the overlay panel is not in screenshots' ($r.Code -eq 0 -and (Test-Path $shot) -and $orange -lt 20) "orange pixels: $orange"
 
+    # --- one agent at a time ----------------------------------------------------------------
+    $before = (Read-Form).count
+    $obsFile = Join-Path $stateDir 'last_observation.json'
+    $obsBefore = Get-Content $obsFile -Raw
+    $env:ATC_AGENT_ID = 'selftest-other'
+    $env:ATC_AGENT_NAME = 'Other'
+    try {
+        $r = CU click -Element $btn.index
+        Check 'a second agent is refused while the first drives' ($r.Code -eq 4 -and $r.Err -match 'in use by another agent \(Self-test' -and (Read-Form).count -eq $before) $r.Err
+        $r = CU start
+        Check 'a second agent cannot start over the session' ($r.Code -eq 4 -and $r.Err -match 'in use')
+        $r = CU stop
+        Check 'a second agent cannot stop the session' ($r.Code -eq 4 -and $r.Err -match 'in use')
+        $r = CU state -Window $script:hwnd
+        Check 'a second agent can look, without replacing the observation' ($r.Code -eq 0 -and $r.Err -match 'not recorded' -and (Get-Content $obsFile -Raw) -eq $obsBefore) $r.Err
+    }
+    finally {
+        $env:ATC_AGENT_ID = 'selftest-agent'
+        $env:ATC_AGENT_NAME = 'Self-test'
+    }
+    $st = Get-Content (Join-Path $stateDir 'state.json') -Raw | ConvertFrom-Json
+    Check 'the session still belongs to the first agent' ($st.active -and $st.agent_id -eq 'selftest-agent' -and $st.agent -eq 'Self-test')
+    $r = CU click -Element $btn.index
+    $s = Wait-Form { param($s) $s.count -eq $before + 1 }
+    Check 'the first agent carries on' ($r.Code -eq 0 -and $s.count -eq $before + 1) $r.Err
+
     # --- release ----------------------------------------------------------------------------
     $before = (Read-Form).count
     $r = CU release

@@ -22,7 +22,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File <skill>/scripts/computer.ps1
 | 0 | Done. |
 | 2 | Bad or missing arguments, an unknown command, or `action` with no session. |
 | 3 | The person took back control (Esc, the panel's Release button, or `release`). Every command except `start`, `stop`, `release`, `status`, `policy`, `demo` and `help` exits 3 until `start` or `stop`; `status` prints its report and then exits 3. |
-| 4 | Refused (app policy, the Windows key, a window guard) or failed (window gone, element stale, timeout, and so on). The message says which. |
+| 4 | Refused (app policy, the Windows key, a window guard, another agent driving) or failed (window gone, element stale, timeout, and so on). The message says which. |
 
 ## Environment
 
@@ -30,7 +30,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File <skill>/scripts/computer.ps1
 | :--- | :--- |
 | `ATC_COMPUTER_USE_DIR` | State directory. Default `%APPDATA%\AgentTaskCenter\computer-use`. |
 | `ATC_AGENT_NAME` | Agent name shown on the panel and in the logs. `-Agent` overrides it; default `Agent`. |
-| `ATC_AGENT_ID` | Opaque id of the driving agent, recorded as `agent_id` in `state.json` and `actions.jsonl`. |
+| `ATC_AGENT_ID` | Opaque id of the calling agent, recorded as `agent_id` in `state.json` and `actions.jsonl`. It decides whose session it is (see "One agent at a time"). |
 
 ## Looking (no overlay involved)
 
@@ -154,7 +154,8 @@ written to the action log.
 
 ## Acting
 
-Every acting command first checks the release flag (exit 3) and the app policy (exit 4). The
+Every acting command first checks the release flag (exit 3), then that no other agent is
+driving, then the app policy (both exit 4). The
 pointer and keyboard commands and `set-value`/`invoke` start the overlay if no session is
 running. An auto-started session uses the agent name from `ATC_AGENT_NAME` and exits after
 5 idle minutes. Each command accepts `-Action "<text>"` for the panel line; otherwise a
@@ -306,14 +307,35 @@ the timeout (default 10 s), usually because a modal dialog opened, it exits 0 wi
 | Command | Effect |
 | :--- | :--- |
 | `start [-Agent <name>] [-Action <text>] [-Position <anchor>] [-Color #RRGGBB] [-Thickness <px>] [-NoCursor] [-NoEdges] [-IdleExitMinutes <n>]` | Begins a new session (clearing any release) and shows the overlay. Default idle exit is 20 minutes. `-Position` is where the panels prefer to sit: `TopCenter` (default), `TopRight`, `TopLeft`, `BottomCenter`, `BottomRight`, `BottomLeft`, `MiddleRight` or `MiddleLeft`. They leave it whenever it would cover the window being worked in or the next pointer target. |
-| `action -Action <text>` | Replaces the panel's action line and refreshes the heartbeat. Exits 2 when no session is active. |
-| `stop` | Ends the session: `active` false, release cleared, overlay closed. |
+| `action -Action <text>` | Replaces the panel's action line and refreshes the heartbeat. Exits 2 when the caller has no active session. |
+| `stop` | Ends the session: `active` false, release cleared, overlay closed. An agent can end only its own session; run without `ATC_AGENT_ID` (the person, or the desktop app), it ends whichever is open. |
 | `release` | Does what the panel's Release button does: sets `release_requested` (source `command`). The desktop app calls this. |
 | `demo` | Glides the agent pointer around the screen and taps without clicking anything, then stops. |
 | `help` | Command summary. |
 
 The overlay also exits by itself about 2.5 s after a release, after `-IdleExitMinutes` without a
 heartbeat, or when `state.json` disappears. Only `start`, `stop` and `demo` clear a release.
+
+## One agent at a time
+
+A session belongs to the agent that opened it, identified by `ATC_AGENT_ID`, for as long as its
+indicator is up: until `stop`, a release, or the overlay's idle exit. While it lasts, another
+agent's `launch`, `activate`, `start`, `action`, `demo`, `stop` and input commands exit 4 with
+"Computer use is in use by another agent (<name>, last command N s ago)", before anything is
+done.
+
+- Looking stays open to everyone: `apps`, `windows`, `screenshot`, `status`, `policy`, and
+  `state`. A `state` by an agent that is not driving prints and saves its screenshot as usual
+  but leaves `last_observation.json` alone (with a note on stderr), so the driving agent's
+  `-Element` and `-Image` targets stay its own.
+- Looking does not refresh the heartbeat of someone else's session.
+- If the owner is gone without a `stop` (its process was killed), the session ends with the
+  overlay's idle exit; once the overlay is gone and the heartbeat is over 30 s old, the next
+  input command or `start` opens a new session. The desktop app ends the session of an agent
+  it sees end.
+- `release` is never refused.
+- Agents run without `ATC_AGENT_ID` cannot be told apart, so they share one session among
+  themselves; an agent that has an id and one that has none still exclude each other.
 
 ## Files in the state directory
 
@@ -330,7 +352,7 @@ Written by the CLI. The overlay and `release` only change the release fields.
 | `active` | bool | A session is open (started, not yet stopped). |
 | `session` | string | Random id of the session, new on every `start` or auto-start. |
 | `agent` | string | Name shown on the panel. |
-| `agent_id` | string | `ATC_AGENT_ID` of the agent that last drove (may be empty). |
+| `agent_id` | string | `ATC_AGENT_ID` of the agent whose session it is (may be empty). |
 | `action` | string | The panel's current action line. |
 | `started`, `heartbeat` | ISO 8601 | Session start, and the last command. |
 | `release_requested` | bool | The person took back control; commands exit 3. |

@@ -140,6 +140,7 @@ not answered yet". That is normal: observe and look for the dialog.
 | the overlay did not confirm in time | The click may have happened. Observe before retrying. |
 | UI Automation stopped answering | The app is busy. Wait, then observe without `-Text` or with a smaller `-MaxElements`. |
 | Windows refused the input | The target is probably running as administrator, which this tool cannot drive. Tell the user. |
+| computer use is in use by another agent | Only one agent drives the screen at a time, and another one has it until it runs `stop`. You can still look (`apps`, `windows`, `state`, `screenshot`), but do not act, do not retry in a loop, and do not try to end its session. Do the parts of the task that need no screen, then try once more, or tell the user. |
 | a policy refusal (`Refused: ...`) | Final. Do not look for a way around it. Tell the user if the task needs that app. |
 
 If the desktop is locked or a sign-in screen is showing, stop and ask the user to unlock it.
@@ -192,6 +193,8 @@ The user can narrow what you may drive further with `config.json` in the state d
 
 ## Being a good guest
 
+- Other agents may be waiting for the screen: only one drives at a time, and the screen is
+  yours from your first input command until you run `stop`.
 - The person may be using the computer at the same time. Keep sessions short, avoid needless
   pointer movement, and do not change window layouts, themes or settings you do not need to.
 - Say what you are about to do with `-Action "..."` on a command (or `action -Action "..."`),

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { ComputerUseAction, ComputerUseStatus, Profile } from '../shared/types';
-import { exists, readJsonFile, removeTree, run, writeJsonFileAtomic } from './util';
+import { cleanEnv, exists, readJsonFile, removeTree, run, writeJsonFileAtomic } from './util';
 
 export const SKILL_NAME = 'computer-use';
 
@@ -55,6 +55,8 @@ export class ComputerUseService {
   private builtinDenied: string[] = BUILTIN_DENIED;
   private feedText: string | null = null;
   private feedWrittenAt = 0;
+  private releasing = false;
+  private releaseTried = '';
   onChanged: (status: ComputerUseStatus) => void = () => {};
 
   constructor(private skillSource: string | null) {
@@ -195,6 +197,31 @@ export class ComputerUseService {
     });
     this.poll();
     return { code: result.code, output: `${result.stdout}${result.stderr}`.trim() };
+  }
+
+  /**
+   * Ends the session an agent left open when it ended (Foreman kills agents, so they rarely get
+   * to run `stop`), so the next agent does not wait for the overlay's idle exit. Run as that
+   * agent: the skill refuses if another agent has taken the screen since.
+   */
+  async releaseEnded(agentId: string) {
+    const script = this.scriptPath;
+    if (!script || this.releasing) return;
+    // Once per session: if it could not be ended, the overlay's idle exit frees the screen.
+    const state = readJsonFile<Record<string, any>>(path.join(this.stateDir, 'state.json'));
+    const key = `${agentId}:${field<string>(state, 'session') ?? ''}`;
+    if (key === this.releaseTried) return;
+    this.releaseTried = key;
+    this.releasing = true;
+    try {
+      await run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, 'stop'], {
+        timeout: 30_000,
+        env: { ...cleanEnv(), ATC_COMPUTER_USE_DIR: this.stateDir, ATC_AGENT_ID: agentId }
+      });
+    } finally {
+      this.releasing = false;
+    }
+    this.poll();
   }
 
   setPolicy(policy: { allowedProcesses: string[]; deniedProcesses: string[] }) {

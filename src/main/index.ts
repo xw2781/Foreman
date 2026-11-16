@@ -740,6 +740,9 @@ function startLoops() {
 
   setInterval(() => {
     computerUse.poll();
+    // One agent drives at a time: an agent that ended while driving must not keep the others out.
+    const holder = computerUse.currentDriver();
+    if (holder && agents.get(holder)?.endedAt) void computerUse.releaseEnded(holder);
     // The overlay's conversation panel follows whichever app agent drives the screen.
     const driver = settings().computerUseConversation === false ? null : computerUse.currentDriver();
     computerUse.writeConversation(driver ? agents.screenFeed(driver) : null);
