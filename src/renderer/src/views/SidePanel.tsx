@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeftRight, Check, Eye, FolderTree, Gauge, GitBranch, Globe, Loader2, MessageSquareDashed, Network, Plug, X, type LucideIcon } from 'lucide-react';
-import { AGENT_MODES, CONVERSATION_MODES, type AgentInfo } from '@shared/types';
+import type { AgentInfo } from '@shared/types';
 import { runningSubagents } from '@shared/subagents';
 import { useApp, type PanelTab } from '../store';
 import { BrowserPanel } from './BrowserPanel';
@@ -28,8 +28,8 @@ const TABS: Array<{ id: PanelTab; label: string; icon: LucideIcon; note: string 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 function available(agent: AgentInfo, tab: PanelTab) {
-  if (tab === 'subagents') return CONVERSATION_MODES.includes(agent.mode) || Boolean(agent.subagents?.length);
-  if (tab === 'browser') return AGENT_MODES.includes(agent.mode);
+  if (tab === 'subagents') return agent.mode === 'chat' || Boolean(agent.subagents?.length);
+  if (tab === 'browser') return agent.mode === 'chat';
   if (tab === 'side') return agent.mode === 'chat';
   if (tab === 'connectors') return hasConnectors(agent);
   if (tab === 'git') return !agent.projectless;

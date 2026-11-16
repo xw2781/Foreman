@@ -309,7 +309,7 @@ export function AgentDetails({ agent }: { agent: AgentInfo }) {
       </section>
 
       {/* Sessions from before idle modes existed show Claude Code's behavior ('compact') and can change it too. */}
-      {agent.provider === 'claude' && (agent.mode === 'chat' || agent.mode === 'interactive') ? <IdleModeSection agent={agent} /> : null}
+      {agent.provider === 'claude' && agent.mode === 'chat' ? <IdleModeSection agent={agent} /> : null}
 
       <section>
         <div className="details-head">

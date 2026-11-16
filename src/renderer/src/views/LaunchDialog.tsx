@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, FolderOpen, History, MessagesSquare, Play, Rocket, SquareTerminal, Zap } from 'lucide-react';
-import { PROVIDER_LABEL, type AgentMode, type CliDefaults, type LaunchOptions, type Provider } from '@shared/types';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ChevronRight, Folder, FolderOpen, History, Monitor, Play, Rocket, X } from 'lucide-react';
+import { PROVIDER_LABEL, type CliDefaults, type LaunchOptions, type Provider } from '@shared/types';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
 import { colorVar, limitSummary, modelLabel, signedOutLabel } from '../format';
@@ -81,6 +81,16 @@ function rememberProvider(p: Provider) {
   try { localStorage.setItem('launcherProvider', p); } catch { /* storage unavailable */ }
 }
 
+/** One setting of the launcher: its name on the left, the control and any note on the right. */
+function Row({ label, htmlFor, children }: { label: string; htmlFor?: string; children: ReactNode }) {
+  return (
+    <div className="launch-row">
+      {htmlFor ? <label className="launch-label" htmlFor={htmlFor}>{label}</label> : <div className="launch-label">{label}</div>}
+      <div className="launch-ctl">{children}</div>
+    </div>
+  );
+}
+
 export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
   const close = useApp((s) => s.closeLauncher);
   const profiles = useApp((s) => s.profiles);
@@ -92,16 +102,14 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
   const providerProfiles = profiles.filter((p) => p.provider === provider);
   const activeId = providerProfiles.find((p) => p.isActive)?.id ?? providerProfiles[0]?.id ?? '';
   const [profileId, setProfileId] = useState(preset.profileId ?? activeId);
-  const [mode, setMode] = useState<AgentMode>(preset.mode ?? 'chat');
-  const [cwd, setCwd] = useState(preset.cwd ?? settings?.defaultCwd ?? '');
-  const [projectless, setProjectless] = useState(preset.projectless ?? preset.cwd === '');
-  const [prompt, setPrompt] = useState(preset.prompt ?? '');
+  // An empty folder means no project: the chat gets a workspace of its own.
+  const [cwd, setCwd] = useState(preset.projectless ? '' : preset.cwd ?? settings?.defaultCwd ?? '');
   const [title, setTitle] = useState(preset.title ?? '');
   const [model, setModel] = useState(preset.model ?? '');
   const [effort, setEffort] = useState(preset.effort ?? '');
   const [permission, setPermission] = useState(preset.permission ?? DEFAULT_PERMISSION[provider]);
   const [extraArgs, setExtraArgs] = useState(preset.extraArgs ?? '');
-  const [advanced, setAdvanced] = useState(Boolean(preset.model || preset.effort || preset.extraArgs || preset.title || preset.permission));
+  const [advanced, setAdvanced] = useState(Boolean(preset.extraArgs || preset.title || preset.permission));
   const [busy, setBusy] = useState(false);
   const resuming = Boolean(preset.resumeSessionId);
   // A model or effort from the preset, or picked here, wins over the account's defaults.
@@ -132,12 +140,17 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
   }, [profile?.id, profile?.defaultModel, profile?.defaultEffort, profile?.cliDefaults, provider]);
   const modelFromAccount = Boolean(profile?.defaultModel) && model === profile?.defaultModel;
   const effortFromAccount = Boolean(profile?.defaultEffort) && effort === profile?.defaultEffort;
+  const accountDefaults = modelFromAccount && effortFromAccount
+    ? "This account's default model and effort"
+    : modelFromAccount ? "This account's default model" : effortFromAccount ? "This account's default effort" : null;
   const permissionLabel = PERMISSIONS[provider].find((p) => p.value === permission)?.label;
-  const modelSummary = [modelLabel(model.trim()), effort ? `${effortLabel(effort)} effort` : '', permissionLabel].filter(Boolean).join(', ');
+  const moreSummary = [permissionLabel, title.trim(), extraArgs.trim()].filter(Boolean).join(', ');
   const cli = env?.clis.find((c) => c.provider === provider);
   const permissionHint = PERMISSIONS[provider].find((p) => p.value === permission)?.hint;
-  const withoutProject = mode === 'chat' && (projectless || !cwd.trim());
-  const canLaunch = Boolean(profile && (withoutProject || cwd.trim()) && cli?.path && (mode !== 'task' || prompt.trim()));
+  const withoutProject = !cwd.trim();
+  // Where chats without a project work (`resolveChatWorkspace`): one folder each under this one.
+  const workspaces = `${env?.userDataDir ?? ''}\\chat-workspaces`;
+  const canLaunch = Boolean(profile && cli?.path);
 
   const launch = async () => {
     if (!canLaunch || !profile) return;
@@ -148,8 +161,8 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
         profileId: profile.id,
         cwd: withoutProject ? '' : cwd.trim(),
         projectless: withoutProject,
-        mode,
-        prompt: (mode === 'task' ? prompt : preset.prompt ?? '').trim() || undefined,
+        mode: 'chat',
+        prompt: preset.prompt?.trim() || undefined,
         title: title.trim() || undefined,
         model: model.trim() || undefined,
         effort: effort || undefined,
@@ -170,11 +183,30 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
     if (picked) setCwd(picked);
   };
 
-  const recent = useMemo(() => (settings?.recentCwds ?? []).filter((c) => c !== cwd).slice(0, 6), [settings?.recentCwds, cwd]);
+  const recent = useMemo(
+    () => (settings?.recentCwds ?? []).map((folder) => ({ value: folder, label: folder.split(/[\\/]/).filter(Boolean).pop() ?? folder, hint: folder })),
+    [settings?.recentCwds]
+  );
+  const cliInfo = cli?.path ? cli.version : null;
+  const usage = limitSummary(profile?.limits?.windows) || (profile?.planTier ?? profile?.identity?.plan ? `Plan: ${profile?.planTier ?? profile?.identity?.plan}` : 'Plan usage appears after the first session');
+  // Every account of both tools, Claude's first: picking one picks its tool.
+  const accounts = (['claude', 'codex'] as Provider[]).flatMap((tool) =>
+    profiles.filter((p) => p.provider === tool).map((p) => ({
+      value: p.id,
+      label: [PROVIDER_LABEL[tool], p.label, p.planTier].filter(Boolean).join(' · '),
+      hint: p.identity?.email ?? (p.identity?.loggedIn ? undefined : signedOutLabel(p.identity))
+    }))
+  );
+  const pickAccount = (id: string) => {
+    const picked = profiles.find((p) => p.id === id);
+    if (!picked) return;
+    rememberProvider(picked.provider);
+    setProvider(picked.provider);
+    setProfileId(id);
+  };
 
   return (
     <Modal
-      wide
       title={resuming ? 'Resume session' : 'New agent'}
       icon={<Rocket size={18} color="var(--accent)" />}
       onClose={close}
@@ -187,7 +219,7 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
             Cancel
           </button>
           <button className="btn primary" disabled={!canLaunch || busy} onClick={launch}>
-            <Play size={14} /> {resuming ? 'Resume' : mode === 'task' ? 'Run task' : 'Launch'}
+            <Play size={14} /> {resuming ? 'Resume' : 'Launch'}
           </button>
         </>
       }
@@ -201,139 +233,62 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
           }
         }}
       >
-        {resuming ? (
-          <div className="badge accent" style={{ justifySelf: 'start', height: 24 }}>
-            <History size={13} /> Continuing session {preset.resumeSessionId?.slice(0, 8)}…
-          </div>
-        ) : (
-          <div className="choice-grid">
-            {(['claude', 'codex'] as Provider[]).map((p) => {
-              const info = env?.clis.find((c) => c.provider === p);
-              return (
-                <button key={p} className={`choice ${provider === p ? 'on' : ''}`} onClick={() => {
-                  rememberProvider(p);
-                  setProvider(p);
-                }}>
-                  <ProviderIcon provider={p} size={30} />
-                  <div style={{ minWidth: 0 }}>
-                    <div className="choice-title">{PROVIDER_LABEL[p]}</div>
-                    <div className="choice-sub ellipsis">{info?.path ? `${info.version ?? ''} · ${info.source}` : info?.error ?? 'Not found'}</div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        <div className="grid-2">
-          <div className="field">
-            <label>Account</label>
+        <div className="launch-rows">
+          <Row label="Account">
             <Select
               value={profileId}
-              onChange={setProfileId}
+              onChange={pickAccount}
               disabled={resuming}
-              aria-label="Account"
-              options={providerProfiles.map((p) => ({
-                value: p.id,
-                label: p.planTier ? `${p.label} · ${p.planTier}` : p.label,
-                hint: p.identity?.email ?? (p.identity?.loggedIn ? undefined : signedOutLabel(p.identity))
-              }))}
+              icon={<ProviderIcon provider={provider} size={16} />}
+              aria-label="Tool and account"
+              options={accounts}
             />
             <div className="hint row">
               {profile ? <span className="swatch" style={{ background: colorVar(profile.color), borderRadius: '50%' }} /> : null}
-              <span className="ellipsis">{limitSummary(profile?.limits?.windows) || (profile?.planTier ?? profile?.identity?.plan ? `Plan: ${profile?.planTier ?? profile?.identity?.plan}` : 'Plan usage appears after the first session')}</span>
+              <span className="ellipsis">{[usage, cliInfo].filter(Boolean).join(' · ')}</span>
             </div>
-          </div>
-          <div className="field">
-            <label>Mode</label>
-            <div className="segmented" style={{ width: '100%' }}>
-              <button type="button" className={mode === 'chat' ? 'on' : ''} style={{ flex: 1 }} onClick={() => setMode('chat')}>
-                <MessagesSquare size={13} /> Chat
-              </button>
-              <button type="button" className={mode === 'interactive' ? 'on' : ''} style={{ flex: 1 }} onClick={() => setMode('interactive')}>
-                <SquareTerminal size={13} /> Terminal
-              </button>
-              <button type="button" className={mode === 'task' ? 'on' : ''} style={{ flex: 1 }} onClick={() => setMode('task')} disabled={resuming}>
-                <Zap size={13} /> Task
-              </button>
-            </div>
-            <div className="hint">
-              {mode === 'chat'
-                ? 'A conversation with streaming replies, tool steps, diffs and approvals.'
-                : mode === 'interactive'
-                  ? "The CLI's own terminal UI, with its slash commands and shortcuts."
-                  : 'Runs the prompt headless to completion and reports the result.'}
-            </div>
-          </div>
-        </div>
-
-        <div className="field">
-          <label>{mode === 'chat' ? 'Project' : 'Working folder'}</label>
-          {mode === 'chat' ? (
-            <div className="segmented" aria-label="Project selection">
-              <button type="button" className={projectless ? 'on' : ''} aria-pressed={projectless} disabled={resuming} onClick={() => setProjectless(true)}>No project</button>
-              <button type="button" className={!projectless ? 'on' : ''} aria-pressed={!projectless} disabled={resuming} onClick={() => setProjectless(false)}>Project folder</button>
-            </div>
-          ) : null}
-          {mode === 'chat' && projectless ? <div className="hint">Start a standalone conversation without choosing a project.</div> : <>
-          <div className="row">
-            <input className="input mono" value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder={mode === 'chat' ? 'Optional — leave empty for no project' : 'C:\\path\\to\\project'} spellCheck={false} />
-            <button className="btn" onClick={browse}>
-              <FolderOpen size={14} /> Browse
-            </button>
-          </div>
-          {recent.length ? (
-            <div className="chips">
-              {recent.map((r) => (
-                <button key={r} className="chip" style={{ cursor: 'pointer', paddingRight: 9 }} onClick={() => setCwd(r)} title={r}>
-                  {r.split(/[\\/]/).filter(Boolean).pop()}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          </>}
-        </div>
-
-        {mode === 'task' && !resuming ? (
-          <div className="field">
-            <label>Task</label>
-            <textarea
-              className="textarea"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Describe what the agent should do. It runs until done."
-              autoFocus
-            />
-          </div>
-        ) : null}
-
-        <button className="btn ghost sm" style={{ justifySelf: 'start' }} onClick={() => setAdvanced(!advanced)}>
-          <ChevronRight size={14} style={{ transform: advanced ? 'rotate(90deg)' : undefined, transition: 'transform .15s' }} /> Model & advanced
-          {!advanced && modelSummary ? <span className="muted" style={{ fontWeight: 400 }}>· {modelSummary}</span> : null}
-        </button>
-        {advanced ? (
-          <>
-          <div className="grid-2">
-            <div className="field">
-              <label>Chat title</label>
-              <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Shown in the task manager" />
-            </div>
-            <div className="field">
-              <label>Permissions</label>
-              <Select
-                value={permission}
-                onChange={setPermission}
-                aria-label="Permissions"
-                options={PERMISSIONS[provider].map((p) => ({ value: p.value, label: p.label, hint: p.hint }))}
-              />
-              <div className="hint" style={{ color: /never|No sandbox/i.test(permissionHint ?? '') ? 'var(--serious)' : undefined }}>
-                {permissionHint}
+            {resuming ? (
+              <div className="badge accent" style={{ justifySelf: 'start', height: 24 }}>
+                <History size={13} /> Continuing session {preset.resumeSessionId?.slice(0, 8)}…
               </div>
+            ) : null}
+          </Row>
+
+          <Row label="Project" htmlFor="launch-project">
+            <div className="path-row">
+              <div className="path-box">
+                {withoutProject ? <Monitor size={14} className="path-icon" /> : <Folder size={14} className="path-icon" />}
+                <input id="launch-project" value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder={`This Computer (${workspaces})`} title={withoutProject ? workspaces : undefined} spellCheck={false} />
+                {withoutProject ? null : (
+                  <button type="button" className="btn ghost sm icon" title="This Computer (no project)" aria-label="Clear project" onClick={() => setCwd('')}>
+                    <X size={14} />
+                  </button>
+                )}
+                {recent.length ? (
+                  <Select
+                    className="path-recent"
+                    variant="ghost"
+                    size="sm"
+                    heading="Recent projects"
+                    title="Recent projects"
+                    aria-label="Recent projects"
+                    value={recent.some((r) => r.value === cwd) ? cwd : ''}
+                    options={recent}
+                    onChange={setCwd}
+                  />
+                ) : null}
+              </div>
+              <button type="button" className="btn path-browse" onClick={browse}>
+                <FolderOpen size={14} /> Browse
+              </button>
             </div>
-          </div>
-          <div className="grid-3" style={{ alignItems: 'start' }}>
-            <div className="field">
-              <label>Model</label>
+            {withoutProject ? <div className="hint">No project: the chat works in a folder of its own there.</div> : null}
+          </Row>
+
+          <div className="launch-rule" />
+
+          <Row label="Model">
+            <div className="launch-pair">
               <Select
                 value={model || defaultModel(provider, profile?.cliDefaults)}
                 aria-label="Model"
@@ -344,12 +299,9 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
                   setModel(next);
                 }}
               />
-              {modelFromAccount ? <div className="hint">This account's default</div> : null}
-            </div>
-            <div className="field">
-              <label>Reasoning effort</label>
               <Select
                 value={effort}
+                prefix="Effort"
                 aria-label="Reasoning effort"
                 options={effortOptions(provider, profile?.cliDefaults.effort, effort)}
                 onChange={(next) => {
@@ -357,15 +309,37 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
                   setEffort(next);
                 }}
               />
-              {effortFromAccount ? <div className="hint">This account's default</div> : null}
             </div>
-            <div className="field">
-              <label>Extra arguments</label>
-              <input className="input mono" value={extraArgs} onChange={(e) => setExtraArgs(e.target.value)} placeholder={provider === 'claude' ? '--add-dir ..\\shared' : '--search'} spellCheck={false} />
-            </div>
-          </div>
-          </>
-        ) : null}
+            {accountDefaults ? <div className="hint">{accountDefaults}</div> : null}
+          </Row>
+
+          <button type="button" className="btn ghost sm launch-more" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}>
+            <ChevronRight size={14} style={{ transform: advanced ? 'rotate(90deg)' : undefined, transition: 'transform .15s' }} /> More options
+            {!advanced && moreSummary ? <span className="muted ellipsis" style={{ fontWeight: 400 }}>· {moreSummary}</span> : null}
+          </button>
+
+          {advanced ? (
+            <>
+            <Row label="Permissions">
+              <Select
+                value={permission}
+                onChange={setPermission}
+                aria-label="Permissions"
+                options={PERMISSIONS[provider].map((p) => ({ value: p.value, label: p.label, hint: p.hint }))}
+              />
+              <div className="hint" style={{ color: /never|No sandbox/i.test(permissionHint ?? '') ? 'var(--serious)' : undefined }}>
+                {permissionHint}
+              </div>
+            </Row>
+              <Row label="Chat title" htmlFor="launch-title">
+                <input id="launch-title" className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Shown in the task manager" />
+              </Row>
+              <Row label="Extra arguments" htmlFor="launch-args">
+                <input id="launch-args" className="input mono" value={extraArgs} onChange={(e) => setExtraArgs(e.target.value)} placeholder={provider === 'claude' ? '--add-dir ..\\shared' : '--search'} spellCheck={false} />
+              </Row>
+            </>
+          ) : null}
+        </div>
         {!cli?.path ? <div className="badge critical" style={{ justifySelf: 'start' }}>{cli?.error ?? `${PROVIDER_LABEL[provider]} CLI not found`}</div> : null}
         {profile && profile.identity && !profile.identity.loggedIn ? (
           <div className="badge warning" style={{ justifySelf: 'start' }}>

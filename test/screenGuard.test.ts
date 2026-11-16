@@ -71,12 +71,10 @@ describe('hook server guard', () => {
     dir = null;
   });
 
-  it('answers PreToolUse with the guard on both routes, and reports events only on /hook', async () => {
+  it('answers PreToolUse with the guard, and nothing on any other route', async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atc-hooks-'));
     server = new HookServer(dir);
     await server.start();
-    const events: string[] = [];
-    server.onEvent = (e) => events.push(`${e.agentId}:${e.name}`);
     server.guard = (_id, payload) => guardDecision(payload, { skillDir: 'C:\\skill' });
 
     const file = server.writeSettingsFile('chat1', server.guardSettings('chat1'));
@@ -92,7 +90,7 @@ describe('hook server guard', () => {
     const bad = { hook_event_name: 'PreToolUse', tool_name: 'PowerShell', tool_input: { command: CLICK_SCRIPT } };
     expect((await post(hook.hooks[0].url, bad)).hookSpecificOutput.permissionDecision).toBe('deny');
     expect(await post(hook.hooks[0].url, { ...bad, tool_input: { command: 'ls' } })).toEqual({});
-    expect((await post(`${server.url}/hook/term1`, bad)).hookSpecificOutput.permissionDecision).toBe('deny');
-    expect(events).toEqual(['term1:PreToolUse']);
+    const other = await fetch(`${server.url}/hook/term1`, { method: 'POST', headers: hook.hooks[0].headers, body: JSON.stringify(bad) });
+    expect(other.status).toBe(404);
   });
 });

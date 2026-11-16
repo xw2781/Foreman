@@ -11,7 +11,6 @@ import {
   FolderOpen,
   GitFork,
   Globe,
-  History,
   MessageSquareDashed,
   Monitor,
   MoreHorizontal,
@@ -27,15 +26,15 @@ import {
   Trash2,
   X
 } from 'lucide-react';
-import { AGENT_MODES, CONVERSATION_MODES, LIVE_STATUSES, type AgentInfo, type AgentMode } from '@shared/types';
+import { LIVE_STATUSES, type AgentInfo } from '@shared/types';
 import { ChatView } from './ChatView';
 import { PromptCacheBadge } from '../PromptCacheBadge';
 import { SidePanel, usePanelTab } from './SidePanel';
 import { backgroundWork, describeSubagents, runningSubagents } from '@shared/subagents';
 import { call, errorMessage } from '../api';
 import { isPanelOpen, useApp } from '../store';
-import { compact, folderName, modelLabel, percent, usd } from '../format';
-import { AccountChip, AgentStatusPill, ContextMenu, Empty, Meter, MiniMeter, ProviderIcon, RunningSpinner, confirmDialog, fitRow, unfitRow, useTicker } from '../ui';
+import { compact, folderName, modelLabel, usd } from '../format';
+import { AccountChip, AgentStatusPill, ContextMenu, Empty, MiniMeter, ProviderIcon, RunningSpinner, confirmDialog, fitRow, unfitRow, useTicker } from '../ui';
 import { mountTerminal, terminalBackground } from '../terminals';
 import { groupAgentsByProject, projectKey } from '../agentProjects';
 import { hasUnreadCompletion } from '../sessionUnread';
@@ -43,14 +42,10 @@ import { forkAgent } from '../sideChat';
 
 export async function stopAgent(agent: AgentInfo) {
   const settings = useApp.getState().settings;
-  if (settings?.confirmBeforeStop && AGENT_MODES.includes(agent.mode)) {
+  if (settings?.confirmBeforeStop && agent.mode === 'chat') {
     const { ok } = await confirmDialog({
       title: `Stop "${agent.title}"?`,
-      message: agent.mode === 'chat'
-        ? 'The process is ended. The conversation is kept; send a message to continue it.'
-        : agent.mode === 'interactive'
-          ? 'The process is ended. The conversation is kept and can be resumed later.'
-          : 'The background task is ended before it finishes.',
+      message: 'The process is ended. The conversation is kept; send a message to continue it.',
       confirmLabel: 'Stop agent',
       danger: true
     });
@@ -65,12 +60,12 @@ export async function stopAgent(agent: AgentInfo) {
 
 /** A conversation exists once the CLI wrote a session file for it. */
 export function canResume(agent: AgentInfo) {
-  return CONVERSATION_MODES.includes(agent.mode) && Boolean(agent.transcriptPath || agent.telemetry?.sessionId);
+  return agent.mode === 'chat' && Boolean(agent.transcriptPath || agent.telemetry?.sessionId);
 }
 
-export async function resumeAgent(agent: AgentInfo, mode?: AgentMode) {
+export async function resumeAgent(agent: AgentInfo) {
   try {
-    const next = await call('agents.resume', agent.id, mode);
+    const next = await call('agents.resume', agent.id);
     useApp.setState({ selectedAgentId: next.id, view: 'agents' });
   } catch (error) {
     useApp.getState().toast('error', errorMessage(error));
@@ -79,12 +74,9 @@ export async function resumeAgent(agent: AgentInfo, mode?: AgentMode) {
 
 type Display = 'chat' | 'terminal';
 
-/** How a conversation is shown: a running one as the kind of process it is. */
+/** Agents are chats; a sign-in or an account shell is a terminal. */
 function displayOf(agent: AgentInfo): Display {
-  if (!CONVERSATION_MODES.includes(agent.mode)) return 'terminal';
-  if (!agent.endedAt) return agent.mode === 'chat' ? 'chat' : 'terminal';
-  // Without a terminal buffer (earlier app run) the chat rebuilds the conversation from its session file.
-  return agent.mode === 'chat' || !agent.attached ? 'chat' : 'terminal';
+  return agent.mode === 'chat' ? 'chat' : 'terminal';
 }
 
 /** A simple archive box, using the same outline weight as the toolbar icons. */
@@ -156,7 +148,7 @@ function AgentListItem({ agent, selected, onSelect, archived = false, onToggleAr
         {agent.status === 'stopped' && !backgroundWork(agent) ? null : (
           <AgentStatusPill agent={agent} detail={false} spinner label={agent.status === 'working' && !agent.endedAt ? 'Running' : undefined} />
         )}
-        {AGENT_MODES.includes(agent.mode) ? <PromptCacheBadge agent={agent} iconOnly /> : null}
+        {agent.mode === 'chat' ? <PromptCacheBadge agent={agent} iconOnly /> : null}
         {agent.usesScreen ? <MousePointer2 size={12} color="var(--warning)" /> : null}
         {browser ? <Globe size={12} color={browser.busy ? 'var(--accent-strong)' : 'var(--text-muted)'} aria-label="Has a browser open" /> : null}
         {subagents ? (
@@ -164,7 +156,7 @@ function AgentListItem({ agent, selected, onSelect, archived = false, onToggleAr
             <Network size={12} /> {subagents}
           </span>
         ) : null}
-        <span className="ellipsis">{agent.mode === 'task' ? 'task' : CONVERSATION_MODES.includes(agent.mode) ? agent.profileLabel : agent.mode}</span>
+        <span className="ellipsis">{agent.mode === 'chat' ? agent.profileLabel : agent.mode}</span>
         {t?.cost.totalUsd != null ? <span style={{ marginLeft: 'auto' }} className="num ai-cost">{usd(t.cost.reportedUsd ?? t.cost.totalUsd)}</span> : null}
       </div>}
       {!compactRow && t && t.contextPercent !== null && agent.mode !== 'shell' ? (
@@ -295,7 +287,7 @@ function ProjectSessions({ agents, selectedId, archived = false, projectFolders 
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              openLauncher({ cwd: project.path, projectless: !project.path, mode: 'chat' });
+              openLauncher({ cwd: project.path, projectless: !project.path });
             }}
           >
             <Plus size={14} />
@@ -433,12 +425,7 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
         </div>
       </div>
       <div className="th-actions">
-        {t && t.contextPercent !== null && display === 'terminal' ? (
-          <div className="th-context">
-            <Meter label="Context" value={t.contextPercent} valueText={`${percent(t.contextPercent)} of ${compact(t.contextWindow)}`} title={`${compact(t.contextUsedTokens)} tokens in context${t.contextWindowAssumed ? ' (window size assumed)' : ''}`} />
-          </div>
-        ) : null}
-        {CONVERSATION_MODES.includes(agent.mode) ? (
+        {agent.mode === 'chat' ? (
           <button
             className="btn ghost icon"
             data-fit="1"
@@ -476,14 +463,10 @@ function AgentHeader({ agent, display }: { agent: AgentInfo; display: Display })
         >
           <FolderOpen size={15} />
         </button>
-        {/* A chat stops from its composer; terminal agents have no composer. */}
+        {/* A chat stops from its composer; a sign-in or shell has none. */}
         {live && display !== 'chat' ? (
           <button className="btn danger sm" onClick={() => stopAgent(agent)}>
             <Square size={12} /> Stop
-          </button>
-        ) : canResume(agent) && display === 'terminal' ? (
-          <button className="btn sm" onClick={() => resumeAgent(agent, 'interactive')}>
-            <History size={13} /> Resume
           </button>
         ) : null}
         {!live ? (
@@ -677,8 +660,8 @@ export function AgentsView() {
         <div className="agent-list-head">
           <div className="al-search-row">
             <label className="al-search">
-              <Search size={15} />
-              <input placeholder="Search sessions" aria-label="Search sessions" value={query} onChange={(e) => setQuery(e.target.value)}
+              <Search size={16} />
+              <input placeholder="Search" aria-label="Search sessions" value={query} onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Escape' && query) { e.preventDefault(); setQuery(''); } }} />
               {query ? (
                 <button type="button" className="btn ghost sm icon" aria-label="Clear search" onClick={() => setQuery('')}>
@@ -691,7 +674,7 @@ export function AgentsView() {
               <PanelLeftClose size={16} />
             </button>
           </div>
-          <button type="button" className="al-action al-new" onClick={() => openLauncher()}>
+          <button type="button" className="al-action" onClick={() => openLauncher()}>
             <Plus size={16} />
             <span>New session</span>
             <span className="kbd">Ctrl N</span>
@@ -781,24 +764,8 @@ export function AgentsView() {
           <AgentWork agent={selected}>
           {display === 'chat' ? (
             <ChatView key={selected.id} agent={selected} />
-          ) : selected.attached && selected.mode !== 'chat' ? (
-            <TerminalHost key={`${selected.id}:${selected.runId}`} agent={selected} />
           ) : (
-            <div className="term-host" style={{ display: 'grid', placeItems: 'center', background: 'var(--surface-1)' }}>
-              <Empty
-                icon={<History size={22} />}
-                title={selected.mode === 'chat' ? 'This conversation ran as a chat' : 'This agent ran in an earlier session of the app'}
-                action={
-                  canResume(selected) ? (
-                    <button className="btn primary" onClick={() => resumeAgent(selected, 'interactive')}>
-                      <History size={14} /> Resume in terminal
-                    </button>
-                  ) : undefined
-                }
-              >
-                There's no terminal output to show, but the conversation is kept. Resume it in the terminal, or switch to Chat to read and continue it.
-              </Empty>
-            </div>
+            <TerminalHost key={`${selected.id}:${selected.runId}`} agent={selected} />
           )}
           </AgentWork>
         </section>
@@ -813,7 +780,7 @@ export function AgentsView() {
               </button>
             }
           >
-            Chat with an agent, or use the CLI's own terminal UI, with the account you choose. Status, context usage and cost update live, and the task manager shows everything that's running.
+            Chat with an agent under the account you choose. Status, context usage and cost update live, and the task manager shows everything that's running.
           </Empty>
         </section>
       )}

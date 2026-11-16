@@ -5,7 +5,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  AGENT_MODES,
   LIVE_STATUSES,
   PROVIDERS,
   PROVIDER_LABEL,
@@ -93,7 +92,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   usageDays: 30,
   codexNoDaemonForIsolated: true,
   shellForTerminals: 'powershell.exe',
-  claudeStatusLine: true,
   claudeIdleMode: 'compact',
   claudeIdleCompactMinTokens: 0,
   chatSendMode: 'steer',
@@ -291,7 +289,6 @@ githubSync.onImported = () => {
 };
 agents.onData = (id, data, end) => emit('agent-data', { id, data, end });
 agents.onChat = (id, items, reset) => emit('chat', { id, items, reset });
-hooks.onStatusLine = (id, payload) => agents.handleStatusLine(id, payload);
 agents.onChanged = (list) => {
   emit('agents', list);
   updateWindowTitle(list);
@@ -308,13 +305,6 @@ agents.onRemoved = (ids) => {
     browserMcp.removeConfig(id);
   }
 };
-if (process.env.ATC_CAPTURE_DIR) {
-  const hookLog = path.join(process.env.ATC_CAPTURE_DIR, 'hooks.log');
-  agents.onHookEvent = (event) => {
-    fs.mkdirSync(path.dirname(hookLog), { recursive: true });
-    fs.appendFileSync(hookLog, `${new Date().toISOString()} ${event.agentId} ${event.name} ${event.payload.tool_name ?? event.payload.notification_type ?? event.payload.source ?? ''}\n`);
-  };
-}
 updates.onChanged = (status) => emit('update', status);
 hooks.guard = (agentId, payload) => {
   if (settings().computerUseGuard === false) return null;
@@ -335,7 +325,7 @@ function updateWindowTitle(list: AgentInfo[]) {
   mainWindow.setTitle(parts.length ? `Foreman — ${parts.join(', ')}` : 'Foreman');
 }
 
-function notifyAttention(info: AgentInfo, reason: 'needs-input' | 'turn-complete' | 'task-complete' | 'failed') {
+function notifyAttention(info: AgentInfo, reason: 'needs-input' | 'turn-complete') {
   const s = settings();
   const wantsIt = reason === 'needs-input' ? s.notifyOnNeedsInput : s.notifyOnTurnComplete;
   const focused = mainWindow?.isFocused() ?? false;
@@ -345,9 +335,7 @@ function notifyAttention(info: AgentInfo, reason: 'needs-input' | 'turn-complete
   }
   const titles = {
     'needs-input': `${PROVIDER_LABEL[info.provider]} needs your input`,
-    'turn-complete': `${PROVIDER_LABEL[info.provider]} finished its turn`,
-    'task-complete': 'Background task complete',
-    failed: 'Background task failed'
+    'turn-complete': `${PROVIDER_LABEL[info.provider]} finished its turn`
   };
   const notification = new Notification({
     title: titles[reason],
@@ -550,7 +538,7 @@ function registerIpc() {
   handle('agents.remove', (id) => agents.remove(id));
   handle('agents.clearFinished', () => agents.clearFinished());
   handle('agents.rename', (id, title) => agents.rename(id, title));
-  handle('agents.resume', (id, mode) => agents.resume(id, mode));
+  handle('agents.resume', (id) => agents.resume(id));
   handle('agents.buffer', (id) => agents.buffer(id));
   handle('agents.fork', (id, itemId) => agents.fork(id, typeof itemId === 'string' ? itemId : undefined));
   handle('chat.side', (id, question, earlier) => agents.chatSide(id, String(question ?? ''), Array.isArray(earlier) ? earlier : []));
@@ -872,7 +860,7 @@ function showWindow() {
 /** How many agents quitting would stop, when the user wants to be asked first (else 0). */
 function runningAgentsToConfirm() {
   if (!settings().confirmBeforeStop) return 0;
-  return agents.list().filter((a) => LIVE_STATUSES.includes(a.status) && AGENT_MODES.includes(a.mode)).length;
+  return agents.list().filter((a) => LIVE_STATUSES.includes(a.status) && a.mode === 'chat').length;
 }
 
 async function confirmStopAgents(action: string) {

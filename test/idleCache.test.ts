@@ -42,7 +42,7 @@ describe('keeping the prompt cache warm', () => {
   it('needs an idle, live Claude chat at least as large as the idle compaction threshold', () => {
     expect(keepaliveDue({ ...warm, idleMode: 'compact' }, FLOOR, minutes(55))).toBe(true);
     expect(keepaliveDue({ ...warm, telemetry: { contextUsedTokens: 150_000 } as SessionTelemetry }, FLOOR, minutes(55))).toBe(false);
-    expect(keepaliveDue({ ...warm, mode: 'interactive' }, FLOOR, minutes(55))).toBe(false);
+    expect(keepaliveDue({ ...warm, mode: 'shell' }, FLOOR, minutes(55))).toBe(false);
     expect(keepaliveDue({ ...warm, provider: 'codex' }, FLOOR, minutes(55))).toBe(false);
     expect(keepaliveDue({ ...warm, status: 'needs-input' }, FLOOR, minutes(55))).toBe(false);
     expect(keepaliveDue({ ...warm, endedAt: new Date(minutes(10)).toISOString() }, FLOOR, minutes(55))).toBe(false);

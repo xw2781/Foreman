@@ -4,33 +4,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { GUARDED_TOOLS } from './screenGuard';
 
-export interface HookEvent {
-  agentId: string;
-  name: string;
-  payload: Record<string, any>;
-}
-
-const EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'SubagentStop', 'SessionEnd'];
-const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse']);
-
 /**
- * Receives Claude Code HTTP hooks on 127.0.0.1 so the app knows exactly when
- * each agent starts a turn, runs a tool, waits for permission, or finishes.
- * Hooks are injected per agent through `claude --settings <file>`, which
- * Claude Code merges with the user's own settings: nothing the user owns is
- * modified. The server answers `{}` immediately, i.e. "no decision", so a
- * hook never changes what Claude Code would have done, with one exception:
- * `guard` may refuse a PreToolUse (hand-written desktop control, see
- * screenGuard.ts). Chats take their events over stdio and get only that
- * guard, on the `/guard/<id>` route.
+ * Answers Claude Code's PreToolUse hook on 127.0.0.1 for the tools `guard` watches
+ * (hand-written desktop control, see screenGuard.ts). The hook is injected per agent
+ * through `claude --settings <file>`, which Claude Code merges with the user's own
+ * settings: nothing the user owns is modified. Every other reply is `{}`, "no decision".
+ * Chats take their events over stdio, so this is the only hook they get.
  */
 export class HookServer {
   private server: http.Server | null = null;
   private token = crypto.randomBytes(24).toString('hex');
   port = 0;
-  onEvent: (event: HookEvent) => void = () => {};
-  /** Returns the text Claude Code shows in its status bar for this agent. */
-  onStatusLine: (agentId: string, payload: Record<string, any>) => Promise<string> = async () => '';
   /** A PreToolUse reply that overrides "no decision", or null. */
   guard: (agentId: string, payload: Record<string, any>) => Record<string, unknown> | null = () => null;
 
@@ -56,12 +40,12 @@ export class HookServer {
   }
 
   private handle(req: http.IncomingMessage, res: http.ServerResponse) {
-    const match = /^\/(hook|statusline|guard)\/([A-Za-z0-9_-]+)$/.exec(req.url ?? '');
+    const match = /^\/guard\/([A-Za-z0-9_-]+)$/.exec(req.url ?? '');
     if (req.method !== 'POST' || !match || req.headers['x-atc-token'] !== this.token) {
       res.writeHead(404).end();
       return;
     }
-    const [, route, agentId] = match;
+    const agentId = match[1];
     const chunks: Buffer[] = [];
     let size = 0;
     req.on('data', (chunk: Buffer) => {
@@ -76,12 +60,6 @@ export class HookServer {
       } catch {
         // truncated or malformed: still useful as a bare event
       }
-      if (route === 'statusline') {
-        this.onStatusLine(agentId, payload)
-          .catch(() => '')
-          .then((text) => res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }).end(text));
-        return;
-      }
       const name = typeof payload.hook_event_name === 'string' ? payload.hook_event_name : 'unknown';
       let reply: Record<string, unknown> | null = null;
       if (name === 'PreToolUse') {
@@ -92,38 +70,7 @@ export class HookServer {
         }
       }
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(reply ?? {}));
-      if (route === 'hook') this.onEvent({ agentId, name, payload });
     });
-  }
-
-  /**
-   * Writes the per-agent settings file passed to `claude --settings`.
-   * With `statusLine`, Claude Code's status-line JSON (authoritative context
-   * size, its own cost estimate, plan limits) is posted here too; the app
-   * answers with the text of the user's own status line so nothing changes
-   * on screen. curl.exe ships with Windows 10 1803 and later.
-   */
-  settingsFileFor(agentId: string, statusLine: { refreshInterval?: number } | null = null, extra: Record<string, unknown> = {}): string | null {
-    if (!this.url) return null;
-    // Only documented keys: an invalid settings file makes Claude Code show an error dialog.
-    const hook = { type: 'http', url: `${this.url}/hook/${agentId}`, headers: { 'X-ATC-Token': this.token } };
-    const hooks: Record<string, unknown[]> = {};
-    for (const event of EVENTS) {
-      hooks[event] = [TOOL_EVENTS.has(event) ? { matcher: '*', hooks: [hook] } : { hooks: [hook] }];
-    }
-    const settings: Record<string, unknown> = { ...extra, hooks };
-    if (statusLine) {
-      const curl = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'curl.exe').replace(/\\/g, '/');
-      // An unquoted program path runs in bash, cmd and PowerShell alike (PowerShell
-      // would need `&` before a quoted one); quote only if the path has spaces.
-      const program = /\s/.test(curl) ? `"${curl}"` : curl;
-      settings.statusLine = {
-        type: 'command',
-        command: `${program} -s -m 8 --data-binary "@-" -H "X-ATC-Token: ${this.token}" ${this.url}/statusline/${agentId}`,
-        ...(statusLine.refreshInterval ? { refreshInterval: statusLine.refreshInterval } : {})
-      };
-    }
-    return this.writeSettingsFile(agentId, settings);
   }
 
   /** Settings that give a chat only the PreToolUse guard (its other events come over stdio). */
@@ -133,7 +80,7 @@ export class HookServer {
     return { hooks: { PreToolUse: [{ matcher: GUARDED_TOOLS, hooks: [hook] }] } };
   }
 
-  /** A per-agent settings file without the event hooks (chats get their events over stdio). */
+  /** Writes the per-agent settings file passed to `claude --settings`. Only documented keys: an invalid file makes Claude Code show an error dialog. */
   writeSettingsFile(agentId: string, settings: Record<string, unknown>): string {
     const file = path.join(this.settingsDir, `${agentId}.json`);
     fs.mkdirSync(this.settingsDir, { recursive: true });

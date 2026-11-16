@@ -8,13 +8,10 @@ import { spawn as spawnChild, type ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import * as pty from 'node-pty';
 import {
-  AGENT_MODES,
-  CONVERSATION_MODES,
   LIVE_STATUSES,
   PROVIDER_LABEL,
   type AgentInfo,
   type IdleMode,
-  type AgentMode,
   type AgentStatus,
   type AppSettings,
   type ChatAnswer,
@@ -27,7 +24,7 @@ import {
   type LaunchOptions,
   type Profile
 } from '../shared/types';
-import { claudeCommand, claudeIdleCompaction, codexCommand, idleCompactFloor, loginCommand, splitArgs, withBrowserArgs } from './commands';
+import { claudeIdleCompaction, idleCompactFloor, loginCommand, splitArgs, withBrowserArgs } from './commands';
 import { ChatLog, clipText } from './chat/log';
 import { ClaudeChat, claudeChatArgs } from './chat/claudeChat';
 import { KEEPALIVE_PROMPT, claudeCompactsIdle, idleCompactDue, keepaliveCosts, keepaliveDue, keepWarmAllowed } from './chat/idleCache';
@@ -38,8 +35,7 @@ import { LineSplitter, type ChatDriver, type ChatHost } from './chat/driver';
 import { locateCli, spawnSpec } from './cliLocator';
 import { defaultModel } from '../shared/models';
 import { estimateSwitchCost } from './chat/switchCost';
-import { ClaudeStreamFormatter, describeToolInput } from './streamFormat';
-import type { HookEvent, HookServer } from './hookServer';
+import type { HookServer } from './hookServer';
 import { screenToolLine, type ScreenFeed, type ScreenFeedEntry } from './computerUse';
 import type { ProfileService } from './profiles';
 import type { TelemetryClient } from './telemetry/client';
@@ -50,7 +46,6 @@ import { SubagentTracker, settleSubagents } from './subagents';
 import { savedSession } from './savedSession';
 import { claudeLoginUrl } from './loginUrl';
 import { trackReportedCost } from './reportedCost';
-import { defaultStatusText, originalStatusLine, parseStatusPayload, runStatusCommand, type StatusSnapshot } from './statusLine';
 
 const BUFFER_LIMIT = 2_500_000;
 const TAIL_LIMIT = 6000;
@@ -78,10 +73,8 @@ interface Session {
   total: number;
   outbox: string;
   tail: string;
-  formatter: ClaudeStreamFormatter | null;
   claudeSessionId: string | null;
   settingsFile: string | null;
-  hookStatus: 'working' | 'idle' | null;
   needsInput: boolean;
   needsInputSince: number;
   /** The title is the person's (typed at launch or renamed): nothing automatic replaces it. */
@@ -91,7 +84,6 @@ interface Session {
   stopping: boolean;
   lastTelemetryKey: string;
   discoveryAttempts: number;
-  statusLine: StatusSnapshot | null;
   /** Claude: the total saved in the resumed session's file at launch, which the CLI's cost counter starts from. */
   costRestored: number | null;
   /** Chat mode: the conversation and the protocol driver behind it. */
@@ -107,8 +99,6 @@ interface Session {
   exitWaiters: Array<() => void>;
   /** A Codex change made mid-turn: the turn running then ends before the one that rebuilds the cache. */
   rebuildSkipsTurn?: boolean;
-  /** Terminal agents: the conversation as hooks report it, for the on-screen panel while it drives the computer. */
-  screenFeed?: ScreenFeedEntry[];
 }
 
 const SCREEN_FEED_LIMIT = 14;
@@ -151,7 +141,7 @@ export class AgentManager {
   onData: (id: string, data: string, end: number) => void = () => {};
   onChat: (id: string, items: ChatItem[], reset: boolean) => void = () => {};
   onChanged: (agents: AgentInfo[]) => void = () => {};
-  onAttention: (info: AgentInfo, reason: 'needs-input' | 'turn-complete' | 'task-complete' | 'failed') => void = () => {};
+  onAttention: (info: AgentInfo, reason: 'needs-input' | 'turn-complete') => void = () => {};
   /** Agents taken off the list (their browsers can go). */
   onRemoved: (ids: string[]) => void = () => {};
 
@@ -159,7 +149,8 @@ export class AgentManager {
     this.history = new JsonStore(path.join(deps.userDataDir, 'agents.json'), { agents: [] });
     // Agents from a previous run died with the app; keep them as resumable history.
     const restored = this.history.data.agents.map((agent) => {
-      const withRun = { ...agent, runId: agent.runId ?? agent.id };
+      // Terminal and task agents of earlier versions are kept as chats: their session files open and continue as one.
+      const withRun = { ...agent, mode: 'chat' as const, runId: agent.runId ?? agent.id };
       return LIVE_STATUSES.includes(agent.status)
         ? { ...withRun, status: 'stopped' as AgentStatus, statusDetail: 'App was closed', endedAt: agent.endedAt ?? agent.lastActivityAt, pid: null, resources: null, reopenOnStart: true, subagents: settleSubagents(agent.subagents ?? [], agent.lastActivityAt) }
         : withRun;
@@ -167,7 +158,6 @@ export class AgentManager {
     this.history.replace({ agents: restored });
     this.contextUsage = new JsonStore(path.join(deps.userDataDir, 'context-usage.json'), { byAgent: {} });
     this.pruneContextUsage();
-    deps.hooks.onEvent = (event) => this.handleHook(event);
   }
 
   // -------------------------------------------------------------------------
@@ -204,22 +194,21 @@ export class AgentManager {
 
   /**
    * Starts an agent. With `reuseId`, a finished agent is continued in place:
-   * same id and list entry, a new process (resume, chat/terminal hand-off).
+   * same id and list entry, a new process.
    */
   async launch(options: LaunchOptions, reuseId?: string, images?: ChatImage[]): Promise<AgentInfo> {
     const profile = this.deps.profiles.require(options.profileId);
     if (profile.provider !== options.provider) throw new Error('That account belongs to a different tool.');
     // A new agent takes the account's defaults where the launch doesn't choose; a continued one keeps its own.
-    if (!reuseId && AGENT_MODES.includes(options.mode)) {
+    if (!reuseId && options.mode === 'chat') {
       options = { ...options, model: options.model || profile.defaultModel || undefined, effort: options.effort || profile.defaultEffort || undefined };
       if (!options.model && !options.resumeSessionId) options.model = defaultModel(profile.provider, this.deps.profiles.cliDefaults(profile));
     }
     const id = reuseId ?? crypto.randomBytes(6).toString('hex');
     options = resolveChatWorkspace(options, id, this.deps.userDataDir);
     if (!exists(options.cwd)) throw new Error(`Folder not found: ${options.cwd}`);
-    if (options.mode === 'task' && !options.prompt?.trim()) throw new Error('A background task needs a prompt.');
-    if (AGENT_MODES.includes(options.mode) && !options.projectless) this.deps.profiles.prepareProject(profile, options.cwd);
-    if (AGENT_MODES.includes(options.mode)) this.deps.prepareProfile?.(profile);
+    if (options.mode === 'chat' && !options.projectless) this.deps.profiles.prepareProject(profile, options.cwd);
+    if (options.mode === 'chat') this.deps.prepareProfile?.(profile);
     const settings = this.deps.settings();
     const cli = await locateCli(profile.provider, settings.cliPath[profile.provider]);
     if (!cli.path) throw new Error(cli.error ?? 'CLI not found');
@@ -230,7 +219,6 @@ export class AgentManager {
     let claudeSessionId: string | null = null;
     let settingsFile: string | null = null;
     let args: string[];
-    let headless = false;
     let chat: ChatLog | null = null;
     // A continued session keeps the idle mode it was given; a new one takes the Settings default.
     const idleMode: IdleMode = previous?.idleMode === 'compact' || previous?.idleMode === 'off' ? previous.idleMode : settings.claudeIdleMode === 'off' ? 'off' : 'compact';
@@ -239,7 +227,7 @@ export class AgentManager {
     const idleCompaction = claudeIdleCompaction(idleMode, settings, (keepWarmHours ?? 0) > 0);
     if (options.mode === 'chat') {
       // A chat continued in this run keeps its items; otherwise the session file has them.
-      if (previousSession?.chat?.size && previousSession.info.mode === 'chat') chat = previousSession.chat;
+      if (previousSession?.chat?.size) chat = previousSession.chat;
       else {
         chat = options.fork
           ? await this.forkLog(profile, options.fork)
@@ -269,19 +257,11 @@ export class AgentManager {
       }
     } else if (options.mode === 'login') {
       args = loginCommand(profile);
-    } else if (profile.provider === 'claude') {
-      claudeSessionId = options.resumeSessionId ?? crypto.randomUUID();
-      settingsFile = this.deps.hooks.settingsFileFor(
-        id,
-        settings.claudeStatusLine && options.mode !== 'task' ? { refreshInterval: originalStatusLine(profile)?.refreshInterval } : null,
-        idleCompaction.settings
-      );
-      ({ args, headless } = claudeCommand(options, options.resumeSessionId ? null : claudeSessionId, settingsFile));
     } else {
-      ({ args, headless } = codexCommand(options, profile, settings.codexNoDaemonForIsolated));
+      throw new Error('Shells start from the Accounts page.');
     }
 
-    if (AGENT_MODES.includes(options.mode)) args = withBrowserArgs(args, this.deps.browserArgs?.(id, profile.provider) ?? []);
+    if (options.mode === 'chat') args = withBrowserArgs(args, this.deps.browserArgs?.(id, profile.provider) ?? []);
 
     const title = options.title?.trim()
       || previous?.title
@@ -314,7 +294,7 @@ export class AgentManager {
       lastActivityAt: now,
       lastOutputAt: null,
       lastModelActivityAt: options.resumeSessionId ? previous?.lastModelActivityAt ?? (previous?.telemetry?.requests ? previous.telemetry.updatedAt : null) : null,
-      idleMode: profile.provider === 'claude' && AGENT_MODES.includes(options.mode) ? idleMode : undefined,
+      idleMode: profile.provider === 'claude' && options.mode === 'chat' ? idleMode : undefined,
       keepWarmHours,
       completedAt: previous?.completedAt ?? null,
       commandLine: [cli.path, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' '),
@@ -331,7 +311,6 @@ export class AgentManager {
       cacheRebuild: options.resumeSessionId ? previous?.cacheRebuild ?? null : null
     };
     const session = this.createSession(info, options, profile, {
-      formatter: headless && profile.provider === 'claude' ? new ClaudeStreamFormatter() : null,
       claudeSessionId,
       settingsFile,
       costRestored: (options.resumeSessionId && previous?.telemetry?.sessionId === options.resumeSessionId ? previous.telemetry.cost.savedUsd : null) ?? null,
@@ -353,7 +332,6 @@ export class AgentManager {
 
     try {
       if (options.mode === 'chat') this.startChat(session, cli.path, args, env, images);
-      else if (headless) this.startHeadless(session, cli.path, args, env);
       else this.startTerminal(session, cli.path, args, env);
     } catch (error) {
       this.sessions.delete(id);
@@ -384,10 +362,8 @@ export class AgentManager {
       total: 0,
       outbox: '',
       tail: '',
-      formatter: null,
       claudeSessionId: null,
       settingsFile: null,
-      hookStatus: null,
       needsInput: false,
       needsInputSince: 0,
       titleLocked: false,
@@ -395,7 +371,6 @@ export class AgentManager {
       stopping: false,
       lastTelemetryKey: '',
       discoveryAttempts: 0,
-      statusLine: null,
       costRestored: null,
       chat: null,
       driver: null,
@@ -471,42 +446,6 @@ export class AgentManager {
     session.info.pid = term.pid;
     term.onData((data) => this.handleOutput(session, data));
     term.onExit(({ exitCode }) => this.handleExit(session, exitCode));
-  }
-
-  private startHeadless(session: Session, file: string, args: string[], env: Record<string, string>) {
-    const spec = spawnSpec(file, args);
-    const child = typeof spec.args === 'string'
-      ? spawnChild(spec.file, [spec.args], { cwd: session.info.cwd, env, windowsHide: true, windowsVerbatimArguments: true })
-      : spawnChild(spec.file, spec.args, { cwd: session.info.cwd, env, windowsHide: true });
-    session.child = child;
-    session.info.pid = child.pid ?? null;
-    session.info.status = 'working';
-    // Both CLIs read piped stdin as extra prompt input; close it so they don't wait.
-    child.stdin?.end();
-    const decodeOut = new StringDecoder('utf8');
-    const decodeErr = new StringDecoder('utf8');
-    const emit = (text: string) => {
-      if (!text) return;
-      const formatted = session.formatter ? session.formatter.push(text) : text.replace(/\r?\n/g, '\r\n');
-      if (formatted) this.handleOutput(session, formatted);
-    };
-    child.stdout?.on('data', (data: Buffer) => emit(decodeOut.write(data)));
-    child.stderr?.on('data', (data: Buffer) => {
-      const text = decodeErr.write(data);
-      if (text) this.handleOutput(session, text.replace(/\r?\n/g, '\r\n'));
-    });
-    child.on('error', (error) => {
-      this.handleOutput(session, `\r\n\x1b[31m${error.message}\x1b[0m\r\n`);
-      this.handleExit(session, 1);
-    });
-    child.on('close', (code) => {
-      emit(decodeOut.end());
-      if (session.formatter) {
-        const rest = session.formatter.flush();
-        if (rest) this.handleOutput(session, rest);
-      }
-      this.handleExit(session, code ?? 1);
-    });
   }
 
   /** Chat mode: the CLI's structured protocol over pipes, rendered by the app's chat view. */
@@ -704,7 +643,7 @@ export class AgentManager {
     // Their persisted telemetry may predate a newly added model rate.
     if (info?.endedAt) await this.refreshSavedMetadata(info);
     if (session?.chat) return session.chat.list();
-    if (!info || !CONVERSATION_MODES.includes(info.mode)) return [];
+    if (!info || info.mode !== 'chat') return [];
     const profile = this.deps.profiles.list().find((p) => p.id === info.profileId);
     if (!profile) return [];
     const log = await this.historyLog(profile, info.telemetry?.sessionId ?? info.sessionId, info.transcriptPath);
@@ -713,7 +652,7 @@ export class AgentManager {
 
   /** Repair historical cards from the worker without opening or resuming their conversations. */
   async restoreHistory() {
-    const pending = this.history.data.agents.filter((info) => AGENT_MODES.includes(info.mode));
+    const pending = this.history.data.agents.filter((info) => info.mode === 'chat');
     const restore = async () => {
       for (let info = pending.shift(); info; info = pending.shift()) await this.refreshSavedMetadata(info);
     };
@@ -766,7 +705,7 @@ export class AgentManager {
     }
     const info = this.get(id);
     if (!info) throw new Error('Unknown agent');
-    return this.continueAgent(info, 'chat', text, images);
+    return this.continueAgent(info, text, images);
   }
 
   /**
@@ -776,7 +715,7 @@ export class AgentManager {
   async fork(id: string, itemId?: string): Promise<AgentInfo> {
     const info = this.get(id);
     if (!info) throw new Error('Unknown agent');
-    if (!CONVERSATION_MODES.includes(info.mode)) throw new Error('Only conversations can be forked.');
+    if (info.mode !== 'chat') throw new Error('Only conversations can be forked.');
     const profile = this.deps.profiles.require(info.profileId);
     const saved = await this.savedSessionOf(info);
     if (!saved) throw new Error('There is nothing to fork yet: send a message first.');
@@ -818,7 +757,7 @@ export class AgentManager {
       const info = this.get(id);
       if (!info) throw new Error('Unknown agent');
       if (info.mode !== 'chat') throw new Error('Side chat works with chats; switch this agent to Chat first.');
-      await this.continueAgent(info, 'chat');
+      await this.continueAgent(info);
       session = this.sessions.get(id);
     }
     const driver = session?.driver;
@@ -1100,11 +1039,10 @@ export class AgentManager {
     }
   }
 
-  /** Relaunches a finished agent's conversation in place, as a chat or in the terminal. */
-  private async continueAgent(info: AgentInfo, mode: AgentMode, prompt?: string, images?: ChatImage[]): Promise<AgentInfo> {
+  /** Relaunches a finished agent's conversation in place. */
+  private async continueAgent(info: AgentInfo, prompt?: string, images?: ChatImage[]): Promise<AgentInfo> {
     // Only a conversation the CLI actually saved can be resumed; an empty one starts over.
     const saved = await this.savedSessionOf(info);
-    if (!saved && mode !== 'chat') throw new Error('This agent never started a session that can be resumed.');
     // `launch` reads the transcript from the record it continues.
     if (saved?.transcriptPath && !info.transcriptPath) info.transcriptPath = saved.transcriptPath;
     const effort = this.sessions.get(info.id)?.options.effort ?? info.effort ?? undefined;
@@ -1114,14 +1052,14 @@ export class AgentManager {
         profileId: info.profileId,
         cwd: info.cwd,
         projectless: info.projectless,
-        mode,
+        mode: 'chat',
         title: info.titleCustom ? info.title : undefined,
         model: info.model ?? undefined,
         effort,
         permission: info.permission ?? undefined,
         resumeSessionId: saved?.sessionId,
         // A fork closed before its first message saved nothing of its own: it copies its source again.
-        fork: !saved && mode === 'chat' ? info.forkedFrom : undefined,
+        fork: !saved ? info.forkedFrom : undefined,
         prompt
       },
       info.id,
@@ -1135,7 +1073,6 @@ export class AgentManager {
   }
 
   onRememberCwd: (cwd: string) => void = () => {};
-  onHookEvent: (event: HookEvent) => void = () => {};
 
   // -------------------------------------------------------------------------
   // Output, input, exit
@@ -1148,13 +1085,13 @@ export class AgentManager {
     info.lastOutputAt = now;
     info.lastActivityAt = now;
     if (info.status === 'starting') {
-      info.status = info.mode === 'task' || (session.options.prompt && info.mode === 'interactive') ? 'working' : 'idle';
+      info.status = 'idle';
       this.markChanged(info.id);
     }
-    if (info.mode === 'interactive' || info.mode === 'login') {
+    if (info.mode === 'login') {
       const plain = data.replace(ANSI, '');
       session.tail = (session.tail + plain).slice(-TAIL_LIMIT);
-      if (info.mode === 'login' && info.provider === 'claude' && !session.loginBrowserOpened && this.deps.openExternal) {
+      if (info.provider === 'claude' && !session.loginBrowserOpened && this.deps.openExternal) {
         // Parse accumulated raw output so ANSI sequences split across chunks survive.
         const url = claudeLoginUrl(session.chunks.join('').slice(-16_000));
         if (url) {
@@ -1208,10 +1145,7 @@ export class AgentManager {
     if (session.needsInput) {
       session.needsInput = false;
       session.tail = '';
-      this.updateStatus(session, session.info.mode === 'login' ? 'idle' : 'working', null);
-    } else if (session.info.mode === 'interactive' && /[\r\n]/.test(data) && session.info.status === 'idle' && session.profile.provider === 'codex') {
-      // Codex reports its turn start via the rollout a moment later; show it now.
-      this.updateStatus(session, 'working', null);
+      this.updateStatus(session, 'idle', null);
     }
   }
 
@@ -1237,10 +1171,7 @@ export class AgentManager {
     let status: AgentStatus;
     if (session.failure) status = 'failed';
     else if (session.stopping) status = 'stopped';
-    else if (info.mode === 'task') {
-      const failed = exitCode !== 0 || session.formatter?.result?.isError;
-      status = failed ? 'failed' : 'done';
-    } else status = exitCode === 0 ? 'done' : 'failed';
+    else status = exitCode === 0 ? 'done' : 'failed';
     info.status = status;
     if (status === 'done') info.completedAt = info.endedAt;
     info.statusDetail = session.failure ? 'Failed to start' : session.stopping ? 'Stopped' : `Exited with code ${exitCode}`;
@@ -1262,10 +1193,7 @@ export class AgentManager {
     info.status = status; // handleOutput may not revert this, but be explicit
     for (const resolve of session.exitWaiters.splice(0)) resolve();
     if (session.settingsFile) this.deps.hooks.removeSettingsFile(info.id);
-    if (info.mode === 'task' && !session.stopping) this.onAttention(info, status === 'failed' ? 'failed' : 'task-complete');
     if (info.mode === 'login') this.deps.profiles.refresh([session.profile.id]).catch(() => {});
-    const taskCost = session.formatter?.result?.costUsd;
-    if (typeof taskCost === 'number') this.trackCost(session, taskCost);
     // Pick up the final telemetry once, then archive.
     this.refreshTelemetry(session)
       .catch(() => {})
@@ -1372,31 +1300,14 @@ export class AgentManager {
       .catch(() => {});
   }
 
-  /**
-   * Continues an agent's conversation in place, as a chat or in the terminal
-   * (default: the way it ran). A running agent in the other mode is stopped
-   * first and handed over.
-   */
-  async resume(id: string, mode?: AgentMode): Promise<AgentInfo> {
-    let info = this.get(id);
+  /** Continues a finished agent's conversation in place; a running one is returned as it is. */
+  async resume(id: string): Promise<AgentInfo> {
+    const info = this.get(id);
     if (!info) throw new Error('Unknown agent');
-    if (!CONVERSATION_MODES.includes(info.mode)) throw new Error('Only conversations can be resumed.');
-    const target = mode ?? (info.mode === 'chat' ? 'chat' : 'interactive');
+    if (info.mode !== 'chat') throw new Error('Only conversations can be resumed.');
     const live = this.sessions.get(id);
-    if (live && !live.info.endedAt) {
-      if (live.info.mode === target) return live.info;
-      if (target !== 'chat' && !(info.sessionId && (info.transcriptPath || info.telemetry))) {
-        throw new Error('Send a message first: there is no conversation to open in the terminal yet.');
-      }
-      live.stopping = true;
-      const exited = this.waitForExit(live);
-      await this.stop(id);
-      await exited;
-      // The process is gone; pick up where its session file ended.
-      await this.refreshTelemetry(live).catch(() => {});
-      info = live.info;
-    }
-    return this.continueAgent(info, target);
+    if (live && !live.info.endedAt) return live.info;
+    return this.continueAgent(info);
   }
 
   /**
@@ -1408,7 +1319,7 @@ export class AgentManager {
     const candidates = this.history.data.agents.filter((a) => a.reopenOnStart);
     this.history.replace({ agents: this.history.data.agents.map((a) => (a.reopenOnStart ? { ...a, reopenOnStart: false } : a)) });
     const recent = candidates
-      .filter((a) => CONVERSATION_MODES.includes(a.mode) && a.endedAt)
+      .filter((a) => a.mode === 'chat' && a.endedAt)
       .filter((a) => now - Date.parse(a.lastModelActivityAt ?? a.lastActivityAt) < warmMs)
       .sort((a, b) => (b.lastModelActivityAt ?? b.lastActivityAt).localeCompare(a.lastModelActivityAt ?? a.lastActivityAt));
     const warm: AgentInfo[] = [];
@@ -1423,7 +1334,7 @@ export class AgentManager {
   }
 
   async stopAll() {
-    for (const s of this.sessions.values()) if (!s.info.endedAt && CONVERSATION_MODES.includes(s.info.mode)) s.info.reopenOnStart = true;
+    for (const s of this.sessions.values()) if (!s.info.endedAt && s.info.mode === 'chat') s.info.reopenOnStart = true;
     const live = [...this.sessions.values()].filter((s) => !s.info.endedAt);
     await Promise.all(live.map((s) => this.stop(s.info.id)));
     // Let the exits register, but never hold the app open for them.
@@ -1448,118 +1359,11 @@ export class AgentManager {
     info.lastActivityAt = new Date().toISOString();
     this.markChanged(info.id);
     if (status === 'needs-input' && previous !== 'needs-input') this.onAttention(info, 'needs-input');
-    if (info.mode === 'interactive' && status === 'idle' && (previous === 'working' || previous === 'needs-input')) {
-      info.lastModelActivityAt = info.lastActivityAt;
-    }
-    if (status === 'idle' && previous === 'working' && CONVERSATION_MODES.includes(info.mode)) {
+    if (status === 'idle' && previous === 'working' && info.mode === 'chat') {
       info.completedAt = info.lastActivityAt;
       this.archive(info);
       this.onAttention(info, 'turn-complete');
     }
-  }
-
-  private handleHook(event: HookEvent) {
-    const session = this.sessions.get(event.agentId);
-    if (!session || session.info.endedAt) return;
-    this.onHookEvent(event);
-    const payload = event.payload;
-    session.subagents.claudeHook(event.name, payload);
-    if (session.info.mode === 'task') {
-      // A background task is working until its process exits; hooks only say what it's doing.
-      if (event.name === 'PreToolUse') {
-        const tool = String(payload.tool_name ?? 'tool');
-        const detail = describeToolInput(tool, payload.tool_input);
-        session.info.statusDetail = detail ? `${tool}: ${detail}` : tool;
-        this.markChanged(session.info.id);
-      }
-      return;
-    }
-    if (typeof payload.session_id === 'string') {
-      if (session.info.sessionId !== payload.session_id) {
-        // /clear and /resume switch the conversation; follow it.
-        session.info.sessionId = payload.session_id;
-        session.info.transcriptPath = null;
-        session.info.telemetry = null;
-      }
-    }
-    if (typeof payload.transcript_path === 'string' && payload.transcript_path) {
-      session.info.transcriptPath = payload.transcript_path;
-    }
-    switch (event.name) {
-      case 'SessionStart':
-        session.hookStatus = 'idle';
-        if (session.info.status === 'starting') this.updateStatus(session, 'idle', null);
-        break;
-      case 'UserPromptSubmit':
-        if (typeof payload.prompt === 'string') this.pushScreenFeed(session, 'user', payload.prompt);
-        session.hookStatus = 'working';
-        session.needsInput = false;
-        this.updateStatus(session, 'working', 'Thinking');
-        break;
-      case 'PreToolUse': {
-        session.hookStatus = 'working';
-        const tool = String(payload.tool_name ?? 'tool');
-        const detail = describeToolInput(tool, payload.tool_input);
-        this.pushScreenFeed(session, 'tool', screenToolLine(tool, detail));
-        if (!session.needsInput) this.updateStatus(session, 'working', detail ? `${tool}: ${detail}` : tool);
-        break;
-      }
-      case 'PostToolUse':
-        session.hookStatus = 'working';
-        if (session.needsInput) session.needsInput = false;
-        this.updateStatus(session, 'working', undefined);
-        break;
-      case 'Notification': {
-        const type = String(payload.notification_type ?? '');
-        if (type === 'permission_prompt' || type === 'elicitation_dialog' || type === 'agent_needs_input') {
-          session.needsInput = true;
-          session.needsInputSince = Date.now();
-          this.updateStatus(session, 'needs-input', typeof payload.message === 'string' ? payload.message : 'Waiting for your input');
-          this.pushScreenFeed(session, 'status', typeof payload.message === 'string' ? payload.message : 'Waiting for your input');
-        } else if (type === 'idle_prompt') {
-          session.hookStatus = 'idle';
-          if (!session.needsInput) this.updateStatus(session, 'idle', null);
-        }
-        break;
-      }
-      case 'Stop':
-        if (typeof payload.last_assistant_message === 'string') this.pushScreenFeed(session, 'assistant', payload.last_assistant_message);
-        session.hookStatus = 'idle';
-        session.needsInput = false;
-        this.updateStatus(session, 'idle', 'Turn complete');
-        break;
-      case 'SessionEnd':
-        session.hookStatus = 'idle';
-        break;
-      default:
-        break;
-    }
-  }
-
-  /**
-   * Claude Code's status-line payload for an agent: keeps the authoritative
-   * context size, cost and plan limits, then answers with what the user's own
-   * status line would have printed (or a compact default).
-   */
-  async handleStatusLine(agentId: string, payload: Record<string, any>): Promise<string> {
-    const session = this.sessions.get(agentId);
-    if (!session) return '';
-    const snapshot = parseStatusPayload(payload);
-    session.statusLine = snapshot;
-    if (snapshot.costUsd !== null) this.trackCost(session, snapshot.costUsd);
-    if (snapshot.limits) this.deps.profiles.applyReportedLimits(session.profile.id, snapshot.limits);
-    if (session.info.telemetry) {
-      this.applyStatusLine(session);
-      this.archive(session.info);
-    }
-    const original = originalStatusLine(session.profile);
-    if (original) {
-      const env = this.deps.profiles.envFor(session.profile, cleanEnv());
-      const text = await runStatusCommand(original.command, JSON.stringify(payload), session.info.cwd, env);
-      // A status line that prints nothing (e.g. a pure capture bridge) gets the app's summary instead.
-      if (text !== null && text.trim()) return text;
-    }
-    return defaultStatusText(snapshot, session.profile.label);
   }
 
   /**
@@ -1585,25 +1389,6 @@ export class AgentManager {
     t.cost = { ...t.cost, reportedUsd: Math.max(info.reportedCost.totalUsd, t.cost.savedUsd ?? 0) };
   }
 
-  private applyStatusLine(session: Session) {
-    const t = session.info.telemetry;
-    if (!t) return;
-    // Unlike context size, cost doesn't go stale: an idle session's total can't grow.
-    this.applyReportedCost(session.info);
-    const s = session.statusLine;
-    if (!s || Date.now() - s.at > 10 * 60_000) return;
-    // A status line drawn before the latest compaction (an idle one, say) still shows the old context.
-    const beforeCompaction = t.lastCompactionAt !== null && s.at < Date.parse(t.lastCompactionAt);
-    if (s.contextWindow > 0 && !beforeCompaction) {
-      t.contextWindow = s.contextWindow;
-      t.contextWindowAssumed = false;
-      t.contextUsedTokens = s.usedTokens || t.contextUsedTokens;
-      t.contextPercent = s.usedPercent ?? (t.contextUsedTokens / s.contextWindow) * 100;
-    }
-    t.source = 'status-line';
-    this.changed.add(session.info.id);
-  }
-
   // -------------------------------------------------------------------------
   // Periodic work: session discovery, telemetry, resources
   // -------------------------------------------------------------------------
@@ -1612,7 +1397,7 @@ export class AgentManager {
     if (this.ticking) return;
     this.ticking = true;
     try {
-      const live = [...this.sessions.values()].filter((s) => !s.info.endedAt && AGENT_MODES.includes(s.info.mode));
+      const live = [...this.sessions.values()].filter((s) => !s.info.endedAt && s.info.mode === 'chat');
       await Promise.all(live.map((session) => this.refreshTelemetry(session).catch(() => {})));
       this.keepChatsWarm();
       for (const session of this.sessions.values()) {
@@ -1639,13 +1424,9 @@ export class AgentManager {
     if (session.profile.provider === 'claude') {
       const id = info.sessionId ?? session.claudeSessionId;
       if (id) found = await telemetry.findClaudeTranscript(configDir, id);
-    } else if (session.options.resumeSessionId || info.mode === 'chat') {
+    } else if (info.sessionId) {
       // A chat knows its thread id from the app-server; no guessing by folder and time.
-      const id = info.mode === 'chat' ? info.sessionId : session.options.resumeSessionId;
-      if (id) found = await telemetry.findCodexRolloutById(configDir, id);
-    } else {
-      const claimed = [...this.sessions.values()].map((s) => s.info.transcriptPath).filter((p): p is string => Boolean(p));
-      found = await telemetry.findCodexRollout(configDir, info.cwd, Date.parse(info.startedAt), claimed);
+      found = await telemetry.findCodexRolloutById(configDir, info.sessionId);
     }
     if (found) {
       info.transcriptPath = found;
@@ -1665,31 +1446,17 @@ export class AgentManager {
     if (key === session.lastTelemetryKey) return;
     session.lastTelemetryKey = key;
     info.telemetry = telemetry;
-    this.applyStatusLine(session);
+    this.applyReportedCost(info);
     info.sessionId = telemetry.sessionId;
     if (telemetry.model) info.model = telemetry.model;
     if (!session.titleLocked && telemetry.title) info.title = telemetry.title;
-    if (!info.endedAt && info.mode === 'interactive' && !session.needsInput) {
-      // Hooks are authoritative for Claude; telemetry fills in when none arrived.
-      const useTelemetry = session.profile.provider === 'codex' || session.hookStatus === null;
-      if (useTelemetry && telemetry.taskActive !== null) {
-        this.updateStatus(session, telemetry.taskActive ? 'working' : 'idle', telemetry.taskActive ? undefined : null);
-      }
-    }
     this.archive(info);
     this.changed.add(info.id);
   }
 
-  private pushScreenFeed(session: Session, role: ScreenFeedEntry['role'], text: string) {
-    if (!text.trim()) return;
-    const feed = (session.screenFeed ??= []);
-    feed.push({ role, text: clipText(text, 1200) ?? '' });
-    if (feed.length > SCREEN_FEED_LIMIT) feed.splice(0, feed.length - SCREEN_FEED_LIMIT);
-  }
-
   /**
    * The latest turns of an agent's conversation, for the panel the computer-use overlay shows
-   * while that agent drives the screen. Chats have their log; terminal agents what hooks said.
+   * while that agent drives the screen.
    */
   screenFeed(id: string): ScreenFeed | null {
     const session = this.sessions.get(id);
@@ -1705,7 +1472,7 @@ export class AgentManager {
         else if (item.kind === 'notice' && item.tone !== 'info') entries.push({ role: 'status', text: item.text });
       }
       entries = entries.slice(-SCREEN_FEED_LIMIT).map((e) => ({ ...e, text: clipText(e.text, 1200) ?? '' }));
-    } else entries = [...(session.screenFeed ?? [])];
+    } else entries = [];
     return { agentId: id, agent: PROVIDER_LABEL[session.profile.provider], title: session.info.title, entries };
   }
 

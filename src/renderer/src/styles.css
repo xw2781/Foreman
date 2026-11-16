@@ -1454,6 +1454,100 @@ table.table {
   margin-top: 2px;
 }
 
+/* New agent dialog: one setting per row, names in a single column on the left. */
+.launch-rows {
+  display: grid;
+  gap: 12px;
+}
+.launch-row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 4px 14px;
+  align-items: start;
+}
+.launch-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  line-height: 34px;
+}
+.launch-ctl {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.launch-ctl .hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.launch-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 8px;
+}
+.launch-rule {
+  height: 1px;
+  background: var(--border);
+}
+.launch-more {
+  justify-self: start;
+  margin-left: -8px;
+  max-width: 100%;
+}
+.path-row {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.path-box {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 34px;
+  padding: 0 3px 0 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--page);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.path-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.path-box .path-icon {
+  flex: none;
+  margin-right: 4px;
+  color: var(--text-muted);
+}
+.path-box input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.path-box input::placeholder {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+/* The recent-projects menu opens from a bare arrow. */
+.path-box .path-recent {
+  flex: none;
+}
+.path-box .path-recent .sel-value {
+  display: none;
+}
+.path-browse {
+  height: 34px;
+}
+
 .toasts {
   position: fixed;
   right: 18px;
@@ -1652,19 +1746,19 @@ table.table {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-bottom: 6px;
 }
 .al-search {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 4px 0 10px;
+  gap: 10px;
+  height: 34px;
+  /* 9px + the 1px border puts the icon where the action rows' icons sit. */
+  padding: 0 4px 0 9px;
   border-radius: 8px;
   border: 1px solid transparent;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   cursor: text;
   transition: background 0.12s, border-color 0.12s;
 }
@@ -1687,12 +1781,15 @@ table.table {
   font-size: 13px;
 }
 .al-search input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-secondary);
+}
+.al-search:hover input::placeholder {
+  color: var(--text-primary);
 }
 .al-hide {
   flex-shrink: 0;
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   color: var(--text-muted);
 }
 .al-action {
@@ -1721,13 +1818,10 @@ table.table {
   opacity: 0.55;
   cursor: default;
 }
+.al-search > svg:first-child,
 .al-action > svg {
   width: 22px;
   flex-shrink: 0;
-}
-.al-new {
-  color: var(--text-primary);
-  font-weight: 500;
 }
 .al-action .kbd {
   margin-left: auto;

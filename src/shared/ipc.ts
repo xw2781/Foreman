@@ -2,7 +2,6 @@ import type { ChatImage, ChatMessage, SideChatExchange, StepExplanation } from '
 import type {
   AgentInfo,
   IdleMode,
-  AgentMode,
   AppSettings,
   BrowserCommand,
   BrowserFrame,
@@ -76,7 +75,7 @@ export interface InvokeMap {
   'agents.clearFinished': () => void;
   'agents.rename': (id: string, title: string) => void;
   /** Continues the agent's conversation in place, as a chat or in the terminal (default: its current kind). */
-  'agents.resume': (id: string, mode?: AgentMode) => AgentInfo;
+  'agents.resume': (id: string) => AgentInfo;
   'agents.buffer': (id: string) => { data: string; end: number };
   /** A new chat that copies this one's conversation, all of it or what came before `itemId` (a message of yours). */
   'agents.fork': (id: string, itemId?: string) => AgentInfo;

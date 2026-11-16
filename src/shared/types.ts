@@ -103,16 +103,10 @@ export interface NewProfileInput {
 // ---------------------------------------------------------------------------
 
 /**
- * chat: the app's own conversation UI over the CLI's structured protocol.
- * interactive: the CLI's own terminal UI. task: headless run to completion.
- * login/shell: account utilities.
+ * chat: an agent, in the app's own conversation UI over the CLI's structured protocol.
+ * login/shell: account utilities, each in a terminal.
  */
-export type AgentMode = 'chat' | 'interactive' | 'task' | 'login' | 'shell';
-
-/** Modes that run a model session (as opposed to the account utilities). */
-export const AGENT_MODES: readonly AgentMode[] = ['chat', 'interactive', 'task'];
-/** Modes whose conversation can be continued and handed between chat and terminal. */
-export const CONVERSATION_MODES: readonly AgentMode[] = ['chat', 'interactive'];
+export type AgentMode = 'chat' | 'login' | 'shell';
 
 export type AgentStatus =
   | 'starting'
@@ -140,7 +134,7 @@ export interface LaunchOptions {
   model?: string;
   effort?: string;
   permission?: string;
-  /** Resume an earlier session by id (interactive mode only). */
+  /** Resume an earlier session by id. */
   resumeSessionId?: string;
   /** Start as a copy of another conversation (chat mode). */
   fork?: ForkSource;
@@ -778,8 +772,6 @@ export interface AppSettings {
   usageDays: number;
   codexNoDaemonForIsolated: boolean;
   shellForTerminals: string;
-  /** Route Claude Code's status line through the app (keeps the user's own) for exact context, cost and plan limits. */
-  claudeStatusLine: boolean;
   /** What new Claude sessions do when they sit idle; each session can change its own (side panel → Details). */
   claudeIdleMode: IdleMode;
   /** Smallest context idle compaction acts on; 0 keeps Claude Code's default (CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS). */

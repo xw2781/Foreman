@@ -148,12 +148,6 @@ export function SettingsView() {
           <Switch on={settings.codexNoDaemonForIsolated} onChange={(v) => update({ codexNoDaemonForIsolated: v })} />
         </Setting>
         <Setting
-          title="Capture Claude Code's status line"
-          description="Claude sessions started here report their exact context size, cost and 5-hour/weekly plan usage to the app. Your own status-line command still runs and is shown as before."
-        >
-          <Switch on={settings.claudeStatusLine} onChange={(v) => update({ claudeStatusLine: v })} />
-        </Setting>
-        <Setting
           title="Compact idle Claude conversations"
           description="When a long conversation sits idle, Claude Code may compact it about 54 minutes after the last reply, shortly before its prompt cache expires, so coming back doesn't re-send the whole context at full price. Anthropic rolls this out per account. This is the default for new sessions; change one session's in its side panel (Details), where a chat can also keep its cache warm for some hours first. Your Claude Code settings are not changed."
         >

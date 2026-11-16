@@ -1,7 +1,4 @@
-import path from 'node:path';
-import { spawn } from 'node:child_process';
-import type { LimitWindow, Profile, ProfileLimits } from '../shared/types';
-import { HOME, exists, readJsonFile } from './util';
+import type { LimitWindow, ProfileLimits } from '../shared/types';
 
 /** What Claude Code's status-line JSON tells us that its transcript doesn't. */
 export interface StatusSnapshot {
@@ -72,65 +69,3 @@ export function parseStatusPayload(payload: Record<string, any>, now = Date.now(
     limits: windows.length ? { windows, observedAt: new Date(now).toISOString(), planType: null } : null
   };
 }
-
-/** The user's own status line for this account, which the app's capture chains to. */
-export function originalStatusLine(profile: Profile): { command: string; refreshInterval?: number } | null {
-  const settings = readJsonFile<any>(path.join(profile.builtin ? path.join(HOME, '.claude') : profile.configDir, 'settings.json'));
-  const statusLine = settings?.statusLine;
-  if (!statusLine || statusLine.type !== 'command' || typeof statusLine.command !== 'string') return null;
-  if (statusLine.command.includes('X-ATC-Token')) return null; // never chain to ourselves
-  const refreshInterval = num(statusLine.refreshInterval);
-  return { command: statusLine.command, ...(refreshInterval ? { refreshInterval } : {}) };
-}
-
-function gitBash(): string | null {
-  const candidates = [
-    process.env.CLAUDE_CODE_GIT_BASH_PATH,
-    process.env.ProgramFiles && path.join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe'),
-    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')
-  ];
-  return candidates.find((c): c is string => Boolean(c) && exists(c!)) ?? null;
-}
-
-/**
- * Runs the user's status-line command the way Claude Code would (Git Bash
- * when installed, otherwise cmd) with the same JSON on stdin.
- */
-export function runStatusCommand(command: string, input: string, cwd: string | undefined, env: Record<string, string>, timeoutMs = 6000): Promise<string | null> {
-  return new Promise((resolve) => {
-    const bash = gitBash();
-    const child = bash
-      ? spawn(bash, ['-c', command], { cwd, env, windowsHide: true })
-      : spawn('cmd.exe', ['/d', '/s', '/c', `"${command}"`], { cwd, env, windowsHide: true, windowsVerbatimArguments: true });
-    let out = '';
-    const timer = setTimeout(() => {
-      child.kill();
-      resolve(out || null);
-    }, timeoutMs);
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (data: string) => {
-      out += data;
-    });
-    child.on('error', () => {
-      clearTimeout(timer);
-      resolve(null);
-    });
-    child.on('close', () => {
-      clearTimeout(timer);
-      resolve(out);
-    });
-    child.stdin.on('error', () => {});
-    child.stdin.end(input);
-  });
-}
-
-export function defaultStatusText(snapshot: StatusSnapshot, accountLabel: string): string {
-  const parts = [snapshot.modelName ?? snapshot.modelId ?? 'Claude'];
-  if (snapshot.usedPercent !== null) parts.push(`ctx ${Math.round(snapshot.usedPercent)}%`);
-  if (snapshot.costUsd !== null) parts.push(`$${snapshot.costUsd.toFixed(2)}`);
-  const fiveHour = snapshot.limits?.windows.find((w) => w.id === 'five_hour');
-  if (fiveHour) parts.push(`5h ${Math.round(fiveHour.usedPercent)}%`);
-  parts.push(accountLabel);
-  return parts.join(' · ');
-}
-

@@ -2,8 +2,8 @@
 
 A Windows desktop app for running **Claude Code** and **Codex** side by side:
 
-- **Agents** — chat with an agent (the default) or run it in a real terminal (the CLI's own UI), with live status: working, needs input, idle, done. The chat streams replies, shows each tool step with its output and diffs, and asks for approvals inline; typing into a finished chat continues it, and a Chat ⇄ Terminal switch hands the same conversation between the two. Headless background tasks, renaming, stopping and resuming work as before.
-- **Subagent map** — once a chat starts subagents (Claude Code's Task/Agent tool, Codex's spawned agents), a pill beside the prompt-cache one in the composer counts the active ones. The map lives in the **Subagents** tab of the side panel beside the conversation, which opens by itself when a subagent starts: a live tree of each subagent with what it's doing, how long it has run, its tool uses and tokens, and its prompt and result. Nested subagents branch off their parent; background ones stay on the map until they finish. The agent list shows a running count for every agent, terminal ones included (Claude Code reports those through hooks).
+- **Agents** — chat with an agent, with live status: working, needs input, idle, done. The chat streams replies, shows each tool step with its output and diffs, and asks for approvals inline; typing into a finished chat continues it. Agents can be renamed, stopped and resumed.
+- **Subagent map** — once a chat starts subagents (Claude Code's Task/Agent tool, Codex's spawned agents), a pill beside the prompt-cache one in the composer counts the active ones. The map lives in the **Subagents** tab of the side panel beside the conversation, which opens by itself when a subagent starts: a live tree of each subagent with what it's doing, how long it has run, its tool uses and tokens, and its prompt and result. Nested subagents branch off their parent; background ones stay on the map until they finish. The agent list shows a running count for every agent.
 - **Side panel** — beside each agent, with browser-style tabs: **Subagents** (the map), **Browser** (the agent browser), **Files** (the project folder as a tree, with a preview of text, code, Markdown and images that reloads after each turn), **Git** (read-only: branch and ahead/behind, staged / unstaged / untracked changes with diffs, recent commits with the ones not pushed yet marked, and the repository's worktrees with the sessions in each) and **Details** (cost, context window, tokens, plan usage and session info). The Subagents and Browser tabs come up by themselves when the agent starts using them; drag the divider to resize, or fill the panel. Scroll the mouse wheel over the tab strip to step through the tabs; right-click it to choose which tabs it shows (saved on this computer).
 - **Task Manager** — every agent the app started, with status, account, model, context usage, cost, CPU and memory; plus the Claude Code / Codex processes running elsewhere (VS Code, the desktop apps, terminals), which you can end.
 - **Usage & Cost** — API-equivalent cost of every session on the machine, per day, per tool, per account and per model, with context usage per session. Any session (including ones from VS Code) can be resumed in the app. Usage from your other computers joins in through a private GitHub repo (*Connect GitHub*) or an exported file; only per-session totals and titles travel, never conversations.
@@ -47,15 +47,15 @@ Each account is its own config folder, which the app passes to the CLI:
 - **Terminal as this account** opens a PowerShell whose environment points at the account.
 - Credentials are never copied between accounts, so refresh-token rotation can't sign one account out by using another.
 
-Plan usage comes from what each CLI last reported: Codex writes it into its session logs; Claude's comes from sessions started in the app (via the status line) and from Claude Code's own cache. A window whose reset time has passed shows as "Reset since last report".
+Plan usage comes from what each CLI last reported: Codex writes it into its session logs; Claude's comes from sessions started in the app and from Claude Code's own cache. A window whose reset time has passed shows as "Reset since last report".
 
 ## How status and cost are measured
 
 - **Session-log usage** excludes parent history replayed into forked Codex sessions. Its dollar figures remain API-equivalent estimates, not subscription bills. Older local caches are rebuilt automatically; corrected session accounting supersedes older counts during usage sync.
 - Migrated Codex transcripts can give inherited history and genuine child work the same timestamp. Foreman uses locally recorded turn creation IDs to recognize new child work, retains its usage deltas, and excludes the inherited counter baseline. No scaling or official totals enter this calculation. Day boundaries still follow local time; incomplete or migrated transcripts can differ from account-wide official totals.
 
-- **Claude Code** agents get per-session HTTP hooks through `claude --settings <file>` (merged with your settings, nothing of yours is modified): prompt submitted, tool running, permission prompt, turn finished. With *Capture Claude Code's status line* on, the status-line JSON also reaches the app for the exact context-window size, Claude Code's own cost, and plan limits; your own status-line command still runs and is what you see.
-- **Codex** agents: status from the session rollout (`task_started` / `task_complete`) and the terminal's approval prompts.
+- **Claude Code** agents report over the CLI's structured protocol: turn started, tool running, approval needed, turn finished, plus the context-window size, Claude Code's own cost and plan limits. The one HTTP hook they get, through `claude --settings <file>` (merged with your settings, nothing of yours is modified), is the PreToolUse guard for desktop control.
+- **Codex** agents report through their app-server: turns, tool steps and approval requests.
 - **Cost** prices every request at public API list rates (Anthropic and OpenAI Standard tier; dated in the Usage view), including cache reads/writes, per-model rates within a session, subagent transcripts, and OpenAI's per-model long-context rates for requests over 272K input tokens. For Claude sessions that recorded one, Claude Code's own estimate is shown alongside. Subscription plans are billed differently — treat these as the API-equivalent value of what you used.
 
 ## Computer use
@@ -64,7 +64,7 @@ Plan usage comes from what each CLI last reported: Codex writes it into its sess
 
 ## Agent browser
 
-New agents (chat, terminal and background tasks, both tools) get an MCP server of browser tools, `foreman_browser`: navigate, read the page as an outline with element refs, click, type, press keys, choose options, scroll, drag, screenshots, run JavaScript, wait for text, tabs, console messages, file uploads and downloads. Claude Code receives it with `--mcp-config`, Codex with `-c mcp_servers.foreman_browser.*`; nothing in your own configuration changes. The server listens on 127.0.0.1 with a secret URL for each agent, so agents can reach only their own browser.
+New agents (both tools) get an MCP server of browser tools, `foreman_browser`: navigate, read the page as an outline with element refs, click, type, press keys, choose options, scroll, drag, screenshots, run JavaScript, wait for text, tabs, console messages, file uploads and downloads. Claude Code receives it with `--mcp-config`, Codex with `-c mcp_servers.foreman_browser.*`; nothing in your own configuration changes. The server listens on 127.0.0.1 with a secret URL for each agent, so agents can reach only their own browser.
 
 - **Separate from you.** Each tab is an off-screen Chromium page. Its profile (`persist:foreman-agent-browser`, or one per agent) is apart from your browsers and from Foreman itself. Pages can't open native windows: `alert`/`confirm`/`prompt` are answered at once and reported to the agent, file choosers go to the agent (or ask you, if you clicked), downloads are saved to `<userData>/browser-downloads/<agent>`, links to other programs (`mailto:`, app protocols) are blocked, and camera, microphone, location and notification requests are refused. Tabs are muted.
 - **Watching.** The **Browser** tab of the side panel (the panel button at the right of an agent's header) shows its active tab live, with tabs, an address bar, back/forward/reload, DevTools, where the agent last clicked, and an activity log of each step and download. It opens by itself when an agent starts browsing (Settings → Agent browser). You can use the page with your own mouse and keyboard; **Take control** pauses the agent's browser tools until you hand it back.
@@ -84,7 +84,7 @@ Optional questions continue unanswered after 30 seconds. Click **Keep open**, or
 
 Foreman adds session instructions encouraging both agents to use their question tools. Agents mark low-stakes questions with ` (optional)` in every header, or required decisions with ` (required)`. Codex also supplies a native blocking flag, which Foreman respects; an explicit required header always prevents expiry. Foreman enables Codex's `features.default_mode_request_user_input` for its chat threads. Existing running chats need to be restarted to receive the new session instructions. Project instruction files and account settings are untouched.
 
-These cards apply to **Chat** mode. **Terminal** mode uses the CLI's own interaction UI. Models still decide when to call a tool, and older CLIs may not expose every interactive feature.
+Models still decide when to call a tool, and older CLIs may not expose every interactive feature.
 
 ## Reading the steps
 
@@ -117,7 +117,7 @@ npm run dist:dir   # unpacked app in dist\win-unpacked
 
 Layout:
 
-- `src/main` — Electron main process: `agents.ts` (terminals, headless tasks, status), `profiles.ts` (accounts), `hookServer.ts` + `statusLine.ts` (Claude hooks/status line), `processMonitor.ts`, `computerUse.ts`, `cliLocator.ts`, `commands.ts`.
+- `src/main` — Electron main process: `agents.ts` (chats, sign-in and account terminals, status), `profiles.ts` (accounts), `hookServer.ts` (the desktop-control guard hook), `processMonitor.ts`, `computerUse.ts`, `cliLocator.ts`, `commands.ts`.
 - `src/main/chat` — chat mode: `claudeChat.ts` drives `claude --input-format stream-json --permission-prompt-tool stdio` (the Agent SDK protocol), `codexChat.ts` drives `codex app-server` (JSON-RPC, as Codex's own IDE extension and desktop app do); both normalize to the chat items in `src/shared/types.ts`. `history.ts` rebuilds past conversations from transcripts and rollouts (in the telemetry worker).
 - `src/main/telemetry` — session parsing and pricing, run in a worker thread (`engine.ts`, `claudeTranscript.ts`, `codexRollout.ts`, `pricing.ts`).
 - `src/renderer` — React UI; `terminals.ts` keeps one xterm per agent alive across views, `chats.ts` holds conversations, `views/ChatView.tsx` renders them.

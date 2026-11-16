@@ -19,7 +19,7 @@ describe('projectless chats', () => {
     expect(first.cwd).not.toBe(second.cwd);
     expect(fs.statSync(second.cwd).isDirectory()).toBe(true);
     fs.writeFileSync(path.join(first.cwd, 'note.txt'), 'kept');
-    const resumed = resolveChatWorkspace({ ...first, mode: 'interactive' }, 'first', dir);
+    const resumed = resolveChatWorkspace({ ...first }, 'first', dir);
     expect(resumed.cwd).toBe(first.cwd);
     expect(fs.readFileSync(path.join(resumed.cwd, 'note.txt'), 'utf8')).toBe('kept');
   });
@@ -29,9 +29,9 @@ describe('projectless chats', () => {
     expect(resolveChatWorkspace(project, 'project', dir)).toBe(project);
     expect(resolveChatWorkspace({ ...project, projectless: true }, 'standalone', dir).cwd).toBe(path.join(dir, 'chat-workspaces', 'standalone'));
   });
-  it('rejects invalid managed workspace ids and projectless task launches', () => {
+  it('rejects invalid managed workspace ids and projectless sign-ins', () => {
     const dir = root();
     expect(() => resolveChatWorkspace(options, '../escape', dir)).toThrow('Invalid chat workspace id');
-    expect(() => resolveChatWorkspace({ ...options, mode: 'task', projectless: true }, 'task', dir)).toThrow('working folder');
+    expect(() => resolveChatWorkspace({ ...options, mode: 'login', projectless: true }, 'login', dir)).toThrow('working folder');
   });
 });

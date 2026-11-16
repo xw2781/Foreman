@@ -12,7 +12,7 @@ import {
   SquareTerminal,
   Users
 } from 'lucide-react';
-import { AGENT_MODES, LIVE_STATUSES, PROVIDERS, PROVIDER_LABEL, type Provider } from '@shared/types';
+import { LIVE_STATUSES, PROVIDERS, PROVIDER_LABEL, type Provider } from '@shared/types';
 import { call, errorMessage, listen, pageTheme } from './api';
 import { useApp, type PanelTab, type View } from './store';
 import { colorVar, limitSummary, signedOutLabel } from './format';
@@ -340,7 +340,7 @@ function Nav() {
   const computerUse = useApp((s) => s.computerUse);
   const listCollapsed = useApp((s) => s.agentListCollapsed);
   const needsInput = agents.filter((a) => a.status === 'needs-input').length;
-  const live = agents.filter((a) => LIVE_STATUSES.includes(a.status) && AGENT_MODES.includes(a.mode)).length;
+  const live = agents.filter((a) => LIVE_STATUSES.includes(a.status) && a.mode === 'chat').length;
   const badges: Partial<Record<View, React.ReactNode>> = {
     agents: needsInput ? <span className="badge count">{needsInput}</span> : live ? <span className="badge">{live}</span> : null,
     computer: computerUse?.active && computerUse.overlayRunning ? <span className="badge dot warning" /> : null
