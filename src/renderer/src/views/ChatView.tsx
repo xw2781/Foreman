@@ -61,7 +61,7 @@ import { commandLists, drafts, imageDrafts, loadChat, loadCommands, sendModes, u
 import { commandToken, rankCommands } from '../commands';
 import { CopyButton, Markdown } from '../markdown';
 import { folderName, fullTime, messageTime, modelLabel, percent, usd } from '../format';
-import { Modal, ProviderIcon, Select, useCollapse, useFit } from '../ui';
+import { Modal, ProviderIcon, Select, useCollapse } from '../ui';
 import { PERMISSIONS, effortOptions, modelOptions } from './LaunchDialog';
 import { ImageAttachments } from '../ImageAttachments';
 import { EffortControl } from '../EffortControl';
@@ -1085,7 +1085,6 @@ function Composer({ agent, queued }: { agent: AgentInfo; queued: Array<Item<'use
   const mode = modeOverride ?? defaultMode;
   const name = PROVIDER_LABEL[agent.provider];
   const t = agent.telemetry;
-  const hintRow = useFit<HTMLDivElement>([agent.id, midTurn, working, mode]);
   const toolbar = useCollapse<HTMLDivElement>(3);
 
   // The command menu: opened by typing "/" (or "$" for a Codex skill), or from its button to browse.
@@ -1445,17 +1444,22 @@ ${VOICE_NOTE}`;
           className="composer-input"
           rows={1}
           value={text}
-          placeholder={
+          // The key hints live in the placeholder: shown, muted, only while the box is empty.
+          placeholder={[
             annotations.length
               ? 'Ask for follow-up changes…'
               : !live
-              ? 'Send a message to continue this conversation'
+              ? null
               : midTurn
                 ? mode === 'steer'
                   ? `Steer ${name}: it reads this after its current step`
                   : `Queue a message for when ${name} finishes this turn`
-                : `Message ${name}…`
-          }
+                : `Message ${name}…`,
+            midTurn ? `Ctrl+Enter to ${OTHER_MODE[mode]}` : null,
+            'Shift+Enter for a new line',
+            agent.provider === 'codex' ? '/ for commands, $ for skills' : '/ for commands',
+            working ? 'Esc to stop' : null
+          ].filter(Boolean).join(' · ')}
           aria-autocomplete="list"
           aria-expanded={menuOpen}
           onChange={(e) => {
@@ -1530,6 +1534,35 @@ ${VOICE_NOTE}`;
           </button>
           <PromptCacheBadge agent={agent} />
           <SubagentPill agent={agent} />
+          {/* While the agent works: what Enter does with the message. */}
+          {midTurn ? (
+            <div className="send-mode" role="radiogroup" aria-label={`While ${name} works`}>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={mode === 'steer'}
+                className={mode === 'steer' ? 'on' : ''}
+                title="Steer: your message goes into the running turn; the agent reads it after its current step"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => chooseMode('steer')}
+              >
+                <Navigation size={12} />
+                Steer
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={mode === 'queue'}
+                className={mode === 'queue' ? 'on' : ''}
+                title="Queue: your message waits until this turn ends, then goes as the next prompt"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => chooseMode('queue')}
+              >
+                <ListEnd size={12} />
+                Queue
+              </button>
+            </div>
+          ) : null}
           <Select
             variant="ghost"
             size="sm"
@@ -1598,68 +1631,6 @@ ${VOICE_NOTE}`;
             )}
           </div>
         </div>
-      </div>
-      {/* One line: the send mode while the agent works, then key hints, the least useful left out first when narrow. */}
-      <div className="composer-hint" ref={hintRow}>
-        {midTurn ? (
-          <div className="send-mode" role="radiogroup" aria-label={`While ${name} works`}>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={mode === 'steer'}
-              className={mode === 'steer' ? 'on' : ''}
-              title="Steer: your message goes into the running turn; the agent reads it after its current step"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => chooseMode('steer')}
-            >
-              <Navigation size={12} />
-              Steer
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={mode === 'queue'}
-              className={mode === 'queue' ? 'on' : ''}
-              title="Queue: your message waits until this turn ends, then goes as the next prompt"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => chooseMode('queue')}
-            >
-              <ListEnd size={12} />
-              Queue
-            </button>
-          </div>
-        ) : null}
-        <span className="composer-keys">
-          <span>
-            <span className="kbd">Enter</span> {midTurn ? mode : 'send'}
-          </span>
-          {midTurn ? (
-            <span data-fit="1">
-              {' · '}
-              <span className="kbd">Ctrl</span>+<span className="kbd">Enter</span> {OTHER_MODE[mode]}
-            </span>
-          ) : null}
-          <span data-fit="3">
-            {' · '}
-            <span className="kbd">Shift</span>+<span className="kbd">Enter</span> new line
-          </span>
-          <span data-fit="4">
-            {' · '}
-            <span className="kbd">/</span> commands
-          </span>
-          {agent.provider === 'codex' ? (
-            <span data-fit="5">
-              {' · '}
-              <span className="kbd">$</span> skills
-            </span>
-          ) : null}
-          {working ? (
-            <span data-fit="2">
-              {' · '}
-              <span className="kbd">Esc</span> stop
-            </span>
-          ) : null}
-        </span>
       </div>
     </div>
   );

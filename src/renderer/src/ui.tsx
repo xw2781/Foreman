@@ -1,13 +1,60 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { create } from 'zustand';
-import { AlertCircle, AlertTriangle, Check, CheckCircle2, ChevronDown, Info, X, XCircle } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Check, CheckCircle2, ChevronDown, Info, Loader2, X, XCircle } from 'lucide-react';
 import type { AgentInfo, AgentStatus, LimitWindow, Provider } from '@shared/types';
 import { PROVIDER_LABEL } from '@shared/types';
 import { backgroundWork, describeSubagents } from '@shared/subagents';
 import { STATUS_LABEL, colorVar, isStale, percent, resetAt, resetIn, severity } from './format';
 import { useApp } from './store';
 import codexIcon from './assets/codex.png';
+
+// ------------------------------------------------------------------ context menu
+
+/**
+ * A right-click menu at the pointer: kept on screen, closed by a click outside, Escape, Tab, resizing or leaving
+ * the window; arrow keys move between its buttons. Children are `.pop-item.menu-item` buttons.
+ */
+export function ContextMenu({ at, label, onClose, className = '', children }: { at: { x: number; y: number }; label: string; onClose: () => void; className?: string; children: ReactNode }) {
+  const menu = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState({ left: at.x, top: at.y });
+  useLayoutEffect(() => {
+    const element = menu.current;
+    if (!element) return;
+    const { width, height } = element.getBoundingClientRect();
+    setPlace({ left: Math.max(8, Math.min(at.x, window.innerWidth - width - 8)), top: Math.max(8, Math.min(at.y, window.innerHeight - height - 8)) });
+    element.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+  }, [at]);
+  useEffect(() => {
+    const outside = (event: PointerEvent) => { if (!menu.current?.contains(event.target as Node)) onClose(); };
+    window.addEventListener('pointerdown', outside, true);
+    window.addEventListener('resize', onClose);
+    window.addEventListener('blur', onClose);
+    return () => {
+      window.removeEventListener('pointerdown', outside, true);
+      window.removeEventListener('resize', onClose);
+      window.removeEventListener('blur', onClose);
+    };
+  }, [onClose]);
+  return createPortal(
+    <div ref={menu} className={`popover context-menu ${className}`} role="menu" aria-label={label} style={place}
+      onContextMenu={(event) => event.preventDefault()}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' || event.key === 'Tab') {
+          event.preventDefault();
+          onClose();
+        } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          const items = [...(menu.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])];
+          const index = items.indexOf(document.activeElement as HTMLButtonElement);
+          items[(index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+        }
+      }}>
+      {children}
+    </div>,
+    document.body
+  );
+}
 
 // ------------------------------------------------------------------ marks
 
@@ -31,21 +78,27 @@ export function ProviderIcon({ provider, size = 22 }: { provider: Provider; size
   );
 }
 
-export function StatusPill({ status, detail, label }: { status: AgentStatus; detail?: string | null; label?: string }) {
+/** The spinner a running session shows in the session list. */
+export function RunningSpinner({ size = 12, className = '' }: { size?: number; className?: string }) {
+  return <Loader2 size={size} strokeWidth={2.5} className={`spin running-spinner ${className}`} aria-hidden="true" />;
+}
+
+/** `spinner`: a working status turns a spinner instead of pulsing its dot. */
+export function StatusPill({ status, detail, label, spinner = false }: { status: AgentStatus; detail?: string | null; label?: string; spinner?: boolean }) {
   return (
     <span className={`status ${status}`} title={detail ?? undefined}>
-      <span className="dot" />
+      {spinner && status === 'working' ? <RunningSpinner /> : <span className="dot" />}
       <span className="label">{label ?? STATUS_LABEL[status]}</span>
     </span>
   );
 }
 
 /** An agent's status; idle with subagents or background commands still running reads as working in the background. */
-export function AgentStatusPill({ agent, detail = true, label }: { agent: AgentInfo; detail?: boolean; label?: string }) {
+export function AgentStatusPill({ agent, detail = true, label, spinner = false }: { agent: AgentInfo; detail?: boolean; label?: string; spinner?: boolean }) {
   if (backgroundWork(agent)) {
-    return <StatusPill status="working" label="Background" detail={`Turn ended; ${describeSubagents(agent)} still running. The agent picks up again when they finish.`} />;
+    return <StatusPill status="working" spinner={spinner} label="Background" detail={`Turn ended; ${describeSubagents(agent)} still running. The agent picks up again when they finish.`} />;
   }
-  return <StatusPill status={agent.status} detail={detail ? agent.statusDetail : undefined} label={label} />;
+  return <StatusPill status={agent.status} detail={detail ? agent.statusDetail : undefined} label={label} spinner={spinner} />;
 }
 
 export function AccountChip({ label, color }: { label: string; color: string | null }) {

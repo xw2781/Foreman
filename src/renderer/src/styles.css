@@ -815,6 +815,17 @@ button {
 .status .label {
   color: var(--text-primary);
 }
+.running-spinner {
+  flex: none;
+  color: var(--accent-strong);
+}
+/* Compact rows: the spinner sits in the indent left of the title, so titles don't move. */
+.agent-item.compact .ai-spinner {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  margin-top: -6.5px;
+}
 @keyframes pulse {
   0% { box-shadow: 0 0 0 0 rgba(123, 131, 255, 0.55); }
   70% { box-shadow: 0 0 0 7px rgba(123, 131, 255, 0); }
@@ -1572,7 +1583,16 @@ table.table {
   height: 100%;
   min-height: 0;
 }
+.agents-layout.list-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+.agent-list[hidden] {
+  display: none;
+}
 .agent-list {
+  /* Row hover and selection tint from the text color, so they show on every theme's page. */
+  --al-hover: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --al-active: color-mix(in srgb, var(--text-primary) 9%, transparent);
   position: relative;
   min-width: 0;
   border-right: 1px solid var(--border);
@@ -1597,14 +1617,18 @@ table.table {
   background: var(--accent);
 }
 .archived-agents > summary {
-  margin: 12px 6px 6px;
+  margin: 18px 10px 4px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
+}
+.archived-agents > summary:hover {
+  color: var(--text-secondary);
 }
 .agent-item .ai-archive {
   position: absolute;
-  top: 8px;
+  top: 6px;
   right: 7px;
   width: 24px;
   height: 24px;
@@ -1617,23 +1641,107 @@ table.table {
   opacity: 1;
   pointer-events: auto;
 }
+/* The session list follows the Claude desktop sidebar: a quiet search row, action rows with an accent mark,
+   plain section labels and borderless rounded rows. */
 .agent-list-head {
-  padding: 14px 12px 8px;
+  padding: 10px 8px 6px;
   display: grid;
+  gap: 1px;
+}
+.al-search-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.al-search {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 4px 0 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  cursor: text;
+  transition: background 0.12s, border-color 0.12s;
+}
+.al-search:hover {
+  background: var(--al-hover);
+}
+.al-search:focus-within {
+  background: var(--al-hover);
+  border-color: var(--border-strong);
+}
+.al-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+}
+.al-search input::placeholder {
+  color: var(--text-muted);
+}
+.al-hide {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  color: var(--text-muted);
+}
+.al-action {
+  display: flex;
+  align-items: center;
   gap: 10px;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.al-action:hover:not(:disabled) {
+  background: var(--al-hover);
+  color: var(--text-primary);
+}
+.al-action:focus-visible {
+  outline: 1px solid var(--accent);
+}
+.al-action:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.al-action > svg {
+  width: 22px;
+  flex-shrink: 0;
+}
+.al-new {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.al-action .kbd {
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.al-action:hover .kbd,
+.al-action:focus-visible .kbd {
+  opacity: 1;
 }
 .agent-list-scroll {
   overflow: auto;
   padding: 0 8px 14px;
   flex: 1;
-}
-.btn.agent-new-project {
-  width: calc(100% - 8px);
-  margin: 8px 4px 0;
-  justify-content: center;
-  border-color: var(--border-strong);
-  padding: 0 10px;
-  font-size: 12px;
 }
 .agent-project-empty {
   margin: 6px 10px 10px 34px;
@@ -1651,29 +1759,33 @@ table.table {
 }
 .agent-item {
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr);
-  gap: 4px 10px;
-  padding: 10px;
-  border-radius: 10px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 3px 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
   cursor: pointer;
   border: 1px solid transparent;
   position: relative;
+  transition: background 0.1s;
 }
 .agent-project + .agent-project {
-  margin-top: 10px;
+  margin-top: 8px;
 }
 .agent-project-heading {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 8px 10px 3px;
+  margin: 10px 10px 2px;
   min-width: 0;
-  color: var(--text-secondary);
-  font-size: 11.5px;
+  color: var(--text-muted);
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  padding: 4px 0;
+  padding: 3px 0;
   list-style: none;
+}
+.agent-project-heading:hover {
+  color: var(--text-secondary);
 }
 .agent-project-heading::-webkit-details-marker {
   display: none;
@@ -1705,12 +1817,12 @@ table.table {
   outline: 1px solid var(--accent);
   background: var(--surface-2);
 }
-.agent-project-heading::before {
-  content: '›';
-  transform: rotate(0deg);
-  font-size: 15px;
+.agent-project-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.12s;
 }
-.agent-project[open] > .agent-project-heading::before {
+.agent-project[open] > .agent-project-heading .agent-project-chevron {
   transform: rotate(90deg);
 }
 .agent-item .ai-cost {
@@ -1718,7 +1830,7 @@ table.table {
 }
 .agent-item .ai-unread {
   position: absolute;
-  top: 17px;
+  top: 15px;
   right: 38px;
   width: 8px;
   height: 8px;
@@ -1754,11 +1866,10 @@ table.table {
   }
 }
 .agent-item:hover {
-  background: var(--surface-1);
+  background: var(--al-hover);
 }
 .agent-item.on {
-  background: var(--surface-1);
-  border-color: var(--border-strong);
+  background: var(--al-active);
 }
 .agent-item.attention::before {
   content: '';
@@ -1772,7 +1883,8 @@ table.table {
 }
 .agent-item .ai-title {
   padding-right: 26px;
-  font-weight: 500;
+  color: var(--text-secondary);
+  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1782,6 +1894,33 @@ table.table {
   height: 24px;
   min-width: 0;
   padding: 0 6px;
+}
+.agent-item:hover .ai-title,
+.agent-item.on .ai-title,
+.agent-item.unread .ai-title {
+  color: var(--text-primary);
+}
+.agent-item.unread .ai-title {
+  font-weight: 500;
+}
+.agent-item.compact {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  /* Titles line up with the project name above them. */
+  padding: 6px 10px 6px 27px;
+  border-radius: 8px;
+}
+.agent-item.compact .ai-archive {
+  top: 50%;
+  transform: translateY(-50%);
+}
+.agent-item.compact .ai-unread {
+  top: 50%;
+  transform: translateY(-50%);
+}
+.agent-item.compact.attention::before {
+  top: 6px;
+  bottom: 6px;
 }
 .agent-item .ai-meta {
   grid-column: 2;
@@ -3174,33 +3313,36 @@ body.dragging-split .bp-canvas {
 }
 
 /* ------------------------------------------------------------------ side panel: tab chooser */
-.sp-tabs-menu {
+.context-menu {
   position: fixed;
   width: 210px;
   z-index: 200;
 }
-.sp-tabs-menu-item {
-  grid-template-columns: 14px 16px 1fr;
+.context-menu.agent-list-menu {
+  width: 240px;
+}
+.menu-item {
+  grid-template-columns: 14px 16px 1fr auto;
   padding: 6px 10px;
   font-size: 12.5px;
 }
-.sp-tabs-menu-item:disabled {
+.menu-item:disabled {
   opacity: 0.55;
   cursor: default;
 }
-.sp-tabs-menu-item:disabled:hover {
+.menu-item:disabled:hover {
   background: none;
 }
-.sp-tabs-menu-item:focus-visible {
+.menu-item:focus-visible {
   outline: 1px solid var(--accent);
   background: var(--surface-2);
 }
-.sp-tabs-menu-check {
+.menu-check {
   display: grid;
   place-items: center;
   color: var(--accent-strong);
 }
-.sp-tabs-menu-sep {
+.menu-sep {
   height: 1px;
   margin: 4px 6px;
   background: var(--border);

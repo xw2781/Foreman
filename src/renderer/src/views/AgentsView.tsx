@@ -2,11 +2,18 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
+  Check,
+  ChevronRight,
+  FolderPlus,
+  List,
+  PanelLeftClose,
+  Rows3,
   FolderOpen,
   GitFork,
   Globe,
   History,
   MessageSquareDashed,
+  Monitor,
   MoreHorizontal,
   MousePointer2,
   Network,
@@ -24,11 +31,11 @@ import { AGENT_MODES, CONVERSATION_MODES, LIVE_STATUSES, type AgentInfo, type Ag
 import { ChatView } from './ChatView';
 import { PromptCacheBadge } from '../PromptCacheBadge';
 import { SidePanel, usePanelTab } from './SidePanel';
-import { describeSubagents, runningSubagents } from '@shared/subagents';
+import { backgroundWork, describeSubagents, runningSubagents } from '@shared/subagents';
 import { call, errorMessage } from '../api';
 import { isPanelOpen, useApp } from '../store';
 import { compact, folderName, modelLabel, percent, usd } from '../format';
-import { AccountChip, AgentStatusPill, Empty, Meter, MiniMeter, ProviderIcon, confirmDialog, fitRow, unfitRow, useTicker } from '../ui';
+import { AccountChip, AgentStatusPill, ContextMenu, Empty, Meter, MiniMeter, ProviderIcon, RunningSpinner, confirmDialog, fitRow, unfitRow, useTicker } from '../ui';
 import { mountTerminal, terminalBackground } from '../terminals';
 import { groupAgentsByProject, projectKey } from '../agentProjects';
 import { hasUnreadCompletion } from '../sessionUnread';
@@ -96,6 +103,7 @@ function AgentListItem({ agent, selected, onSelect, archived = false, onToggleAr
   const browser = useApp((s) => s.browsers[agent.id]);
   const unread = useApp((state) => hasUnreadCompletion(agent, state.readCompletions));
   const subagents = runningSubagents(agent);
+  const compactRow = useApp((s) => s.agentListCompact);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(agent.title);
   const rename = async () => {
@@ -103,9 +111,11 @@ function AgentListItem({ agent, selected, onSelect, archived = false, onToggleAr
     if (name.trim() && name.trim() !== agent.title) await call('agents.rename', agent.id, name.trim());
   };
   return (
-    <div className={`agent-item ${selected ? 'on' : ''} ${unread ? 'unread' : ''} ${agent.status === 'needs-input' ? 'attention' : ''}`} onClick={onSelect}>
+    <div className={`agent-item ${compactRow ? 'compact' : ''} ${selected ? 'on' : ''} ${unread ? 'unread' : ''} ${agent.status === 'needs-input' ? 'attention' : ''}`} onClick={onSelect}>
       {unread ? <span className="ai-unread" role="status" aria-label="Completed, unread" title="Completed, unread" /> : null}
-      <ProviderIcon provider={agent.provider} size={24} />
+      {compactRow
+        ? (agent.status === 'working' && !agent.endedAt) || backgroundWork(agent) ? <RunningSpinner size={13} className="ai-spinner" /> : null
+        : <ProviderIcon provider={agent.provider} size={24} />}
       {editing ? (
         <input
           className="input ai-rename"
@@ -141,8 +151,11 @@ function AgentListItem({ agent, selected, onSelect, archived = false, onToggleAr
       >
         <SessionArchiveIcon restore={archived} />
       </button>
-      <div className="ai-meta">
-        <AgentStatusPill agent={agent} detail={false} label={agent.status === 'working' && !agent.endedAt ? 'Running' : undefined} />
+      {compactRow ? null : <div className="ai-meta">
+        {/* A stopped session says nothing: most of the list is stopped, so only live states are marked. */}
+        {agent.status === 'stopped' && !backgroundWork(agent) ? null : (
+          <AgentStatusPill agent={agent} detail={false} spinner label={agent.status === 'working' && !agent.endedAt ? 'Running' : undefined} />
+        )}
         {AGENT_MODES.includes(agent.mode) ? <PromptCacheBadge agent={agent} iconOnly /> : null}
         {agent.usesScreen ? <MousePointer2 size={12} color="var(--warning)" /> : null}
         {browser ? <Globe size={12} color={browser.busy ? 'var(--accent-strong)' : 'var(--text-muted)'} aria-label="Has a browser open" /> : null}
@@ -153,13 +166,46 @@ function AgentListItem({ agent, selected, onSelect, archived = false, onToggleAr
         ) : null}
         <span className="ellipsis">{agent.mode === 'task' ? 'task' : CONVERSATION_MODES.includes(agent.mode) ? agent.profileLabel : agent.mode}</span>
         {t?.cost.totalUsd != null ? <span style={{ marginLeft: 'auto' }} className="num ai-cost">{usd(t.cost.reportedUsd ?? t.cost.totalUsd)}</span> : null}
-      </div>
-      {t && t.contextPercent !== null && agent.mode !== 'shell' ? (
+      </div>}
+      {!compactRow && t && t.contextPercent !== null && agent.mode !== 'shell' ? (
         <div className={agent.status === 'working' && !agent.endedAt ? 'ai-context running' : 'ai-context'} style={{ gridColumn: 2 }}>
           <MiniMeter value={t.contextPercent} title={`Context ${compact(t.contextUsedTokens)} / ${compact(t.contextWindow)}`} />
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** Right-click on the session list: how it shows sessions. Saved on this computer. */
+function ListMenu({ at, onClose }: { at: { x: number; y: number }; onClose: () => void }) {
+  const compactRows = useApp((s) => s.agentListCompact);
+  const choose = (compact: boolean) => {
+    useApp.getState().setAgentListCompact(compact);
+    onClose();
+  };
+  return (
+    <ContextMenu at={at} label="Session list" onClose={onClose} className="agent-list-menu">
+      <div className="pop-title">Session list</div>
+      <button type="button" className="pop-item menu-item" role="menuitemradio" aria-checked={!compactRows} onClick={() => choose(false)}
+        title="Status, account, cost and context for each session">
+        <span className="menu-check">{compactRows ? null : <Check size={13} />}</span>
+        <Rows3 size={14} />
+        <span>Detailed</span>
+      </button>
+      <button type="button" className="pop-item menu-item" role="menuitemradio" aria-checked={compactRows} onClick={() => choose(true)}
+        title="One line per session">
+        <span className="menu-check">{compactRows ? <Check size={13} /> : null}</span>
+        <List size={14} />
+        <span>Compact</span>
+      </button>
+      <div className="menu-sep" role="separator" />
+      <button type="button" className="pop-item menu-item" role="menuitem" onClick={() => { useApp.getState().toggleAgentList(); onClose(); }}>
+        <span className="menu-check" />
+        <PanelLeftClose size={14} />
+        <span>Hide session list</span>
+        <span className="kbd">Ctrl 1</span>
+      </button>
+    </ContextMenu>
   );
 }
 
@@ -215,9 +261,8 @@ function ProjectMenu({ path, label, onRemove }: { path: string; label: string; o
   );
 }
 
-function ProjectSessions({ agents, selectedId, archived = false, projectFolders = [], hiddenProjectFolders = [], onToggleArchived, onAddProject, onRemoveProject, addingProject = false }: {
+function ProjectSessions({ agents, selectedId, archived = false, projectFolders = [], hiddenProjectFolders = [], onToggleArchived, onRemoveProject }: {
   agents: AgentInfo[]; selectedId?: string; archived?: boolean; projectFolders?: string[]; onToggleArchived: (id: string) => void;
-  onAddProject?: () => void; addingProject?: boolean;
   hiddenProjectFolders?: string[]; onRemoveProject?: (path: string) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
@@ -228,11 +273,6 @@ function ProjectSessions({ agents, selectedId, archived = false, projectFolders 
   }
   return projects.map((project) => (
     <Fragment key={project.key}>
-      {project.key === 'no-project' && onAddProject ? (
-        <button type="button" className="btn ghost agent-new-project" disabled={addingProject} onClick={onAddProject}>
-          <Plus size={14} /> New project
-        </button>
-      ) : null}
       <details className="agent-project" open={!collapsed.has(project.key)} onToggle={(event) => {
         const open = event.currentTarget.open;
         setCollapsed((previous) => {
@@ -244,8 +284,9 @@ function ProjectSessions({ agents, selectedId, archived = false, projectFolders 
         });
       }}>
         <summary className="agent-project-heading" title={project.path || 'Standalone conversations'}>
-          <FolderOpen size={12} />
+          {project.key === 'no-project' ? <Monitor size={12} /> : <FolderOpen size={12} />}
           <span className="ellipsis">{project.label}</span>
+          <ChevronRight size={13} className="agent-project-chevron" aria-hidden="true" />
           <button
             type="button"
             className="btn ghost sm icon agent-project-add"
@@ -592,6 +633,8 @@ export function AgentsView() {
     } catch { return 290; }
   });
   const listRef = useRef<HTMLDivElement>(null);
+  const listCollapsed = useApp((s) => s.agentListCollapsed);
+  const [listMenu, setListMenu] = useState<{ x: number; y: number } | null>(null);
   useEffect(() => {
     try {
       localStorage.setItem('archivedAgentIds', JSON.stringify(archivedIds));
@@ -622,18 +665,41 @@ export function AgentsView() {
   }, [selectedId, selected]);
 
   return (
-    <div className="agents-layout" style={{ ['--agent-list-width' as string]: `${listWidth}px` }}>
-      <div className="agent-list" ref={listRef}>
+    <div className={`agents-layout ${listCollapsed ? 'list-collapsed' : ''}`} style={{ ['--agent-list-width' as string]: `${listWidth}px` }}>
+      <div className="agent-list" ref={listRef} hidden={listCollapsed}
+        onContextMenu={(event) => {
+          // Text fields keep their own menu.
+          if ((event.target as HTMLElement).closest('input, textarea')) return;
+          event.preventDefault();
+          setListMenu({ x: event.clientX, y: event.clientY });
+        }}>
+        {listMenu ? <ListMenu at={listMenu} onClose={() => setListMenu(null)} /> : null}
         <div className="agent-list-head">
-          <div className="row" style={{ position: 'relative' }}>
-            <Search size={14} className="muted" style={{ position: 'absolute', left: 10 }} />
-            <input className="input" style={{ paddingLeft: 30, height: 30 }} placeholder="Filter agents" value={query} onChange={(e) => setQuery(e.target.value)} />
-            {query ? (
-              <button className="btn ghost sm icon" style={{ position: 'absolute', right: 3 }} onClick={() => setQuery('')}>
-                <X size={13} />
-              </button>
-            ) : null}
+          <div className="al-search-row">
+            <label className="al-search">
+              <Search size={15} />
+              <input placeholder="Search sessions" aria-label="Search sessions" value={query} onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Escape' && query) { e.preventDefault(); setQuery(''); } }} />
+              {query ? (
+                <button type="button" className="btn ghost sm icon" aria-label="Clear search" onClick={() => setQuery('')}>
+                  <X size={13} />
+                </button>
+              ) : null}
+            </label>
+            <button type="button" className="btn ghost icon al-hide" aria-label="Hide session list" title="Hide session list (Ctrl+1)"
+              onClick={() => useApp.getState().toggleAgentList()}>
+              <PanelLeftClose size={16} />
+            </button>
           </div>
+          <button type="button" className="al-action al-new" onClick={() => openLauncher()}>
+            <Plus size={16} />
+            <span>New session</span>
+            <span className="kbd">Ctrl N</span>
+          </button>
+          <button type="button" className="al-action" disabled={addingProject} onClick={addProject}>
+            <FolderPlus size={16} />
+            <span>New project</span>
+          </button>
         </div>
         <div className="agent-list-scroll">
           {agents.length === 0 ? (
@@ -644,7 +710,7 @@ export function AgentsView() {
           <ProjectSessions agents={visible} selectedId={selected?.id}
             projectFolders={(projectFolders ?? []).filter((folder) => !query.trim() || folder.toLowerCase().includes(query.trim().toLowerCase()))}
             hiddenProjectFolders={hiddenProjectFolders} onRemoveProject={removeProject}
-            onToggleArchived={toggleArchived} onAddProject={addProject} addingProject={addingProject} />
+            onToggleArchived={toggleArchived} />
           {archived.length ? (
             <details className="archived-agents">
               <summary>Archived ({archived.length})</summary>

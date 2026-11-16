@@ -1,5 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeftRight, Check, Eye, FolderTree, Gauge, GitBranch, Globe, Loader2, MessageSquareDashed, Network, Plug, X, type LucideIcon } from 'lucide-react';
 import { AGENT_MODES, CONVERSATION_MODES, type AgentInfo } from '@shared/types';
 import { runningSubagents } from '@shared/subagents';
@@ -12,7 +11,7 @@ import { GitPanel, useGitChangeCount } from './GitPanel';
 import { SubagentMapPane } from './SubagentMap';
 import { SideChatPane } from './SideChatPanel';
 import { sidePending, useSideChats } from '../sideChat';
-import { useWheelStep } from '../ui';
+import { ContextMenu, useWheelStep } from '../ui';
 import { FileMenuHost } from '../FileMenu';
 
 /** `note` is the second line of each tab's hover card. */
@@ -58,50 +57,18 @@ export function usePanelTab(agent: AgentInfo): PanelTab {
 /** Right-click on the tab strip: which tabs it shows. Saved on this computer. */
 function TabsMenu({ at, onClose }: { at: { x: number; y: number }; onClose: () => void }) {
   const hidden = useApp((s) => s.panelHiddenTabs);
-  const menu = useRef<HTMLDivElement>(null);
-  const [place, setPlace] = useState({ left: at.x, top: at.y });
-  useLayoutEffect(() => {
-    const element = menu.current;
-    if (!element) return;
-    const { width, height } = element.getBoundingClientRect();
-    setPlace({ left: Math.max(8, Math.min(at.x, window.innerWidth - width - 8)), top: Math.max(8, Math.min(at.y, window.innerHeight - height - 8)) });
-    element.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
-  }, [at]);
-  useEffect(() => {
-    const outside = (event: PointerEvent) => { if (!menu.current?.contains(event.target as Node)) onClose(); };
-    window.addEventListener('pointerdown', outside, true);
-    window.addEventListener('resize', onClose);
-    window.addEventListener('blur', onClose);
-    return () => {
-      window.removeEventListener('pointerdown', outside, true);
-      window.removeEventListener('resize', onClose);
-      window.removeEventListener('blur', onClose);
-    };
-  }, [onClose]);
   const visible = TABS.filter((t) => !hidden.includes(t.id)).length;
   const toggle = (id: PanelTab) => useApp.getState().setPanelTabHidden(id, !hidden.includes(id));
-  return createPortal(
-    <div ref={menu} className="popover sp-tabs-menu" role="menu" aria-label="Side panel tabs" style={place}
-      onContextMenu={(event) => event.preventDefault()}
-      onKeyDown={(event) => {
-        if (event.key === 'Escape' || event.key === 'Tab') {
-          event.preventDefault();
-          onClose();
-        } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-          event.preventDefault();
-          const items = [...(menu.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])];
-          const index = items.indexOf(document.activeElement as HTMLButtonElement);
-          items[(index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
-        }
-      }}>
+  return (
+    <ContextMenu at={at} label="Side panel tabs" onClose={onClose}>
       <div className="pop-title">Show in the panel</div>
       {TABS.map(({ id, label, icon: Icon }) => {
         const on = !hidden.includes(id);
         const last = on && visible === 1;
         return (
-          <button key={id} type="button" className="pop-item sp-tabs-menu-item" role="menuitemcheckbox" aria-checked={on} disabled={last}
+          <button key={id} type="button" className="pop-item menu-item" role="menuitemcheckbox" aria-checked={on} disabled={last}
             title={last ? 'At least one tab stays in the strip' : undefined} onClick={() => toggle(id)}>
-            <span className="sp-tabs-menu-check">{on ? <Check size={13} /> : null}</span>
+            <span className="menu-check">{on ? <Check size={13} /> : null}</span>
             <Icon size={14} />
             <span>{label}</span>
           </button>
@@ -109,17 +76,16 @@ function TabsMenu({ at, onClose }: { at: { x: number; y: number }; onClose: () =
       })}
       {hidden.length ? (
         <>
-          <div className="sp-tabs-menu-sep" role="separator" />
-          <button type="button" className="pop-item sp-tabs-menu-item" role="menuitem"
+          <div className="menu-sep" role="separator" />
+          <button type="button" className="pop-item menu-item" role="menuitem"
             onClick={() => { for (const id of hidden) useApp.getState().setPanelTabHidden(id, false); onClose(); }}>
-            <span className="sp-tabs-menu-check" />
+            <span className="menu-check" />
             <Eye size={14} />
             <span>Show all tabs</span>
           </button>
         </>
       ) : null}
-    </div>,
-    document.body
+    </ContextMenu>
   );
 }
 

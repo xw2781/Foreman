@@ -29,6 +29,13 @@ import { LaunchDialog } from './views/LaunchDialog';
 
 // In on-screen order, top to bottom: `foot` items sit at the bottom of the nav, so they come last
 // and the Ctrl shortcuts count down the sidebar.
+
+/** Goes to a page; the Agents item, pressed again while on Agents, folds or unfolds the agent list. */
+function pressNav(view: View) {
+  const state = useApp.getState();
+  if (view === 'agents' && state.view === 'agents') state.toggleAgentList();
+  else state.setView(view);
+}
 const NAV: Array<{ view: View; label: string; icon: typeof LayoutGrid; key: string; foot?: boolean }> = [
   { view: 'agents', label: 'Agents', icon: SquareTerminal, key: '1' },
   { view: 'tasks', label: 'Task Manager', icon: LayoutGrid, key: '2' },
@@ -177,7 +184,7 @@ function useShortcuts() {
       const nav = NAV.find((n) => n.key === event.key);
       if (nav && !event.shiftKey) {
         event.preventDefault();
-        state.setView(nav.view);
+        pressNav(nav.view);
         return;
       }
       if (event.key === 'Tab') {
@@ -331,6 +338,7 @@ function Nav() {
   const setView = useApp((s) => s.setView);
   const agents = useApp((s) => s.agents);
   const computerUse = useApp((s) => s.computerUse);
+  const listCollapsed = useApp((s) => s.agentListCollapsed);
   const needsInput = agents.filter((a) => a.status === 'needs-input').length;
   const live = agents.filter((a) => LIVE_STATUSES.includes(a.status) && AGENT_MODES.includes(a.mode)).length;
   const badges: Partial<Record<View, React.ReactNode>> = {
@@ -345,7 +353,7 @@ function Nav() {
     <button
       key={item.view}
       className={`nav-item ${view === item.view ? 'active' : ''}`}
-      onClick={() => setView(item.view)}
+      onClick={() => pressNav(item.view)}
       aria-label={item.label}
       aria-keyshortcuts={`Control+${item.key}`}
     >
@@ -357,6 +365,7 @@ function Nav() {
           <span className="kbd">Ctrl {item.key}</span>
         </span>
         {badgeNote[item.view] ? <span className="hover-tip-note">{badgeNote[item.view]}</span> : null}
+        {item.view === 'agents' && view === 'agents' ? <span className="hover-tip-note">Press again to {listCollapsed ? 'show' : 'hide'} the agent list</span> : null}
       </span>
     </button>
   );

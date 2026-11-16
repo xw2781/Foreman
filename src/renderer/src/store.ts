@@ -57,6 +57,12 @@ interface AppState {
   /** Tabs the person hid from the side panel's strip (right-click it); saved on this computer only. */
   panelHiddenTabs: PanelTab[];
   setPanelTabHidden: (tab: PanelTab, hidden: boolean) => void;
+  /** The agent list beside the chat is folded away; saved on this computer only. */
+  agentListCollapsed: boolean;
+  toggleAgentList: () => void;
+  /** Compact: one line per session (icon and title); detailed adds status, account, cost and context. */
+  agentListCompact: boolean;
+  setAgentListCompact: (compact: boolean) => void;
   setView: (view: View) => void;
   selectAgent: (id: string | null) => void;
   openLauncher: (preset?: Partial<LaunchOptions>) => void;
@@ -107,6 +113,21 @@ export const useApp = create<AppState>((set, get) => ({
     // Panels showing the tab just hidden move off it.
     const panelTab = hidden ? Object.fromEntries(Object.entries(get().panelTab).filter(([, t]) => t !== tab)) : get().panelTab;
     set({ panelHiddenTabs, panelTab });
+  },
+  agentListCollapsed: (() => {
+    try { return localStorage.getItem('agentListCollapsed') === '1'; } catch { return false; }
+  })(),
+  toggleAgentList: () => {
+    const agentListCollapsed = !get().agentListCollapsed;
+    try { localStorage.setItem('agentListCollapsed', agentListCollapsed ? '1' : '0'); } catch { /* storage unavailable */ }
+    set({ agentListCollapsed });
+  },
+  agentListCompact: (() => {
+    try { return localStorage.getItem('agentListDensity') === 'compact'; } catch { return false; }
+  })(),
+  setAgentListCompact: (agentListCompact) => {
+    try { localStorage.setItem('agentListDensity', agentListCompact ? 'compact' : 'detailed'); } catch { /* storage unavailable */ }
+    set({ agentListCompact });
   },
   setView: (view) => set({ view }),
   selectAgent: (id) => set({ selectedAgentId: id }),
