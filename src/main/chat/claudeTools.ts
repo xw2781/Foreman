@@ -1,6 +1,7 @@
 // How Claude Code's tool calls read in the chat. Pure: shared by the live
 // stream (main process) and transcript history (telemetry worker).
-import type { ChatEntry, ChatFileChange, ChatToolStatus } from '../../shared/types';
+import { contentImages, toolImages } from '../../shared/chatImages';
+import type { ChatEntry, ChatFileChange, ChatImage, ChatQuestion, ChatToolStatus } from '../../shared/types';
 import { describeToolInput } from '../streamFormat';
 import { clipText } from './log';
 import { browserToolDetail, browserToolTitle } from './browserTools';
@@ -140,10 +141,47 @@ export function claudeToolEntry(id: string, tool: string, input: Record<string, 
     detail: claudeToolDetail(tool, input),
     input: claudeToolInput(tool, input),
     output: null,
+    ...(tool === 'AskUserQuestion' && input ? { questions: questionsFrom(input) } : {}),
     status,
     files: claudeFileChanges(tool, input),
     durationMs: null
   };
+}
+
+/** AskUserQuestion's input as the chat's questions; a question's text is its id, as in the answers Claude Code takes and reports. */
+export function questionsFrom(input: Record<string, any>): ChatQuestion[] {
+  const list = Array.isArray(input.questions) ? input.questions : [];
+  return list.map((q: any, index: number) => ({
+    id: String(q?.question ?? index),
+    header: String(q?.header ?? `Question ${index + 1}`),
+    question: String(q?.question ?? ''),
+    multiSelect: Boolean(q?.multiSelect),
+    options: (Array.isArray(q?.options) ? q.options : []).map((o: any) => ({ label: String(o?.label ?? o), description: typeof o?.description === 'string' ? o.description : undefined })),
+    allowOther: true
+  }));
+}
+
+/**
+ * What the person answered, by question id: from the result's structured copy
+ * when the CLI sends one, else read out of its text (`"question"="answer", …`).
+ * Null when nothing was answered (skipped, or the result isn't in yet).
+ */
+export function questionAnswers(questions: ChatQuestion[], text: string, structured?: unknown): Record<string, string> | null {
+  const answers: Record<string, string> = {};
+  const given = (structured as any)?.answers;
+  if (given && typeof given === 'object') {
+    for (const q of questions) if (typeof given[q.id] === 'string' && given[q.id]) answers[q.id] = given[q.id];
+  } else {
+    const starts = questions.map((q) => ({ q, at: text.indexOf(`"${q.question}"="`) })).filter((s) => s.at >= 0).sort((a, b) => a.at - b.at);
+    starts.forEach(({ q, at }, index) => {
+      const from = at + q.question.length + 4;
+      // An answer runs to the next question, or to the quote that closes the list.
+      const rest = text.slice(from, index + 1 < starts.length ? starts[index + 1].at : undefined);
+      const end = index + 1 < starts.length ? rest.lastIndexOf('", ') : Math.max(rest.lastIndexOf('". '), rest.endsWith('"') ? rest.length - 1 : -1);
+      if (end > 0) answers[q.id] = rest.slice(0, end);
+    });
+  }
+  return Object.keys(answers).length ? answers : null;
 }
 
 /** Text of a tool_result block, whose content is a string or a list of text/image parts. */
@@ -156,6 +194,20 @@ export function toolResultText(content: unknown): string {
       .join('\n');
   }
   return content === null || content === undefined ? '' : String(content);
+}
+
+/** A tool_result block as the step shows it: its text, and its pictures apart from the text. */
+export function toolResult(
+  content: unknown,
+  tool: { tool: string; detail: string | null; questions?: ChatQuestion[] },
+  /** The CLI's structured copy of the result (`tool_use_result` live, `toolUseResult` in transcripts). */
+  structured?: unknown
+): { output: string | null; images?: ChatImage[]; answers?: Record<string, string> } {
+  const images = toolImages(content, tool.tool === 'Read' && tool.detail ? tool.detail : 'Image');
+  const rest = Array.isArray(content) ? content.filter((part) => !contentImages([part]).length) : content;
+  const text = toolResultText(rest);
+  const answers = tool.questions?.length ? questionAnswers(tool.questions, text, structured) : null;
+  return { output: clipText(text), images: images.length ? images : undefined, ...(answers ? { answers } : {}) };
 }
 
 /** User text that Claude Code generated rather than the person typed (slash-command echoes, caveats). */

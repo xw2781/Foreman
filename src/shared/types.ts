@@ -450,6 +450,11 @@ export type ChatEntry =
       /** Full input (command, JSON arguments) shown when expanded. */
       input: string | null;
       output: string | null;
+      /** Pictures in the result (an image file read, a screenshot). The log keeps a bounded amount, newest first. */
+      images?: ChatImage[];
+      /** A question step: what was asked, and what the person chose by question id (absent until answered, or when skipped). */
+      questions?: ChatQuestion[];
+      answers?: Record<string, string>;
       status: ChatToolStatus;
       files: ChatFileChange[] | null;
       durationMs: number | null;

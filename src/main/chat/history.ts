@@ -2,9 +2,9 @@
 // viewed after the process is gone. Runs in the telemetry worker.
 import { contentImages } from '../../shared/chatImages';
 import type { ChatEntry } from '../../shared/types';
-import { claudeToolEntry, isSyntheticUserText, slashCommandText, toolResultText } from './claudeTools';
+import { claudeToolEntry, isSyntheticUserText, slashCommandText, toolResult } from './claudeTools';
 import { codexItemEntry } from './codexItems';
-import { clipText } from './log';
+import { TOOL_IMAGE_LIMIT, toolImageSize, withoutToolImages } from './log';
 
 export interface HistoryEntry {
   entry: ChatEntry;
@@ -17,12 +17,32 @@ class Collector {
   private entries: HistoryEntry[] = [];
   private index = new Map<string, number>();
 
+  /** Steps still holding pictures, oldest first, and how much they hold: a long session's would not fit in memory. */
+  private pictured: number[] = [];
+  private imageSize = 0;
+
   put(entry: ChatEntry, at: string | null) {
-    const existing = this.index.get(entry.id);
-    if (existing !== undefined) this.entries[existing] = { entry, at: this.entries[existing].at ?? at };
-    else {
-      this.index.set(entry.id, this.entries.length);
+    let place = this.index.get(entry.id);
+    if (place !== undefined) {
+      const size = toolImageSize(this.entries[place].entry);
+      if (size) {
+        this.imageSize -= size;
+        this.pictured = this.pictured.filter((p) => p !== place);
+      }
+      this.entries[place] = { entry, at: this.entries[place].at ?? at };
+    } else {
+      place = this.entries.length;
+      this.index.set(entry.id, place);
       this.entries.push({ entry, at });
+    }
+    const size = toolImageSize(entry);
+    if (!size) return;
+    this.imageSize += size;
+    this.pictured.push(place);
+    while (this.imageSize > TOOL_IMAGE_LIMIT && this.pictured.length > 1) {
+      const oldest = this.entries[this.pictured.shift()!];
+      this.imageSize -= toolImageSize(oldest.entry);
+      oldest.entry = withoutToolImages(oldest.entry);
     }
   }
 
@@ -92,7 +112,7 @@ export function claudeHistory(lines: Iterable<string>, limit = HISTORY_LIMIT): H
         if (block?.type !== 'tool_result') continue;
         const tool = out.get(String(block.tool_use_id ?? ''));
         if (tool?.kind === 'tool') {
-          out.put({ ...tool, output: clipText(toolResultText(block.content)), status: block.is_error ? 'error' : 'done' }, null);
+          out.put({ ...tool, ...toolResult(block.content, tool, record.toolUseResult), status: block.is_error ? 'error' : 'done' }, null);
         }
       }
       const text = claudeUserText(content);

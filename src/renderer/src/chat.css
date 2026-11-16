@@ -366,6 +366,9 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* Pictures a step returned: thumbnails that open the preview. No copy button, so the label sets its own height. */
+.tool-block.images .tool-block-head { padding-block: 6px; }
+.tool-block.images .chat-images { padding: 10px; }
 /* Beside a block's label: the folder a command ran in, the model that wrote an explanation. */
 .tool-block-note {
   flex: 1;
@@ -746,6 +749,12 @@
   font-size: 12px;
   color: var(--text-secondary);
 }
+/* A question step reopened: the same options, not clickable, the answer marked. */
+.questions.asked .q-option { cursor: default; }
+.questions.asked .q-option:not(.on) { background: transparent; border-color: var(--border); }
+.questions.asked .q-option:not(.on) .q-label { font-weight: 400; color: var(--text-secondary); }
+.q-chosen { display: inline-block; margin-left: 4px; padding: 2px 6px; border-radius: 4px; background: var(--accent); color: var(--accent-ink); font-size: 10px; font-weight: 500; }
+.q-none { font-size: 12px; color: var(--text-muted); }
 
 /* turn footers, notices, progress */
 .turn-footer {

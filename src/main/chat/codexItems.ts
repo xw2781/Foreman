@@ -3,8 +3,8 @@
 // items PascalCase with snake_case fields ("CommandExecution",
 // aggregated_output). One normalizer reads both. Pure: shared by the live
 // driver (main process) and history loading (telemetry worker).
-import { contentImages } from '../../shared/chatImages';
-import type { ChatEntry, ChatFileChange, ChatToolStatus } from '../../shared/types';
+import { contentImages, toolImages } from '../../shared/chatImages';
+import type { ChatEntry, ChatFileChange, ChatImage, ChatToolStatus } from '../../shared/types';
 import { clipText } from './log';
 import { browserToolDetail, browserToolTitle } from './browserTools';
 import { summarizeCommand } from './shellCommand';
@@ -123,6 +123,12 @@ function mcpOutput(item: Record<string, any>): string | null {
   return stringify(result);
 }
 
+/** The pictures a tool returned, for the step to show beside its text. */
+function resultImages(content: unknown): { images?: ChatImage[] } {
+  const images = toolImages(content, 'Image');
+  return images.length ? { images } : {};
+}
+
 /** A Codex thread item as a chat entry; null for items the chat doesn't show. */
 export function codexItemEntry(raw: any): ChatEntry | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -190,6 +196,7 @@ export function codexItemEntry(raw: any): ChatEntry | null {
         detail: browserToolTitle(raw.server, raw.tool) ? browserToolDetail(raw.tool, raw.arguments) : typeof raw.arguments?.title === 'string' ? raw.arguments.title : null,
         input: stringify(raw.arguments),
         output: mcpOutput(raw),
+        ...resultImages(raw.result?.content ?? raw.result?.Ok?.content),
         status: toolStatus(raw.status, raw.error ? 1 : undefined),
         files: null,
         durationMs: durationMs(raw)
@@ -203,6 +210,7 @@ export function codexItemEntry(raw: any): ChatEntry | null {
         detail: null,
         input: stringify(raw.arguments),
         output: Array.isArray(pick(raw, 'contentItems', 'content_items')) ? textParts(pick(raw, 'contentItems', 'content_items')) : null,
+        ...resultImages(pick(raw, 'contentItems', 'content_items')),
         status: raw.success === false ? 'error' : toolStatus(raw.status),
         files: null,
         durationMs: durationMs(raw)

@@ -13,6 +13,25 @@ export function clipText(value: string | null | undefined, limit = TEXT_LIMIT): 
 }
 
 /**
+ * Most picture data (data-URL characters) kept across one conversation's tool
+ * steps. An agent taking screenshots all day would otherwise hold gigabytes;
+ * past this, the oldest steps give up their pictures.
+ */
+export const TOOL_IMAGE_LIMIT = 48 * 1024 * 1024;
+
+export function toolImageSize(entry: ChatEntry): number {
+  return entry.kind === 'tool' && entry.images ? entry.images.reduce((sum, image) => sum + image.dataUrl.length, 0) : 0;
+}
+
+/** A tool step without its pictures, with a line saying they were there. */
+export function withoutToolImages<T extends ChatEntry>(entry: T): T {
+  if (entry.kind !== 'tool' || !entry.images?.length) return entry;
+  const { images, ...rest } = entry;
+  const note = images.length === 1 ? '[image no longer kept]' : `[${images.length} images no longer kept]`;
+  return { ...rest, output: [entry.output, note].filter(Boolean).join('\n') } as unknown as T;
+}
+
+/**
  * The items of one conversation. Every change bumps the item's `rev`, so the
  * renderer can merge a snapshot and live updates in any order; `seq` fixes
  * each item's place in the conversation.
@@ -25,7 +44,7 @@ export class ChatLog {
   /** Set when the whole conversation was replaced; the next flush tells the renderer to drop what it has. */
   reset = false;
 
-  constructor(entries: ChatEntry[] = []) {
+  constructor(entries: ChatEntry[] = [], private imageLimit = TOOL_IMAGE_LIMIT) {
     for (const entry of entries) this.upsert(entry);
     this.dirty.clear();
   }
@@ -45,7 +64,19 @@ export class ChatLog {
     this.items.set(entry.id, item);
     this.dirty.add(entry.id);
     if (!existing && this.items.size > ITEM_LIMIT) this.dropOldest();
+    if (toolImageSize(entry)) this.trimImages(entry.id);
     return item;
+  }
+
+  /** Keeps the newest steps' pictures within the limit; the step just written always keeps its own. */
+  private trimImages(keep: string) {
+    let total = 0;
+    for (const item of this.list().reverse()) {
+      const size = toolImageSize(item);
+      if (!size) continue;
+      total += size;
+      if (total > this.imageLimit && item.id !== keep) this.upsert(withoutToolImages(item));
+    }
   }
 
   /** Applies `change` to an existing item of the given kind; no-op when it doesn't exist. */

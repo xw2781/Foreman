@@ -476,7 +476,7 @@ export class CodexChat implements ChatDriver {
         } else if (entry.kind === 'tool') {
           // Output streamed through deltas is kept until the completed item carries the full text.
           const output = entry.output ?? (existing?.kind === 'tool' ? existing.output : null);
-          this.host.log.upsert({ ...entry, output });
+          this.host.log.upsert({ ...entry, output, images: entry.images ?? (existing?.kind === 'tool' ? existing.images : undefined) });
           if (method === 'item/started') this.host.status('working', entry.detail ? `${entry.title} ${entry.detail}`.slice(0, 120) : entry.title);
         } else if (entry.kind === 'reasoning') {
           this.host.log.upsert({ ...entry, streaming: method === 'item/started' });

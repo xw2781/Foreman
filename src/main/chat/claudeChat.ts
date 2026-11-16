@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import type { ChatAnswer, ChatCommand, ChatConnector, ChatOption, ChatQuestion, ChatSettingsPatch, ContextUsage, SideChatExchange } from '../../shared/types';
 import { describeToolInput } from '../streamFormat';
 import { parseStatusPayload } from '../statusLine';
-import { claudeFileChanges, claudeToolEntry, claudeToolTitle, toolResultText } from './claudeTools';
+import { claudeFileChanges, claudeToolEntry, claudeToolTitle, questionsFrom, toolResult } from './claudeTools';
 import { parseConnectors } from './connectors';
 import { parseContextUsage } from './contextUsage';
 import { sideChatPrompt, type ChatDriver, type ChatHost } from './driver';
@@ -66,18 +66,6 @@ function alwaysLabel(suggestions: any[]): string {
   }
   if (first?.type === 'addDirectories' && Array.isArray(first.directories)) return `Always allow ${first.directories[0]}${scope}`;
   return `Always allow${scope}`;
-}
-
-function questionsFrom(input: Record<string, any>): ChatQuestion[] {
-  const list = Array.isArray(input.questions) ? input.questions : [];
-  return list.map((q: any, index: number) => ({
-    id: String(q?.question ?? index),
-    header: String(q?.header ?? `Question ${index + 1}`),
-    question: String(q?.question ?? ''),
-    multiSelect: Boolean(q?.multiSelect),
-    options: (Array.isArray(q?.options) ? q.options : []).map((o: any) => ({ label: String(o?.label ?? o), description: typeof o?.description === 'string' ? o.description : undefined })),
-    allowOther: true
-  }));
 }
 
 export class ClaudeChat implements ChatDriver {
@@ -327,7 +315,7 @@ export class ClaudeChat implements ChatDriver {
         const existing = this.host.log.get(block.id);
         const entry = claudeToolEntry(block.id, block.name, block.input);
         if (!this.toolStarts.has(block.id)) this.toolStarts.set(block.id, Date.now());
-        this.host.log.upsert(existing?.kind === 'tool' ? { ...entry, status: existing.status, output: existing.output, durationMs: existing.durationMs } : entry);
+        this.host.log.upsert(existing?.kind === 'tool' ? { ...entry, status: existing.status, output: existing.output, images: existing.images, answers: existing.answers, durationMs: existing.durationMs } : entry);
       }
     }
   }
@@ -343,8 +331,8 @@ export class ClaudeChat implements ChatDriver {
       const id = String(block.tool_use_id ?? '');
       const started = this.toolStarts.get(id);
       const declined = this.declined.has(id) || (block.is_error && declinedByRule.has(id));
-      this.host.log.update(id, 'tool', () => ({
-        output: clipText(toolResultText(block.content)),
+      this.host.log.update(id, 'tool', (item) => ({
+        ...toolResult(block.content, item, event.tool_use_result),
         status: declined ? 'declined' : block.is_error ? 'error' : 'done',
         durationMs: started ? Date.now() - started : null
       }));

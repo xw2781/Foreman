@@ -22,9 +22,18 @@ export function contentImages(content: unknown): ChatImage[] {
   if (!Array.isArray(content)) return [];
   return content.flatMap((part): ChatImage[] => {
     const type = String(part?.type ?? '').toLowerCase();
-    const dataUrl = type === 'image' ? part.url ?? (part.source?.type === 'base64' ? `data:${part.source.media_type};base64,${part.source.data}` : null)
-      : type === 'input_image' ? part.image_url : null;
+    // MCP results carry `data` + `mimeType`; Codex spells its own parts snake_case in rollouts and camelCase live.
+    const mime = part?.mimeType ?? part?.mime_type;
+    const dataUrl = type === 'image' ? part.url ?? (part.source?.type === 'base64' ? `data:${part.source.media_type};base64,${part.source.data}`
+      : typeof part.data === 'string' && typeof mime === 'string' ? `data:${mime};base64,${part.data}` : null)
+      : type === 'input_image' || type === 'inputimage' ? part.image_url ?? part.imageUrl : null;
     if (typeof dataUrl !== 'string' || !/^data:image\/(png|jpeg|gif|webp);base64,/.test(dataUrl)) return [];
     return [{ name: 'Attached image', dataUrl }];
   });
+}
+
+/** The pictures in a tool's result, named after what produced them. */
+export function toolImages(content: unknown, name: string): ChatImage[] {
+  const images = contentImages(content);
+  return images.map((image, index) => ({ ...image, name: images.length > 1 ? `${name} (${index + 1})` : name }));
 }

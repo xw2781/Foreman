@@ -315,8 +315,10 @@ const flat = (text: string) => text.replace(/\s+/g, ' ').trim();
 
 const ToolRow = memo(function ToolRow({ item, agentId }: { item: Item<'tool'>; agentId: string }) {
   const [open, setOpen] = useState(false);
-  const hasBody = Boolean(item.input || item.output || item.files?.length);
+  const hasBody = Boolean(item.input || item.output || item.files?.length || item.images?.length);
   const inputIsDetail = item.input && item.input === item.detail;
+  // A question step shows the questions and the answer as they looked when asked, not the tool's JSON and reply text.
+  const asked = Boolean(item.questions?.length);
   const shell = /bash|powershell|shell/i.test(item.tool);
   // A command reads as code (with or without the `cd` it starts with); a description of one ("Run the tests") or the files it read as text.
   const shown = item.detail ? flat(item.detail).replace(/…$/, '') : '';
@@ -344,9 +346,16 @@ const ToolRow = memo(function ToolRow({ item, agentId }: { item: Item<'tool'>; a
       {open ? (
         <div className="tool-body">
           <StepExplanation agentId={agentId} item={item} />
-          {!item.input || (inputIsDetail && !item.input.includes('\n') && item.input.length < 120) ? null : shell ? <CommandBlock command={item.input} /> : <Output label="Input" text={item.input} />}
+          {asked ? <AskedQuestions questions={item.questions!} answers={item.answers} /> : null}
+          {asked || !item.input || (inputIsDetail && !item.input.includes('\n') && item.input.length < 120) ? null : shell ? <CommandBlock command={item.input} /> : <Output label="Input" text={item.input} />}
           {item.files?.length ? <DiffView files={item.files} open /> : null}
-          {item.output ? <Output label={item.status === 'error' ? 'Error' : 'Output'} text={item.output} /> : null}
+          {item.output && !(asked && item.answers) ? <Output label={item.status === 'error' ? 'Error' : 'Output'} text={item.output} /> : null}
+          {item.images?.length ? (
+            <div className="tool-block images">
+              <div className="tool-block-head"><span>{item.images.length === 1 ? 'Image' : `${item.images.length} images`}</span></div>
+              <ImageAttachments images={item.images} />
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -438,6 +447,53 @@ function Questions({ questions, values, onChange }: { questions: ChatQuestion[];
                   }}
                 />
               ) : null}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** A question step looked at afterwards: every option as it was offered, with the ones chosen marked. Read only. */
+function AskedQuestions({ questions, answers }: { questions: ChatQuestion[]; answers?: Record<string, string> }) {
+  return (
+    <div className="questions asked">
+      {questions.map((q) => {
+        const answer = answers?.[q.id] ?? '';
+        // Several choices come back joined by ", "; what no option accounts for is what the person typed.
+        const chosen = q.options.filter((option) => answer === option.label || `, ${answer}, `.includes(`, ${option.label}, `));
+        const typed = chosen.reduce((rest, option) => rest.replace(`, ${option.label}, `, ', '), `, ${answer}, `).slice(2, -2).trim();
+        return (
+          <div key={q.id} className="question" role="group" aria-label={q.question}>
+            {q.header ? <div className="q-header">{q.header.replace(/\s*\((?:optional|required)\)\s*$/i, '')}</div> : null}
+            <div className="q-text selectable">{q.question}</div>
+            <div className="q-options">
+              {q.options.map((option) => {
+                const on = chosen.includes(option);
+                return (
+                  <div key={option.label} className={`q-option ${on ? 'on' : ''}`}>
+                    <span className={`q-mark ${q.multiSelect ? 'box' : 'radio'}`}>{on ? <Check size={11} /> : null}</span>
+                    <span className="selectable">
+                      <span className="q-label">
+                        {option.label.replace(/\s*\(recommended\)/i, '')} {/\(recommended\)/i.test(option.label) ? <span className="q-recommended">Recommended</span> : null}
+                        {on ? <span className="q-chosen">Your answer</span> : null}
+                      </span>
+                      {option.description ? <span className="q-desc">{option.description}</span> : null}
+                    </span>
+                  </div>
+                );
+              })}
+              {typed ? (
+                <div className="q-option on">
+                  <span className={`q-mark ${q.multiSelect ? 'box' : 'radio'}`}><Check size={11} /></span>
+                  <span className="selectable">
+                    <span className="q-label">{typed} <span className="q-chosen">Your answer</span></span>
+                    {q.options.length ? <span className="q-desc">Typed instead of choosing an option</span> : null}
+                  </span>
+                </div>
+              ) : null}
+              {answers && !answer ? <div className="q-none">No answer</div> : null}
             </div>
           </div>
         );
