@@ -336,6 +336,8 @@ export class ClaudeChat implements ChatDriver {
         status: declined ? 'declined' : block.is_error ? 'error' : 'done',
         durationMs: started ? Date.now() - started : null
       }));
+      // With every started step answered the model is thinking again; the next step's time then starts from its own beginning.
+      if (this.toolStarts.delete(id) && this.toolStarts.size === 0 && this.running && this.pending.size === 0) this.host.status('working', 'Thinking');
     }
   }
 
@@ -410,6 +412,7 @@ export class ClaudeChat implements ChatDriver {
     for (const [itemId] of this.pending) this.host.log.update(itemId, 'approval', () => ({ state: 'cancelled', resolution: 'Turn ended' }));
     this.pending.clear();
     this.questionQueue.clear();
+    this.toolStarts.clear();
     this.host.log.upsert({
       kind: 'turn',
       id: `turn-${event.uuid ?? Date.now()}`,

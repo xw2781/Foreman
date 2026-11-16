@@ -1357,6 +1357,7 @@ export class AgentManager {
     info.status = status;
     if (detail !== undefined) info.statusDetail = detail;
     info.lastActivityAt = new Date().toISOString();
+    info.statusSince = info.lastActivityAt;
     this.markChanged(info.id);
     if (status === 'needs-input' && previous !== 'needs-input') this.onAttention(info, 'needs-input');
     if (status === 'idle' && previous === 'working' && info.mode === 'chat') {

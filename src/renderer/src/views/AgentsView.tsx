@@ -34,7 +34,7 @@ import { backgroundWork, describeSubagents, runningSubagents } from '@shared/sub
 import { call, errorMessage } from '../api';
 import { isPanelOpen, useApp } from '../store';
 import { compact, folderName, modelLabel, usd } from '../format';
-import { AccountChip, AgentStatusPill, ContextMenu, Empty, MiniMeter, ProviderIcon, RunningSpinner, confirmDialog, fitRow, unfitRow, useTicker } from '../ui';
+import { AccountChip, AgentStatusPill, ContextMenu, Empty, MiniMeter, ProviderIcon, RunningSpinner, confirmDialog, fitRow, shownCost, unfitRow, useTicker } from '../ui';
 import { mountTerminal, terminalBackground } from '../terminals';
 import { groupAgentsByProject, projectKey } from '../agentProjects';
 import { hasUnreadCompletion } from '../sessionUnread';
@@ -157,7 +157,7 @@ function AgentListItem({ agent, selected, onSelect, archived = false, onToggleAr
           </span>
         ) : null}
         <span className="ellipsis">{agent.mode === 'chat' ? agent.profileLabel : agent.mode}</span>
-        {t?.cost.totalUsd != null ? <span style={{ marginLeft: 'auto' }} className="num ai-cost">{usd(t.cost.reportedUsd ?? t.cost.totalUsd)}</span> : null}
+        {t?.cost.totalUsd != null ? <span style={{ marginLeft: 'auto' }} className="num ai-cost">{usd(shownCost(agent).usd)}</span> : null}
       </div>}
       {!compactRow && t && t.contextPercent !== null && agent.mode !== 'shell' ? (
         <div className={agent.status === 'working' && !agent.endedAt ? 'ai-context running' : 'ai-context'} style={{ gridColumn: 2 }}>

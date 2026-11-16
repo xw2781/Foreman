@@ -809,6 +809,10 @@
   color: var(--accent);
   flex-shrink: 0;
 }
+.working-time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
 .jump-latest {
   position: absolute;
   left: 50%;

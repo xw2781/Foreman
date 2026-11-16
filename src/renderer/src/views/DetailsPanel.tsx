@@ -7,7 +7,7 @@ import { PROVIDER_LABEL, type AgentInfo, type ContextPart, type ContextUsage } f
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
 import { ago, compact, duration, usd } from '../format';
-import { Meter, Select, Switch, useTicker } from '../ui';
+import { Meter, Select, Switch, shownCost, useTicker } from '../ui';
 import { DEFAULT_KEEP_WARM_HOURS, KEEP_WARM_OPTIONS } from '../idleMode';
 
 /** Palette slots 3–8 (and a neutral for anything newer), in the bar's fixed order: a part keeps its color whatever else shows. */
@@ -273,7 +273,7 @@ export function AgentDetails({ agent }: { agent: AgentInfo }) {
   const t = agent.telemetry;
   const total = t?.totalUsage;
   const { usage, loading, live, load } = useContextUsage(agent);
-  const cost = t?.cost.reportedUsd ?? t?.cost.totalUsd ?? null;
+  const { usd: cost, reported: costReported } = shownCost(agent);
   const uncached = total ? Math.max(0, total.inputTokens - total.cachedInputTokens - total.cacheWriteInputTokens) : 0;
   const cacheHit = total && total.inputTokens ? (total.cachedInputTokens / total.inputTokens) * 100 : null;
   const sessionId = t?.sessionId ?? agent.sessionId ?? null;
@@ -318,7 +318,7 @@ export function AgentDetails({ agent }: { agent: AgentInfo }) {
         </div>
         {t ? <div className="big-number">{usd(cost)}</div> : null}
         <div className="ctx-note">
-          {t?.cost.reportedUsd != null
+          {t && costReported
             ? `Claude Code's estimate · list-price estimate ${usd(t.cost.totalUsd)}`
             : t
               ? 'At API list prices; subscriptions are billed differently'

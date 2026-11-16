@@ -478,6 +478,8 @@ export class CodexChat implements ChatDriver {
           const output = entry.output ?? (existing?.kind === 'tool' ? existing.output : null);
           this.host.log.upsert({ ...entry, output, images: entry.images ?? (existing?.kind === 'tool' ? existing.images : undefined) });
           if (method === 'item/started') this.host.status('working', entry.detail ? `${entry.title} ${entry.detail}`.slice(0, 120) : entry.title);
+          // The step is over: its time stops, and a repeat of the same command starts its own.
+          else if (this.busy && !this.requests.size) this.host.status('working', 'Thinking');
         } else if (entry.kind === 'reasoning') {
           this.host.log.upsert({ ...entry, streaming: method === 'item/started' });
         } else if (entry.kind === 'user') {

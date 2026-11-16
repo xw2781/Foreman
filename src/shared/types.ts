@@ -255,6 +255,8 @@ export interface AgentInfo {
   permission: string | null;
   status: AgentStatus;
   statusDetail: string | null;
+  /** When the status or its detail last changed: the current step's start while working. */
+  statusSince?: string;
   pid: number | null;
   startedAt: string;
   endedAt: string | null;

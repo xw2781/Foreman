@@ -61,7 +61,7 @@ import { commandLists, drafts, imageDrafts, loadChat, loadCommands, sendModes, u
 import { commandToken, rankCommands } from '../commands';
 import { CopyButton, Markdown } from '../markdown';
 import { folderName, fullTime, messageTime, modelLabel, percent, usd } from '../format';
-import { Modal, ProviderIcon, Select, useCollapse } from '../ui';
+import { Modal, ProviderIcon, Select, useCollapse, useTicker } from '../ui';
 import { PERMISSIONS, effortOptions, modelOptions } from './LaunchDialog';
 import { ImageAttachments } from '../ImageAttachments';
 import { EffortControl } from '../EffortControl';
@@ -310,6 +310,33 @@ const IN_PROGRESS: Record<string, string> = {
   'Used skill': 'Using skill',
   'Loaded tools': 'Loading tools'
 };
+
+const IN_PROGRESS_TITLES = Object.keys(IN_PROGRESS).sort((a, b) => b.length - a.length);
+
+/** The status line's wording for what is happening now: "Ran npm test" reads "Running npm test". */
+function inProgress(detail: string) {
+  const title = IN_PROGRESS_TITLES.find((t) => detail === t || detail.startsWith(`${t} `));
+  return title ? IN_PROGRESS[title] + detail.slice(title.length) : detail;
+}
+
+/** Whole seconds, counting up: "8s", "1m 05s". */
+function elapsed(ms: number) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+}
+
+/** What the agent is doing now, and for how long it has been doing it. */
+function WorkingLine({ agent }: { agent: AgentInfo }) {
+  useTicker(1000);
+  const since = agent.statusSince ? Date.now() - Date.parse(agent.statusSince) : null;
+  return (
+    <div className="working">
+      <LoaderCircle size={14} className="spin" />
+      <span className="ellipsis">{inProgress(agent.statusDetail || 'Working')}…</span>
+      {since !== null && since >= 1000 ? <span className="working-time">{elapsed(since)}</span> : null}
+    </div>
+  );
+}
 
 const flat = (text: string) => text.replace(/\s+/g, ' ').trim();
 
@@ -1778,12 +1805,7 @@ export function ChatView({ agent }: { agent: AgentInfo }) {
           )}
           {nextSteps.length && lastTurn ? <NextSteps key={lastTurn.key} agent={agent} turnId={`${agent.id}:${lastTurn.key}`} steps={nextSteps} /> : null}
           {chat?.error ? <div className="chat-notice error">{chat.error}</div> : null}
-          {working && !pendingApproval ? (
-            <div className="working">
-              <LoaderCircle size={14} className="spin" />
-              <span className="ellipsis">{agent.statusDetail || 'Working'}…</span>
-            </div>
-          ) : null}
+          {working && !pendingApproval ? <WorkingLine agent={agent} /> : null}
         </div>
       </div>
       <MessageNavigator messages={sent} scrollRef={scrollRef} />

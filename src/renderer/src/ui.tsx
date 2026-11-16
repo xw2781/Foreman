@@ -441,6 +441,18 @@ export function Toasts() {
   );
 }
 
+/**
+ * The session cost to show. Claude Code's own count only arrives when a turn ends, so while
+ * the agent works the list-price estimate (which follows every request) stands in once it is ahead.
+ */
+export function shownCost(agent: AgentInfo): { usd: number | null; reported: boolean } {
+  const cost = agent.telemetry?.cost;
+  if (!cost) return { usd: null, reported: false };
+  const working = agent.status === 'working' && !agent.endedAt;
+  if (cost.reportedUsd == null || (working && cost.totalUsd != null && cost.totalUsd > cost.reportedUsd)) return { usd: cost.totalUsd ?? null, reported: false };
+  return { usd: cost.reportedUsd, reported: true };
+}
+
 /** Re-renders every `ms` so relative times ("3m ago") stay fresh. */
 export function useTicker(ms = 15_000) {
   const [, setTick] = useState(0);
