@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { create } from 'zustand';
 import { AlertCircle, AlertTriangle, Check, CheckCircle2, ChevronDown, Info, Loader2, X, XCircle } from 'lucide-react';
@@ -542,6 +542,10 @@ export interface SelectOption {
   label: ReactNode;
   /** A second, muted line in the menu. */
   hint?: string;
+  /** Drawn before the label in the menu, and in the trigger while this option is chosen. */
+  icon?: ReactNode;
+  /** Starts a new group: a thin line is drawn above this option. */
+  divider?: boolean;
   /** Options tucked under a disclosure at the end of the menu. */
   collapsedGroup?: string;
 }
@@ -705,7 +709,7 @@ export function Select({ value, options, onChange, prefix, icon, variant = 'fiel
         onClick={() => (open ? close() : show())}
         onKeyDown={onKey}
       >
-        {icon ? <span className="sel-icon">{icon}</span> : null}
+        {selected?.icon ?? icon ? <span className="sel-icon">{selected?.icon ?? icon}</span> : null}
         <span className="sel-value">
           {prefix ? <span className="sel-prefix">{prefix}</span> : null}
           {selected?.label ?? value}
@@ -717,8 +721,9 @@ export function Select({ value, options, onChange, prefix, icon, variant = 'fiel
             <div ref={menu} className="sel-menu" role="listbox" style={place} onKeyDown={onKey}>
               {heading ? <div className="sel-heading">{heading}</div> : null}
               {items.map((option, index) => (
+                <Fragment key={collapsed.length && index === disclosure ? 'collapsed-group' : `option-${option.value}`}>
+                {option.divider && index > 0 ? <div className="sel-divider" role="separator" /> : null}
                 <div
-                  key={collapsed.length && index === disclosure ? 'collapsed-group' : `option-${option.value}`}
                   data-index={index}
                   role="option"
                   aria-selected={index !== disclosure || !collapsed.length ? option.value === value : false}
@@ -731,11 +736,13 @@ export function Select({ value, options, onChange, prefix, icon, variant = 'fiel
                   <span className="sel-check">{collapsed.length && index === disclosure
                     ? <ChevronDown size={13} style={{ transform: expanded ? undefined : 'rotate(-90deg)' }} />
                     : option.value === value ? <Check size={13} /> : null}</span>
+                  {option.icon ? <span className="sel-option-icon">{option.icon}</span> : null}
                   <span className="sel-text">
                     <span className="sel-label">{option.label}</span>
                     {option.hint ? <span className="sel-hint">{option.hint}</span> : null}
                   </span>
                 </div>
+                </Fragment>
               ))}
               {custom ? (
                 <div className="sel-custom">

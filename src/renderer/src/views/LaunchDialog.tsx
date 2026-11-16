@@ -3,8 +3,8 @@ import { ChevronRight, Folder, FolderOpen, History, Monitor, Play, Rocket, X } f
 import { PROVIDER_LABEL, type CliDefaults, type LaunchOptions, type Provider } from '@shared/types';
 import { call, errorMessage } from '../api';
 import { useApp } from '../store';
-import { colorVar, limitSummary, modelLabel, signedOutLabel } from '../format';
-import { Modal, ProviderIcon, Select, type SelectOption } from '../ui';
+import { colorVar, initials, limitSummary, modelLabel, signedOutLabel } from '../format';
+import { Modal, Select, type SelectOption } from '../ui';
 import { defaultModel, modelChoices, olderModelIds } from '@shared/models';
 
 /** Newest first; Claude's family aliases (always the latest of each) follow its dated ids. */
@@ -191,10 +191,14 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
   const usage = limitSummary(profile?.limits?.windows) || (profile?.planTier ?? profile?.identity?.plan ? `Plan: ${profile?.planTier ?? profile?.identity?.plan}` : 'Plan usage appears after the first session');
   // Every account of both tools, Claude's first: picking one picks its tool.
   const accounts = (['claude', 'codex'] as Provider[]).flatMap((tool) =>
-    profiles.filter((p) => p.provider === tool).map((p) => ({
+    profiles.filter((p) => p.provider === tool).map((p, index) => ({
       value: p.id,
       label: [PROVIDER_LABEL[tool], p.label, p.planTier].filter(Boolean).join(' · '),
-      hint: p.identity?.email ?? (p.identity?.loggedIn ? undefined : signedOutLabel(p.identity))
+      hint: p.identity?.email ?? (p.identity?.loggedIn ? undefined : signedOutLabel(p.identity)),
+      // Each tool's accounts form a group.
+      divider: index === 0,
+      // The account's avatar, as on the Accounts page.
+      icon: <span className="avatar sm" style={{ background: colorVar(p.color) }}>{initials(p.identity?.name ?? p.label)}</span>
     }))
   );
   const pickAccount = (id: string) => {
@@ -239,14 +243,10 @@ export function LaunchDialog({ preset }: { preset: Partial<LaunchOptions> }) {
               value={profileId}
               onChange={pickAccount}
               disabled={resuming}
-              icon={<ProviderIcon provider={provider} size={16} />}
               aria-label="Tool and account"
               options={accounts}
             />
-            <div className="hint row">
-              {profile ? <span className="swatch" style={{ background: colorVar(profile.color), borderRadius: '50%' }} /> : null}
-              <span className="ellipsis">{[usage, cliInfo].filter(Boolean).join(' · ')}</span>
-            </div>
+            <div className="hint ellipsis">{[usage, cliInfo].filter(Boolean).join(' · ')}</div>
             {resuming ? (
               <div className="badge accent" style={{ justifySelf: 'start', height: 24 }}>
                 <History size={13} /> Continuing session {preset.resumeSessionId?.slice(0, 8)}…

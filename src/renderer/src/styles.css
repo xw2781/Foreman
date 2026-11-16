@@ -1019,6 +1019,17 @@ button {
   flex-shrink: 0;
   color: var(--accent-strong);
 }
+.sel-divider {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border);
+}
+.sel-option-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  align-self: center;
+}
 .sel-text {
   display: grid;
   gap: 1px;
@@ -2463,6 +2474,13 @@ label.idle-row {
   font-size: 15px;
   color: white;
   flex: none;
+}
+/* In a menu or a field, beside one line of text. */
+.avatar.sm {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  font-size: 10.5px;
 }
 .account-card .ac-name {
   font-size: 14.5px;
