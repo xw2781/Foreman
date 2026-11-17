@@ -4,6 +4,7 @@ import { contentImages } from '../../shared/chatImages';
 import type { ChatEntry } from '../../shared/types';
 import { claudeToolEntry, isSyntheticUserText, slashCommandText, toolResult } from './claudeTools';
 import { codexItemEntry } from './codexItems';
+import { withViewedImage } from './viewedImage';
 import { TOOL_IMAGE_LIMIT, toolImageSize, withoutToolImages } from './log';
 
 export interface HistoryEntry {
@@ -147,7 +148,8 @@ export function codexHistory(lines: Iterable<string>, limit = HISTORY_LIMIT): Hi
     switch (payload.type) {
       case 'item_completed': {
         const entry = codexItemEntry(payload.item);
-        if (entry) items.put(entry, at ?? (payload.completed_at_ms ? new Date(payload.completed_at_ms).toISOString() : null));
+        const when = at ?? (payload.completed_at_ms ? new Date(payload.completed_at_ms).toISOString() : null);
+        if (entry) items.put(withViewedImage(entry, { at: when }), when);
         break;
       }
       case 'user_message':

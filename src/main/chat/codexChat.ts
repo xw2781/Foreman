@@ -8,6 +8,7 @@ import type { ChatAnswer, ChatCommand, ChatOption, ChatQuestion, ChatSettingsPat
 import { LONG_CONTEXT_THRESHOLD, priceUsage, rateForModel } from '../telemetry/pricing';
 import { normalizeCodexUsage, subtractUsage } from '../telemetry/codexRollout';
 import { codexItemEntry, codexPermission } from './codexItems';
+import { withViewedImage } from './viewedImage';
 import { sideChatPrompt, type ChatDriver, type ChatHost } from './driver';
 import { codexForkTurn } from './fork';
 import { clipText, TEXT_LIMIT } from './log';
@@ -476,7 +477,9 @@ export class CodexChat implements ChatDriver {
         } else if (entry.kind === 'tool') {
           // Output streamed through deltas is kept until the completed item carries the full text.
           const output = entry.output ?? (existing?.kind === 'tool' ? existing.output : null);
-          this.host.log.upsert({ ...entry, output, images: entry.images ?? (existing?.kind === 'tool' ? existing.images : undefined) });
+          const images = entry.images ?? (existing?.kind === 'tool' ? existing.images : undefined);
+          // An image Codex looked at comes as a path; the step shows the picture itself.
+          this.host.log.upsert(withViewedImage({ ...entry, output, images }, { cwd: this.options.cwd }));
           if (method === 'item/started') this.host.status('working', entry.detail ? `${entry.title} ${entry.detail}`.slice(0, 120) : entry.title);
           // The step is over: its time stops, and a repeat of the same command starts its own.
           else if (this.busy && !this.requests.size) this.host.status('working', 'Thinking');

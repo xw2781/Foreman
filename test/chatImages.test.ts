@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { validateChatImages, MAX_IMAGE_BYTES } from '../src/shared/chatImages';
 import { claudeHistory, codexHistory } from '../src/main/chat/history';
 import { ChatLog } from '../src/main/chat/log';
+import { codexItemEntry } from '../src/main/chat/codexItems';
+import { withViewedImage } from '../src/main/chat/viewedImage';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { ChatEntry } from '../src/shared/types';
 
 const image = { name: 'image.png', dataUrl: 'data:image/png;base64,aGVsbG8=' };
@@ -71,5 +76,28 @@ describe('chat image attachments', () => {
     expect(log.get('one')).not.toHaveProperty('images');
     expect(log.get('two')).toMatchObject({ images: [image] });
     expect(log.get('three')).toMatchObject({ images: [image] });
+  });
+
+  it('shows the picture behind a Codex "Viewed image" step, read from the path Codex reports', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atc-viewed-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'shot.png'), 'hello');
+      fs.writeFileSync(path.join(dir, 'notes.txt'), 'hello');
+      const step = (file: string) => codexItemEntry({ type: 'imageView', id: 'v', path: file })!;
+      expect(withViewedImage(step(path.join(dir, 'shot.png')))).toMatchObject({ title: 'Viewed image', detail: 'shot.png', images: [{ name: 'shot.png', dataUrl: image.dataUrl }] });
+      expect(withViewedImage(step('shot.png'), { cwd: dir })).toMatchObject({ images: [{ name: 'shot.png' }] });
+      // No picture: a relative path with nowhere to start from, a file that isn't an image, one that is gone,
+      // and (in history) one changed after the agent looked at it.
+      expect(withViewedImage(step('shot.png'))).not.toHaveProperty('images');
+      expect(withViewedImage(step(path.join(dir, 'notes.txt')))).not.toHaveProperty('images');
+      expect(withViewedImage(step(path.join(dir, 'gone.png')))).not.toHaveProperty('images');
+      expect(withViewedImage(step(path.join(dir, 'shot.png')), { at: '2020-01-01T00:00:00Z' })).not.toHaveProperty('images');
+
+      const record = (item: unknown) => JSON.stringify({ type: 'event_msg', timestamp: new Date(Date.now() + 60_000).toISOString(), payload: { type: 'item_completed', item } });
+      const history = codexHistory([record({ type: 'ImageView', id: 'v', path: path.join(dir, 'shot.png') }), record({ type: 'AgentMessage', id: 'a', text: 'Looks right.' })]);
+      expect(history[0].entry).toMatchObject({ tool: 'view_image', images: [{ name: 'shot.png' }] });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
