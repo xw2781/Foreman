@@ -58,6 +58,30 @@ describe('shell command summaries', () => {
     expect(named('"C:\\Program Files\\Python314\\python.exe" -V')).toEqual(['Checked', 'python version']);
   });
 
+  it('names read-only git commands', () => {
+    expect(named('git status --short')).toEqual(['Checked', 'git status']);
+    expect(named('git status --short; git branch --show-current; git diff --stat; git diff --cached --stat')).toEqual(['Checked', 'git status, git branch, git diff']);
+    expect(named('git --no-pager -C ../other log -5 --oneline -- src/a.ts | Select-Object -First 20')).toEqual(['Checked', 'git log']);
+  });
+
+  it('calls a command of several read-only kinds an exploration, named for the files it reads', () => {
+    expect(named("Get-Content src/agents.ts | Select-Object -Skip 240 -First 40; rg -n 'turnComplete|updateStatus' src/main; git status --short")).toEqual(['Explored', 'agents.ts']);
+    expect(named("git status --short; rg --files -g '*.md'")).toEqual(['Explored', 'git status']);
+    expect(named('ls; cat a')).toEqual(['Explored', 'a']);
+    expect(named('python3 --version; ls')).toEqual(['Explored', 'python3 version']);
+  });
+
+  it('looks past PowerShell variables set to a literal, and reads them back', () => {
+    expect(named("$ErrorActionPreference = 'Stop'\nGet-Content README.md")).toEqual(['Read', 'README.md']);
+    expect(named("$p='frontend/docs/ui/dfm.md'; Get-Content $p | Select-Object -Index (147..162)")).toEqual(['Read', 'dfm.md']);
+    expect(named('$env:PATH = "$PWD\\.tools\\node;$env:PATH"; $global:LASTEXITCODE=0; & .\\build.ps1; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }')).toEqual(['Ran', 'script build.ps1']);
+  });
+
+  it('names code piped to an interpreter from a here-string', () => {
+    expect(named("@'\nimport sys; print('it''s', sys.version)\n'@ | python -")).toEqual(['Ran', 'Python code']);
+    expect(named("@'\nconsole.log(1)\n'@ | frontend\\node-portable\\node.exe --input-type=module -")).toEqual(['Ran', 'Node.js code']);
+  });
+
   it('leaves anything else that could change something as a plain command', () => {
     for (const command of [
       'npm test',
@@ -73,7 +97,6 @@ describe('shell command summaries', () => {
       'find . -exec rm {} +',
       'Get-ChildItem | ForEach-Object { Remove-Item $_ }',
       'cat a & rm b',
-      'ls; cat a',
       'cat "unterminated',
       // An edit beside a run, a script whose output goes to a file, a program that isn't a script.
       "sed -i 's/a/b/' build.py && python build.py",
@@ -84,7 +107,15 @@ describe('shell command summaries', () => {
       '& "C:\\Program Files\\App\\app.exe" /quiet',
       'bash -c "rm -rf x"',
       'curl -v https://example.com',
-      'python3 --version; ls'
+      // git that changes the repository or writes a file, a variable set from a command, code piped to something else.
+      'git add -u; git diff --cached',
+      'git branch -D old',
+      'git diff --output=changes.patch',
+      'git -c core.pager=less status',
+      '$lines = Get-Content a.ts',
+      "$x = 'a' + (Remove-Item b)",
+      "@'\nprint(1)\n'@ | Set-Content run.py",
+      "@'\nprint(1)\n'@ | python - > out.txt"
     ]) {
       expect(named(command), command).toBeNull();
     }

@@ -1,36 +1,47 @@
 // What a shell command does, for the chat's step line: "Read main.ts" in place
 // of "Ran Get-Content src\main.ts". Only commands that plainly read, search,
-// list, edit a file in place, run a script or ask for a version are named;
+// list, look at git, edit a file in place, run a script or ask for a version are named;
 // anything unrecognized stays "Ran" with the command itself, so a command that
 // changes something is never shown as a read. Pure: shared by the live drivers
 // (main process) and history loading (telemetry worker).
 
 export interface CommandSummary {
   /** 'Ran' names what was run ("script build.ps1", "Python code") in place of the command text. */
-  title: 'Read' | 'Searched' | 'Listed files' | 'Edited' | 'Checked' | 'Ran';
+  title: 'Read' | 'Searched' | 'Listed files' | 'Explored' | 'Edited' | 'Checked' | 'Ran';
   detail: string | null;
 }
 
-/** read, search, list and check change nothing; edit rewrites a file; run starts a script, which may do anything. */
-type Kind = 'read' | 'search' | 'list' | 'check' | 'edit' | 'run';
+/** read, search, list, check (a version) and inspect (git) change nothing; edit rewrites a file; run starts a script, which may do anything. */
+type Kind = 'read' | 'search' | 'list' | 'check' | 'inspect' | 'edit' | 'run';
 type ArgKind = 'read' | 'search' | 'list';
 
 interface Token {
   text: string;
   /** An unquoted operator: | ; && || & > < or a newline. */
   op: boolean;
+  /** The characters written outside quotes, and how many quoted parts the word has. */
+  bare: string;
+  quotes: number;
 }
+
+/** Stands for a PowerShell here-string (@'…'@): text handed to a program, never run by the shell. */
+const HERE_STRING = '\u0001here-string';
 
 /** Words and operators; quotes are removed, `{ … }` script blocks stay one word. Null when the command substitutes another's output. */
 function tokenize(command: string): Token[] | null {
   const out: Token[] = [];
   let word = '';
+  let bare = '';
+  let quotes = 0;
   let has = false;
   const flush = () => {
-    if (has) out.push({ text: word, op: false });
+    if (has) out.push({ text: word, op: false, bare, quotes });
     word = '';
+    bare = '';
+    quotes = 0;
     has = false;
   };
+  const op = (text: string) => out.push({ text, op: true, bare: text, quotes: 0 });
   for (let i = 0; i < command.length; i += 1) {
     const c = command[i];
     if (c === "'" || c === '"') {
@@ -39,6 +50,7 @@ function tokenize(command: string): Token[] | null {
       const inner = command.slice(i + 1, end);
       if (c === '"' && /\$\(|`/.test(inner)) return null;
       word += inner;
+      quotes += 1;
       has = true;
       i = end;
     } else if (c === '{') {
@@ -50,35 +62,38 @@ function tokenize(command: string): Token[] | null {
       }
       if (depth) return null;
       word += command.slice(i, j);
+      bare += command.slice(i, j);
       has = true;
       i = j - 1;
     } else if (c === '`' || (c === '$' && command[i + 1] === '(')) {
       return null;
     } else if (c === '\n' || c === ';') {
       flush();
-      out.push({ text: ';', op: true });
+      op(';');
     } else if (c === '|' || c === '&') {
       flush();
       const double = command[i + 1] === c;
       // PowerShell's call operator: `& "build.ps1"` runs the script, where a trailing `&` would background one.
       if (c === '&' && !double && (!out.length || out[out.length - 1].op)) continue;
-      out.push({ text: double ? c + c : c, op: true });
+      op(double ? c + c : c);
       if (double) i += 1;
     } else if (c === '>' || c === '<') {
       // 2>$null, 2>/dev/null and 2>&1 only hide errors.
       const quiet = /^>\s*(\$null|\/dev\/null|&1)(?=\s|$|[;|&)])/.exec(command.slice(i));
       if (quiet && (word === '2' || word === '')) {
         word = '';
+        bare = '';
         has = false;
         i += quiet[0].length - 1;
       } else {
         flush();
-        out.push({ text: c, op: true });
+        op(c);
       }
     } else if (/\s/.test(c)) {
       flush();
     } else {
       word += c;
+      bare += c;
       has = true;
     }
   }
@@ -175,6 +190,31 @@ function scriptRun(words: string[]): string | null {
   return null;
 }
 
+/** `@'…'@ | python -`: the language of code piped into an interpreter; null when the interpreter is given anything else to run. */
+function pipedCode(words: string[]): string | null {
+  const name = baseName(head(words));
+  const language = Object.hasOwn(INTERPRETERS, name) ? INTERPRETERS[name] : null;
+  if (!language) return null;
+  return words.slice(1).every((w) => w.startsWith('-') && w !== '-m' && !INLINE_CODE.has(w.toLowerCase())) ? language : null;
+}
+
+/** git subcommands that only report on the repository. */
+const GIT_READS = new Set(['status', 'log', 'diff', 'show', 'blame', 'rev-parse', 'describe', 'shortlog', 'cat-file', 'ls-tree', 'merge-base', 'rev-list', 'diff-tree', 'name-rev', 'show-ref', 'check-ignore']);
+
+/** `git status --short`, `git -C repo diff`: what is looked at ("git status"); null for anything that could change the repository or write a file. */
+function gitInspect(rest: string[]): string | null {
+  let i = 0;
+  while (rest[i] === '--no-pager' || (rest[i] === '-C' && i + 1 < rest.length)) i += rest[i] === '-C' ? 2 : 1;
+  const command = rest[i];
+  const after = rest.slice(i + 1);
+  if (!command || after.some((w) => /^--(output|ext-diff)\b/.test(w))) return null;
+  if (GIT_READS.has(command)) return `git ${command}`;
+  if (command === 'branch' && after.every((w) => /^(--show-current|--list|--all|--remotes|-[alrv]|-vv)$/.test(w))) return 'git branch';
+  if (command === 'remote' && (after[0] === 'get-url' || after.every((w) => w === '-v'))) return 'git remote';
+  if (command === 'stash' && after.length === 1 && after[0] === 'list') return 'git stash list';
+  return null;
+}
+
 /** The first command of a pipeline; null when it isn't one that only reads. */
 function stage(words: string[]): Stage | null {
   let name = head(words);
@@ -195,11 +235,16 @@ function stage(words: string[]): Stage | null {
   if (words.length === 2 && (/^(--version|-version|-V)$/.test(rest[0]) || (rest[0] === '-v' && SHORT_VERSION.has(baseName(name))))) {
     return { kind: 'check', names: [baseName(name)] };
   }
+  if (name === 'git') {
+    const looked = gitInspect(rest);
+    return looked ? { kind: 'inspect', names: [looked] } : null;
+  }
   if (READ.has(name)) {
     const { positional, byFlag } = args('read', rest, ['-path', '-literalpath']);
     return { kind: 'read', names: [...byFlag, ...positional].flatMap((p) => p.split(',')).filter(Boolean).map(baseName) };
   }
   if (SEARCH.has(name)) {
+    if (name === 'rg' && rest.includes('--files')) return { kind: 'list', names: [] };
     const { positional, byFlag } = args('search', rest, ['-pattern', '-e', '--regexp']);
     const pattern = byFlag[0] ?? positional[0];
     return { kind: 'search', names: pattern ? [pattern] : [] };
@@ -220,7 +265,29 @@ function isFilter(words: string[]) {
   return name !== 'sed' || !words.some((w) => /^(-i|--in-place)/.test(w));
 }
 
-const TITLES: Record<Kind, CommandSummary['title']> = { read: 'Read', search: 'Searched', list: 'Listed files', check: 'Checked', edit: 'Edited', run: 'Ran' };
+const TITLES: Record<Kind, CommandSummary['title']> = { read: 'Read', search: 'Searched', list: 'Listed files', check: 'Checked', inspect: 'Checked', edit: 'Edited', run: 'Ran' };
+/** What a command of several read-only kinds is named for: the first of these it has. */
+const EXPLORED: Kind[] = ['read', 'search', 'inspect', 'list', 'check'];
+
+/** `$path = 'src/a.ts'`, `$ErrorActionPreference = 'Stop'`, `$env:CI = 1`: a PowerShell variable set to a literal, which runs nothing. */
+function assignment(words: Token[]): { name: string; value: string } | null {
+  const bare = words.map((w) => w.bare).join('');
+  const quotes = words.reduce((sum, w) => sum + w.quotes, 0);
+  const last = words[words.length - 1];
+  const quoted = quotes === 1 && last.quotes === 1 ? /^\$([\w:]+)=$/.exec(bare) : null;
+  if (quoted) return { name: quoted[1].toLowerCase(), value: last.text.slice(last.bare.length) };
+  const plain = quotes === 0 ? /^\$([\w:]+)=(-?\d+(?:\.\d+)?|\$true|\$false|\$null)$/i.exec(bare) : null;
+  return plain ? { name: plain[1].toLowerCase(), value: plain[2] } : null;
+}
+
+/** `if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`: passes a failure on, runs nothing. */
+const EXIT_GUARD = /^if ?\(\$lastexitcode -ne 0\) ?\{\s*exit( \$lastexitcode| \d+)?\s*\}$/i;
+
+function detailOf(kind: Kind, names: string[]) {
+  if (kind === 'search' || kind === 'list') return names[0] ?? '';
+  if (kind === 'check') return `${listed(names)} version${names.length > 1 ? 's' : ''}`;
+  return listed(names);
+}
 
 function listed(names: string[]) {
   return names.length > 3 ? `${names.slice(0, 3).join(', ')} +${names.length - 3}` : names.join(', ');
@@ -229,28 +296,48 @@ function listed(names: string[]) {
 /**
  * Names the command when every part of it is recognized; null otherwise. A script run or an
  * in-place edit may come with reads and searches (checking the result) and is still named
- * for the run or the edit; reads of different kinds, or an edit beside a run, stay unnamed.
+ * for the run or the edit; reads of different kinds are "Explored"; an edit beside a run
+ * stays unnamed.
  */
 export function summarizeCommand(command: string | null | undefined): CommandSummary | null {
-  if (!command || command.length > 4000) return null;
-  const tokens = tokenize(command.trim());
+  if (!command) return null;
+  const text = command.trim().replace(/@'\r?\n[\s\S]*?\r?\n'@/g, HERE_STRING);
+  if (text.length > 4000) return null;
+  const tokens = tokenize(text);
   if (!tokens) return null;
 
   // Statements, each a pipeline of stages, each a list of words.
-  const statements: string[][][] = [[[]]];
+  const statements: Token[][][] = [[[]]];
   for (const token of tokens) {
     const pipeline = statements[statements.length - 1];
-    if (!token.op) pipeline[pipeline.length - 1].push(token.text);
+    if (!token.op) pipeline[pipeline.length - 1].push(token);
     else if (token.text === '|') pipeline.push([]);
     else if (token.text === ';' || token.text === '&&' || token.text === '||') statements.push([[]]);
     else return null; // a redirect to a file, or `&`
   }
 
   const stages: Stage[] = [];
-  for (const pipeline of statements) {
-    if (pipeline.length === 1 && pipeline[0].length === 0) continue;
-    if (pipeline.some((words) => words.length === 0)) return null;
+  /** Variables set to a literal earlier in the command, so `Get-Content $path` names the file. */
+  const variables = new Map<string, string>();
+  for (const parts of statements) {
+    if (parts.length === 1 && parts[0].length === 0) continue;
+    if (parts.some((words) => words.length === 0)) return null;
+    if (parts.length === 1) {
+      const set = assignment(parts[0]);
+      if (set) {
+        variables.set(set.name, set.value);
+        continue;
+      }
+      if (EXIT_GUARD.test(parts[0].map((w) => w.text).join(' '))) continue;
+    }
+    const pipeline = parts.map((words) => words.map((w) => (w.quotes === 0 && /^\$\w+$/.test(w.text) ? variables.get(w.text.slice(1).toLowerCase()) ?? w.text : w.text)));
     const [first, ...filters] = pipeline;
+    if (first.length === 1 && first[0] === HERE_STRING && filters.length === 1) {
+      const language = pipedCode(filters[0]);
+      if (!language) return null;
+      stages.push({ kind: 'run', names: [`${language} code`] });
+      continue;
+    }
     if (!filters.every(isFilter)) return null;
     if (pipeline.length === 1 && NEUTRAL.has(head(first))) continue;
     const current = stage(first);
@@ -262,15 +349,14 @@ export function summarizeCommand(command: string | null | undefined): CommandSum
   if (!stages.length) return null;
 
   const kinds = new Set(stages.map((s) => s.kind));
+  const namesOf = (kind: Kind) => stages.filter((s) => s.kind === kind).flatMap((s) => s.names).filter((name, index, all) => all.indexOf(name) === index);
+  if (kinds.size > 1 && !kinds.has('run') && !kinds.has('edit')) {
+    const kind = EXPLORED.find((k) => namesOf(k).length);
+    return { title: 'Explored', detail: kind ? detailOf(kind, namesOf(kind)) || null : null };
+  }
   let kind: Kind;
   if (kinds.size === 1) kind = stages[0].kind;
   else if (kinds.has('run') !== kinds.has('edit')) kind = kinds.has('run') ? 'run' : 'edit';
   else return null;
-
-  const names = stages.filter((s) => s.kind === kind).flatMap((s) => s.names).filter((name, index, all) => all.indexOf(name) === index);
-  const detail =
-    kind === 'search' || kind === 'list' ? names[0] ?? ''
-    : kind === 'check' ? `${listed(names)} version${names.length > 1 ? 's' : ''}`
-    : listed(names);
-  return { title: TITLES[kind], detail: detail || null };
+  return { title: TITLES[kind], detail: detailOf(kind, namesOf(kind)) || null };
 }

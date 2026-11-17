@@ -96,7 +96,7 @@ function toolIcon(item: Item<'tool'>) {
   const size = 14;
   if (t === 'bash' || t === 'powershell' || t === 'shell') {
     if (item.title === 'Read') return <FileText size={size} />;
-    if (item.title === 'Searched') return <Search size={size} />;
+    if (item.title === 'Searched' || item.title === 'Explored') return <Search size={size} />;
     if (item.title === 'Listed files') return <FolderSearch size={size} />;
     if (item.title === 'Edited') return <FilePen size={size} />;
     return <Terminal size={size} />;
@@ -302,6 +302,7 @@ const IN_PROGRESS: Record<string, string> = {
   Created: 'Creating',
   Checked: 'Checking',
   Searched: 'Searching',
+  Explored: 'Exploring',
   'Listed files': 'Listing files',
   Fetched: 'Fetching',
   'Searched the web': 'Searching the web',
