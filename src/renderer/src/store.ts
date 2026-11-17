@@ -154,6 +154,12 @@ export const useApp = create<AppState>((set, get) => ({
   }
 }));
 
+// Coming back to Agents from another page always shows the agent list again; hiding it lasts only while
+// you stay on Agents. Many places switch views with setState directly, so this watches the view itself.
+useApp.subscribe((state, prev) => {
+  if (state.view === 'agents' && prev.view !== 'agents' && state.agentListCollapsed) state.toggleAgentList();
+});
+
 export function isPanelOpen(state: Pick<AppState, 'panelOpen' | 'panelDefault'>, agentId: string) {
   return state.panelOpen[agentId] ?? state.panelDefault;
 }
